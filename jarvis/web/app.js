@@ -238,6 +238,8 @@
     if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(obj));
   }
 
+  const THINKING_SUB = "denkt nach …";
+
   function handle(ev) {
     switch (ev.type) {
       case "hello":
@@ -257,12 +259,19 @@
       case "token":
         appendToken(ev.id, ev.text);
         T.tokenTimes.push(performance.now());
+        if (S.substate === THINKING_SUB) { S.substate = ""; break; }
+        return;  // Zustand ändert sich pro Token nicht – kein refresh() nötig
+      case "reasoning":
+        // Modell denkt (Thinking-Tokens) – nicht im Chat zeigen, nur als Hinweis am Orb
+        if (S.substate !== THINKING_SUB) S.substate = THINKING_SUB;
+        else return;
         break;
       case "segment_end":
         appendToken(ev.id, "\n\n");
         break;
       case "assistant_end":
         finishAssistant(ev.id, ev.cancelled);
+        if (S.substate === THINKING_SUB) S.substate = "";
         setTimeout(loadStatus, 300);
         if (!$("tab-memory").classList.contains("hidden")) loadReminders();
         break;
@@ -432,15 +441,38 @@
     assistants[id] = { el, raw: "" };
     S.currentMsg = id;
   }
+  // Token werden gesammelt und höchstens einmal pro Bild (~16–60 ms) als Markdown gerendert –
+  // vorher wurde bei jedem Token die ganze Antwort neu aufgebaut (bei langen Antworten sehr teuer).
+  const dirty = new Set();
+  let renderQueued = false;
+  function renderAssistant(a) {
+    a.el.querySelector(".body").innerHTML = renderMarkdown(a.raw.replace(/\n{3,}/g, "\n\n"));
+  }
+  function flushTokens() {
+    renderQueued = false;
+    if (!dirty.size) return;
+    const stick = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
+    for (const a of dirty) renderAssistant(a);
+    dirty.clear();
+    if (stick) scrollChat();
+  }
   function appendToken(id, text) {
     const a = assistants[id] || (startAssistant(id), assistants[id]);
     a.raw += text;
-    a.el.querySelector(".body").innerHTML = renderMarkdown(a.raw.replace(/\n{3,}/g, "\n\n"));
-    scrollChat();
+    dirty.add(a);
+    if (!renderQueued) {
+      renderQueued = true;
+      // rAF, mit Timeout-Fallback falls der Tab im Hintergrund ist
+      let done = false;
+      const go = () => { if (!done) { done = true; flushTokens(); } };
+      requestAnimationFrame(go);
+      setTimeout(go, 100);
+    }
   }
   function finishAssistant(id, cancelled) {
     const a = assistants[id];
     if (!a) return;
+    if (dirty.has(a)) { dirty.delete(a); renderAssistant(a); scrollChat(); }
     a.el.classList.remove("streaming");
     if (!a.raw.trim()) {
       a.el.querySelector(".body").innerHTML = cancelled ? "<em>(abgebrochen)</em>" : "";
@@ -811,7 +843,8 @@
       const x = (i / 29) * w, y = h - 2 - (v / max) * (h - 4);
       i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
     });
-    const color = getComputedStyle(canvas.parentElement.querySelector(".tele-bar i")).backgroundColor;
+    const tile = canvas.closest(".tele");
+    const color = tile.classList.contains("crit") ? "#ff5d6c" : tile.classList.contains("warn") ? "#ffb347" : "#3fd0ff";
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
     ctx.stroke();

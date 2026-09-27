@@ -280,3 +280,38 @@ def test_commented_example_profile_is_valid():
     ps = cfg.llm.resolved_profiles()
     assert cfg.llm.active == "bonsai" and ps["bonsai"].backend == "openai" and ps["bonsai"].server
     assert "--api-key" in ps["bonsai"].server.command and ps["bonsai"].api_key
+
+
+def test_stream_reasoning_not_part_of_answer(caplog):
+    OpenAICompatLLM._warned_reasoning = False
+    handler = lambda req: httpx.Response(200, text=sse(  # noqa: E731
+        {"choices": [{"delta": {"reasoning_content": "Hmm, der Nutzer "}}]},
+        {"choices": [{"delta": {"reasoning_content": "will …"}}]},
+        {"choices": [{"delta": {"content": "Hallo."}}]}))
+    with caplog.at_level("WARNING"):
+        events = collect(client_with(handler), [{"role": "user", "content": "Hi"}])
+    assert [e["type"] for e in events] == ["reasoning", "reasoning", "token", "done"]
+    assert events[-1]["message"]["content"] == "Hallo."
+    assert sum("--reasoning-budget 0" in r.message for r in caplog.records) == 1  # nur einmal gewarnt
+
+
+def test_agent_ignores_reasoning_events(cfg, memory):
+    class ThinkingLLM:
+        async def chat_stream(self, messages, tools=None):
+            yield {"type": "reasoning", "text": "überlege"}
+            yield {"type": "reasoning", "text": " weiter"}
+            yield {"type": "token", "text": "Antwort"}
+            yield {"type": "done", "message": {"role": "assistant", "content": "Antwort"}, "stats": {}}
+
+    events = []
+
+    async def emit(e):
+        events.append(e)
+
+    async def confirm(*a):
+        return False
+
+    answer = run(Agent(cfg, ThinkingLLM(), memory).run("Hi", emit, confirm))
+    assert answer == "Antwort"
+    assert [e["type"] for e in events].count("reasoning") == 1
+    assert "überlege" not in json.dumps(events, ensure_ascii=False)

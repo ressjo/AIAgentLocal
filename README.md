@@ -220,7 +220,7 @@ llm:
       embed_on_cpu: true
       unload_ollama: true
       server:
-        command: ~/bonsai/scripts/start_llama_server.sh -np 1 --api-key ein-langes-zufaelliges-passwort
+        command: ~/bonsai/scripts/start_llama_server.sh -np 1 --reasoning-budget 0 --api-key ein-langes-zufaelliges-passwort
         env:
           HSA_OVERRIDE_GFX_VERSION: "10.3.0"   # RX 6600/6650/6700 (gfx103x) als unterstütztes gfx1030 ausgeben
           BONSAI_CTX: "8192"
@@ -231,6 +231,12 @@ llm:
 
 Der `api_key` schützt den llama-server davor, von Webseiten im Browser angesprochen zu werden. `jarvis doctor`
 prüft alle Profile. Token/s erscheinen wie gewohnt in der Telemetrie.
+
+**Denkmodus:** Mit `think: false` (Standard) bittet Jarvis das Modell, direkt zu antworten. `--reasoning-budget 0`
+im Startbefehl schaltet das „Nachdenken“ zusätzlich im llama-server selbst ab – sonst kann Bonsai vor jeder
+Antwort unsichtbar viele Denk-Token erzeugen. Denkt das Modell trotzdem, zeigt der Orb „denkt nach …“ und im
+Log erscheint ein Hinweis. Wer das Denken möchte (langsamer, bei kniffligen Aufgaben manchmal besser), setzt im
+Profil `think: true` und lässt `--reasoning-budget 0` weg.
 
 ## Stimme & Jarvis-Effekt
 

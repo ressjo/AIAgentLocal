@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import re
 import time
@@ -14,6 +15,8 @@ from typing import Any
 import httpx
 
 from .config import LLMConfig
+
+log = logging.getLogger(__name__)
 
 
 class LLMError(RuntimeError):
@@ -60,6 +63,8 @@ class OllamaLLM:
                     if "error" in chunk:
                         raise LLMError(chunk["error"])
                     msg = chunk.get("message") or {}
+                    if msg.get("thinking"):
+                        yield {"type": "reasoning", "text": msg["thinking"]}
                     if msg.get("content"):
                         content.append(msg["content"])
                         yield {"type": "token", "text": msg["content"]}
@@ -203,6 +208,14 @@ class OpenAICompatLLM:
             payload["tools"] = tools
         return payload
 
+    _warned_reasoning = False
+
+    def _warn_reasoning(self) -> None:
+        if not OpenAICompatLLM._warned_reasoning:
+            OpenAICompatLLM._warned_reasoning = True
+            log.warning("Modell-Server %s denkt trotz think: false (Reasoning-Tokens kosten Zeit). "
+                        "Tipp: '--reasoning-budget 0' an den llama-server-Befehl anhängen.", self.profile.base_url)
+
     def _error(self, e: Exception) -> LLMError:
         return LLMError(f"Modell-Server {self.profile.base_url} nicht erreichbar ({type(e).__name__}) – "
                         "läuft llama-server?")
@@ -234,6 +247,13 @@ class OpenAICompatLLM:
                     usage = chunk.get("usage") or usage
                     for choice in chunk.get("choices") or []:
                         delta = choice.get("delta") or {}
+                        reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                        if reasoning:
+                            # Modell „denkt“ (Thinking-Tokens): nicht Teil der Antwort, aber sichtbar machen
+                            first_token = first_token or time.monotonic()
+                            if not self.profile.think:
+                                self._warn_reasoning()
+                            yield {"type": "reasoning", "text": reasoning}
                         text = delta.get("content")
                         if text:
                             first_token = first_token or time.monotonic()

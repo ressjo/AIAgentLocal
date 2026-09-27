@@ -69,6 +69,7 @@
         this.nodes[b].links.push(a);
       }
       this.pulses = [];
+      this.maxPulses = MAX_PULSES;
       this.acc = 0;
       this.rotY = 0;
     }
@@ -77,7 +78,7 @@
       const n = this.nodes[i];
       n.fire = 1;
       for (const j of n.links) {
-        if (j === from || this.pulses.length >= MAX_PULSES) continue;
+        if (j === from || this.pulses.length >= this.maxPulses) continue;
         if (Math.random() < spread) {
           this.pulses.push({ a: i, b: j, t: 0, v: speed * (0.7 + Math.random() * 0.6) });
         }
@@ -102,10 +103,10 @@
         if (p.t >= 1) this.fire(p.b, p.a, cfg.spread, cfg.speed);
         else alive.push(p);
       }
-      this.pulses = alive.length > MAX_PULSES ? alive.slice(-MAX_PULSES) : alive;
+      this.pulses = alive.length > this.maxPulses ? alive.slice(-this.maxPulses) : alive;
     }
 
-    draw(ctx, R, orb) {
+    draw(ctx, R, orb, q) {
       const cy = Math.cos(this.rotY), sy = Math.sin(this.rotY);
       const cx = Math.cos(this.rotX), sx = Math.sin(this.rotX);
       const f = 2.6;
@@ -120,57 +121,106 @@
         n.pz = (z2 + 1) / 2;  // 0 = hinten, 1 = vorne
         n.ps = s;
       }
-      // Synapsen
-      ctx.lineWidth = 0.8;
+      // Synapsen – gebündelt nach Helligkeit (ruhig / aktiv)
+      const calm = q.lines(), hot = q.lines();
       for (const [a, b] of this.edges) {
         const na = this.nodes[a], nb = this.nodes[b];
-        const depth = (na.pz + nb.pz) / 2;
         const act = Math.max(na.fire, nb.fire);
-        ctx.strokeStyle = orb._rgba(0.04 + depth * 0.14 + act * 0.35, act * 60);
-        ctx.beginPath();
-        ctx.moveTo(na.px, na.py);
-        ctx.lineTo(nb.px, nb.py);
-        ctx.stroke();
+        const alpha = 0.04 + ((na.pz + nb.pz) / 2) * 0.14 + act * 0.35;
+        (act > 0.15 ? hot : calm).add(alpha, na.px, na.py, nb.px, nb.py);
       }
-      // Signale mit kurzem Schweif
-      ctx.lineCap = "round";
+      ctx.lineWidth = 0.8;
+      calm.stroke(ctx, (al) => orb._rgba(al));
+      hot.stroke(ctx, (al) => orb._rgba(al, 60));
+      // Signale: Schweife gebündelt, Köpfe als ein Pfad
+      const trails = q.lines();
+      const heads = [];
       for (const p of this.pulses) {
         const na = this.nodes[p.a], nb = this.nodes[p.b];
         const t0 = Math.max(0, p.t - 0.22);
         const x = na.px + (nb.px - na.px) * p.t, y = na.py + (nb.py - na.py) * p.t;
-        const xt = na.px + (nb.px - na.px) * t0, yt = na.py + (nb.py - na.py) * t0;
         const depth = na.pz + (nb.pz - na.pz) * p.t;
-        ctx.strokeStyle = orb._rgba(0.25 + depth * 0.55, 90);
-        ctx.lineWidth = 1 + depth * 1.4;
+        trails.add(0.25 + depth * 0.55, na.px + (nb.px - na.px) * t0, na.py + (nb.py - na.py) * t0, x, y);
+        heads.push(x, y, 0.8 + depth * 1.3);
+      }
+      ctx.lineCap = "round";
+      ctx.lineWidth = 1.6;
+      trails.stroke(ctx, (al) => orb._rgba(al, 90));
+      ctx.lineCap = "butt";
+      if (heads.length) {
+        ctx.fillStyle = "rgba(255,255,255,0.85)";
         ctx.beginPath();
-        ctx.moveTo(xt, yt);
-        ctx.lineTo(x, y);
-        ctx.stroke();
-        ctx.fillStyle = "rgba(255,255,255," + (0.35 + depth * 0.6).toFixed(3) + ")";
-        ctx.beginPath();
-        ctx.arc(x, y, 0.8 + depth * 1.3, 0, TAU);
+        for (let i = 0; i < heads.length; i += 3) {
+          ctx.moveTo(heads[i] + heads[i + 2], heads[i + 1]);
+          ctx.arc(heads[i], heads[i + 1], heads[i + 2], 0, TAU);
+        }
         ctx.fill();
       }
-      ctx.lineCap = "butt";
-      // Neuronen (hinten zuerst)
-      const order = this.nodes.slice().sort((a, b) => a.pz - b.pz);
-      for (const n of order) {
-        const r = (0.9 + n.pz * 1.6) * n.ps;
-        if (n.fire > 0.05) {
-          const g = ctx.createRadialGradient(n.px, n.py, 0, n.px, n.py, r * 7 * n.fire + r);
-          g.addColorStop(0, orb._rgba(0.8 * n.fire, 120));
-          g.addColorStop(1, "rgba(0,0,0,0)");
-          ctx.fillStyle = g;
-          ctx.beginPath();
-          ctx.arc(n.px, n.py, r * 7 * n.fire + r, 0, TAU);
-          ctx.fill();
+      // Leuchten feuernder Neuronen: vorgerendertes Sprite statt neuem Farbverlauf
+      const sprite = orb._glowSprite();
+      for (const n of this.nodes) {
+        if (n.fire > 0.08) {
+          const r = (0.9 + n.pz * 1.6) * n.ps;
+          const size = r * 7 * n.fire + r;
+          ctx.globalAlpha = Math.min(1, 0.85 * n.fire);
+          ctx.drawImage(sprite, n.px - size, n.py - size, size * 2, size * 2);
         }
-        ctx.fillStyle = orb._rgba(0.25 + n.pz * 0.6 + n.fire * 0.4, 40 + n.fire * 150);
+      }
+      ctx.globalAlpha = 1;
+      // Neuronen – gebündelt nach Helligkeit
+      const dots = q.dots();
+      for (const n of this.nodes) {
+        const r = (0.9 + n.pz * 1.6) * n.ps + n.fire * 1.5;
+        dots.add(0.25 + n.pz * 0.6 + n.fire * 0.4, n.px, n.py, r);
+      }
+      dots.fill(ctx, (al) => orb._rgba(al, 70));
+    }
+  }
+
+  /* Bündelt viele Linien/Punkte nach Helligkeitsstufe → wenige Zeichenbefehle pro Frame. */
+  const LEVELS = 8;
+  class LineBatch {
+    constructor() { this.b = Array.from({ length: LEVELS }, () => []); }
+    add(alpha, x1, y1, x2, y2) {
+      const l = Math.max(0, Math.min(LEVELS - 1, (alpha * LEVELS) | 0));
+      this.b[l].push(x1, y1, x2, y2);
+    }
+    stroke(ctx, color) {
+      for (let l = 0; l < LEVELS; l++) {
+        const a = this.b[l];
+        if (!a.length) continue;
+        ctx.strokeStyle = color((l + 0.5) / LEVELS);
         ctx.beginPath();
-        ctx.arc(n.px, n.py, r + n.fire * 1.5, 0, TAU);
-        ctx.fill();
+        for (let i = 0; i < a.length; i += 4) { ctx.moveTo(a[i], a[i + 1]); ctx.lineTo(a[i + 2], a[i + 3]); }
+        ctx.stroke();
+        a.length = 0;
       }
     }
+  }
+  class DotBatch {
+    constructor() { this.b = Array.from({ length: LEVELS }, () => []); }
+    add(alpha, x, y, r) {
+      const l = Math.max(0, Math.min(LEVELS - 1, (alpha * LEVELS) | 0));
+      this.b[l].push(x, y, r);
+    }
+    fill(ctx, color) {
+      for (let l = 0; l < LEVELS; l++) {
+        const a = this.b[l];
+        if (!a.length) continue;
+        ctx.fillStyle = color((l + 0.5) / LEVELS);
+        ctx.beginPath();
+        for (let i = 0; i < a.length; i += 3) { ctx.moveTo(a[i] + a[i + 2], a[i + 1]); ctx.arc(a[i], a[i + 1], a[i + 2], 0, TAU); }
+        ctx.fill();
+        a.length = 0;
+      }
+    }
+  }
+  // Wiederverwendete Batches (keine Speicherallokation pro Frame)
+  class BatchPool {
+    constructor() { this.l = []; this.d = []; this.li = 0; this.di = 0; }
+    reset() { this.li = 0; this.di = 0; }
+    lines() { return this.l[this.li++] || (this.l[this.li - 1] = new LineBatch()); }
+    dots() { return this.d[this.di++] || (this.d[this.di - 1] = new DotBatch()); }
   }
 
   class Orb {
@@ -189,6 +239,12 @@
       this.bars = new Float32Array(120);
       this.particles = Array.from({ length: 90 }, () => this._particle(true));
       this.net = new NeuralNet(150);
+      this.pool = new BatchPool();
+      // Automatische Drosselung: bei dauerhaft niedriger Bildrate nur jedes 2. Frame zeichnen
+      this.slow = false;
+      this.frameCount = 0;
+      this.periods = [];
+      this.slowSince = 0;
       this.reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       this._resize = this._resize.bind(this);
       window.addEventListener("resize", this._resize);
@@ -212,7 +268,7 @@
     }
 
     _resize() {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = Math.min(window.devicePixelRatio || 1, this.slow ? 1 : 1.5);
       const r = this.canvas.getBoundingClientRect();
       this.w = Math.max(1, r.width);
       this.h = Math.max(1, r.height);
@@ -226,8 +282,32 @@
       return `rgba(${Math.min(255, r + boost) | 0},${Math.min(255, g + boost) | 0},${Math.min(255, b + boost) | 0},${a})`;
     }
 
+    _adapt(period) {
+      this.periods.push(period);
+      if (this.periods.length < 90) return;
+      const avg = this.periods.reduce((a, b) => a + b, 0) / this.periods.length;
+      this.periods.length = 0;
+      const now = performance.now();
+      if (!this.slow && avg > 24) {            // < ~40 fps → sparsamer
+        this.slow = true;
+        this.slowSince = now;
+        this.net.maxPulses = 160;
+        this._resize();
+      } else if (this.slow && avg < 18 && now - this.slowSince > 20000) {  // wieder genug Luft
+        this.slow = false;
+        this.net.maxPulses = MAX_PULSES;
+        this._resize();
+      }
+    }
+
     _frame(now) {
-      const dt = Math.min(0.05, (now - this.last) / 1000);
+      requestAnimationFrame(this._frame.bind(this));
+      const period = now - this.last;
+      if (document.hidden || this.w < 2) { this.last = now; return; }
+      this.frameCount++;
+      if (this.slow && this.frameCount % 2) return;  // 30 fps
+      this._adapt(this.slow ? period / 2 : period);
+      const dt = Math.min(0.05, period / 1000);
       this.last = now;
       const p = PALETTE[this.state];
       const k = 1 - Math.pow(0.02, dt);
@@ -240,11 +320,30 @@
       this.rot += dt * this.speed * motion;
       this.net.update(dt * motion, this);
       this._draw();
-      requestAnimationFrame(this._frame.bind(this));
+    }
+
+    _glowSprite() {
+      const key = this.color.map((c) => (c / 8) | 0).join(",");
+      if (this._spriteKey !== key) {
+        const c = this._sprite || (this._sprite = document.createElement("canvas"));
+        c.width = c.height = 64;
+        const g = c.getContext("2d");
+        g.clearRect(0, 0, 64, 64);
+        const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+        grad.addColorStop(0, this._rgba(1, 150));
+        grad.addColorStop(0.35, this._rgba(0.45, 60));
+        grad.addColorStop(1, "rgba(0,0,0,0)");
+        g.fillStyle = grad;
+        g.fillRect(0, 0, 64, 64);
+        this._spriteKey = key;
+      }
+      return this._sprite;
     }
 
     _draw() {
       const { ctx, w, h } = this;
+      const q = this.pool;
+      q.reset();
       ctx.clearRect(0, 0, w, h);
       const cx = w / 2, cy = h / 2 - h * 0.03;
       const R = Math.min(w, h) * 0.3;
@@ -261,25 +360,25 @@
       glow.addColorStop(0.45, this._rgba(0.05 + lvl * 0.05));
       glow.addColorStop(1, "rgba(0,0,0,0)");
       ctx.fillStyle = glow;
-      ctx.beginPath(); ctx.arc(0, 0, R * 2.1, 0, TAU); ctx.fill();
+      ctx.fillRect(-R * 2.1, -R * 2.1, R * 4.2, R * 4.2);
 
-      // Äußerer Skalenring mit Ticks
-      ctx.save();
-      ctx.rotate(this.rot * 0.15);
-      for (let i = 0; i < 120; i++) {
-        const a = (i / 120) * TAU;
-        const long = i % 10 === 0;
-        const r1 = R * 1.62, r2 = R * (long ? 1.72 : 1.67);
+      // Äußerer Skalenring: zwei Pfade (lange / kurze Striche)
+      const rot = this.rot * 0.15;
+      for (const long of [false, true]) {
         ctx.strokeStyle = this._rgba(long ? 0.55 : 0.22);
         ctx.lineWidth = long ? 2 : 1;
         ctx.beginPath();
-        ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1);
-        ctx.lineTo(Math.cos(a) * r2, Math.sin(a) * r2);
+        for (let i = long ? 0 : 1; i < 120; i += long ? 10 : 1) {
+          if (!long && i % 10 === 0) continue;
+          const a = (i / 120) * TAU + rot;
+          const r1 = R * 1.62, r2 = R * (long ? 1.72 : 1.67);
+          ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1);
+          ctx.lineTo(Math.cos(a) * r2, Math.sin(a) * r2);
+        }
         ctx.stroke();
       }
-      ctx.restore();
 
-      // Segmentierte, gegenläufig rotierende Ringe
+      // Segmentierte, gegenläufig rotierende Ringe (je ein Pfad)
       this._segRing(R * 1.48, 3, 6, this.rot * 0.6, 0.55, 0.12);
       this._segRing(R * 1.36, 2, 24, -this.rot * 1.1, 0.35, 0.02);
       this._segRing(R * 1.24, 4, 3, this.rot * 1.7, 0.7, 0.35);
@@ -296,9 +395,10 @@
         ctx.restore();
       }
 
-      // Audio-Balken
+      // Audio-Balken – gebündelt
       const n = this.bars.length;
       const spec = this.spectrum;
+      const bars = q.lines();
       for (let i = 0; i < n; i++) {
         let target;
         const mirrored = i < n / 2 ? i : n - 1 - i;
@@ -311,29 +411,22 @@
           if (this.state === "thinking") target += 0.2 * Math.max(0, Math.sin(this.t * 6 - i * 0.26));
         }
         this.bars[i] = lerp(this.bars[i], Math.max(0, target), 0.25);
-      }
-      ctx.save();
-      ctx.rotate(-Math.PI / 2);
-      for (let i = 0; i < n; i++) {
-        const a = (i / n) * TAU;
+        const a = (i / n) * TAU - Math.PI / 2;
         const len = R * (0.04 + this.bars[i] * 0.34);
         const r1 = R * 1.04;
-        ctx.strokeStyle = this._rgba(0.35 + this.bars[i] * 0.6, 30);
-        ctx.lineWidth = 2.2;
-        ctx.beginPath();
-        ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1);
-        ctx.lineTo(Math.cos(a) * (r1 + len), Math.sin(a) * (r1 + len));
-        ctx.stroke();
+        bars.add(0.35 + this.bars[i] * 0.6, Math.cos(a) * r1, Math.sin(a) * r1,
+          Math.cos(a) * (r1 + len), Math.sin(a) * (r1 + len));
       }
-      ctx.restore();
+      ctx.lineWidth = 2.2;
+      bars.stroke(ctx, (al) => this._rgba(al, 30));
 
-      // Hauptring
-      ctx.strokeStyle = this._rgba(0.9, 40);
-      ctx.lineWidth = 2.5;
-      ctx.shadowColor = this._rgba(1);
-      ctx.shadowBlur = 18;
-      ctx.beginPath(); ctx.arc(0, 0, R * pulse * 0.98, 0, TAU); ctx.stroke();
-      ctx.shadowBlur = 0;
+      // Hauptring: Leuchten über breite, transparente Linien statt teurem shadowBlur
+      const ringR = R * pulse * 0.98;
+      for (const [width, alpha, boost] of [[12, 0.07, 0], [6, 0.16, 20], [2.5, 0.9, 40]]) {
+        ctx.strokeStyle = this._rgba(alpha, boost);
+        ctx.lineWidth = width;
+        ctx.beginPath(); ctx.arc(0, 0, ringR, 0, TAU); ctx.stroke();
+      }
 
       // Weiches Leuchten im Zentrum, hinter dem Netz
       const coreR = R * (0.5 + lvl * 0.2) * pulse;
@@ -342,23 +435,22 @@
       core.addColorStop(0.6, this._rgba(0.08));
       core.addColorStop(1, "rgba(0,0,0,0)");
       ctx.fillStyle = core;
-      ctx.beginPath(); ctx.arc(0, 0, coreR, 0, TAU); ctx.fill();
+      ctx.fillRect(-coreR, -coreR, coreR * 2, coreR * 2);
 
       // Neuronales Netz
-      this.net.draw(ctx, R * 0.86 * pulse, this);
+      this.net.draw(ctx, R * 0.86 * pulse, this, q);
 
-      // Partikel
+      // Partikel – gebündelt
+      const dots = q.dots();
       for (const pt of this.particles) {
         pt.a += pt.v * 0.016 * (0.6 + this.speed);
         pt.life += 0.004 + this.energy * 0.004;
         if (pt.life > 1) Object.assign(pt, this._particle(false));
         const fade = Math.sin(pt.life * Math.PI);
         const r = R * (pt.r + lvl * 0.25 * Math.sin(this.t * 4 + pt.a * 3));
-        ctx.fillStyle = this._rgba(0.55 * fade, 50);
-        ctx.beginPath();
-        ctx.arc(Math.cos(pt.a) * r, Math.sin(pt.a) * r, pt.s * (0.8 + lvl), 0, TAU);
-        ctx.fill();
+        dots.add(0.55 * fade, Math.cos(pt.a) * r, Math.sin(pt.a) * r, pt.s * (0.8 + lvl));
       }
+      dots.fill(ctx, (al) => this._rgba(al, 50));
 
       // Bestätigung: pulsierender Warnring
       if (this.state === "confirm" || this.state === "error") {
@@ -376,16 +468,16 @@
     _segRing(radius, width, count, rot, alpha, gapRatio) {
       const ctx = this.ctx;
       const seg = TAU / count;
-      ctx.save();
-      ctx.rotate(rot);
       ctx.strokeStyle = this._rgba(alpha);
       ctx.lineWidth = width;
+      ctx.beginPath();
       for (let i = 0; i < count; i++) {
-        const start = i * seg + seg * gapRatio;
-        const end = (i + 1) * seg - seg * gapRatio;
-        ctx.beginPath(); ctx.arc(0, 0, radius, start, end); ctx.stroke();
+        const start = rot + i * seg + seg * gapRatio;
+        const end = rot + (i + 1) * seg - seg * gapRatio;
+        ctx.moveTo(Math.cos(start) * radius, Math.sin(start) * radius);
+        ctx.arc(0, 0, radius, start, end);
       }
-      ctx.restore();
+      ctx.stroke();
     }
   }
 

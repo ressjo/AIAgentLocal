@@ -157,13 +157,19 @@ Verhalten:
                 messages = self.build_messages(hits)
                 filt = ThinkFilter()
                 final: dict = {}
+                reasoning_shown = False
                 await emit({"type": "state", "state": "thinking"})
                 async for ev in self.llm.chat_stream(messages, self.schemas):
                     if ev["type"] == "token":
                         text = filt.feed(ev["text"])
                         if text:
                             await emit({"type": "token", "id": msg_id, "text": text})
-                    else:
+                    elif ev["type"] == "reasoning":
+                        # Denk-Tokens gehören nicht in die Antwort – UI zeigt nur „denkt nach …“ (einmal pro Schritt)
+                        if not reasoning_shown:
+                            reasoning_shown = True
+                            await emit({"type": "reasoning", "id": msg_id})
+                    elif ev["type"] == "done":
                         final = ev["message"]
                         if ev.get("stats", {}).get("tps"):
                             await emit({"type": "llm_stats", **ev["stats"]})

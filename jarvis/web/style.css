@@ -1,7 +1,7 @@
 :root {
   --bg: #02060c;
   --bg-2: #061220;
-  --panel: rgba(8, 24, 40, 0.62);
+  --panel: rgba(7, 20, 34, 0.8);
   --panel-border: rgba(63, 208, 255, 0.22);
   --line: rgba(63, 208, 255, 0.12);
   --accent: #3fd0ff;
@@ -35,9 +35,8 @@ body {
     linear-gradient(90deg, var(--line) 1px, transparent 1px);
   background-size: 48px 48px;
   mask-image: radial-gradient(ellipse at center, rgba(0,0,0,.55), transparent 75%);
-  animation: grid-drift 40s linear infinite;
+  /* bewusst statisch: ein animiertes, maskiertes Vollbild-Gitter zwingt Firefox zu ständigem Neuzeichnen */
 }
-@keyframes grid-drift { to { background-position: 48px 48px, 48px 48px; } }
 
 button { font-family: inherit; cursor: pointer; }
 .hidden { display: none !important; }
@@ -104,7 +103,8 @@ button { font-family: inherit; cursor: pointer; }
   display: flex; flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--panel-border);
-  backdrop-filter: blur(6px);
+  /* kein backdrop-filter: Blur über dem animierten Orb kostet in Firefox bei jedem Frame */
+  contain: content;
   clip-path: polygon(0 14px, 14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%);
 }
 .panel::before, .panel::after {
@@ -284,7 +284,7 @@ button { font-family: inherit; cursor: pointer; }
 /* ---------- Overlays ---------- */
 .overlay {
   position: fixed; inset: 0; z-index: 10; display: grid; place-items: center;
-  background: rgba(1, 4, 9, .72); backdrop-filter: blur(4px); animation: fade .25s;
+  background: rgba(1, 4, 9, .86); animation: fade .25s;
 }
 @keyframes fade { from { opacity: 0; } }
 .modal {
