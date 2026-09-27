@@ -45,6 +45,8 @@ def cmd_doctor(args) -> None:
     def line(ok: bool, text: str, hint: str = "") -> None:
         print(f"  {'✔' if ok else '✘'} {text}" + (f"  → {hint}" if hint and not ok else ""))
 
+    from .update import version
+    print(f"Version: {version()}")
     print(f"Konfiguration: {config_path()} ({'vorhanden' if config_path().exists() else 'Standardwerte'})")
     print("LLM:")
     from .llm import OllamaLLM
@@ -133,6 +135,16 @@ def cmd_summarize(args) -> None:
     asyncio.run(run())
 
 
+def cmd_update(args) -> None:
+    from .update import main_update
+    main_update(load_config().port)
+
+
+def cmd_version(args) -> None:
+    from .update import project_root, version
+    print(f"JARVIS {version()}\n{project_root()}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="jarvis", description="JARVIS – lokaler KI-Assistent")
     sub = parser.add_subparsers(dest="cmd")
@@ -140,6 +152,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--open", action="store_true", help="Browser öffnen")
     p.add_argument("-v", "--verbose", action="store_true")
     sub.add_parser("doctor", help="Installation prüfen")
+    sub.add_parser("update", help="Auf den neuesten Stand bringen (git pull, Abhängigkeiten, Neustart)")
+    sub.add_parser("version", help="Installierte Version anzeigen")
     sub.add_parser("reindex", help="Gedächtnis-Suchindex aus den Markdown-Dateien neu aufbauen")
     p = sub.add_parser("summarize", help="Tageszusammenfassungen erzeugen")
     p.add_argument("day", nargs="?", help="YYYY-MM-DD (Standard: alle fälligen Tage)")
@@ -150,8 +164,8 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if args.cmd is None:
         args = parser.parse_args(["serve", *(argv or sys.argv[1:])])
-    {"serve": cmd_serve, "doctor": cmd_doctor, "reindex": cmd_reindex, "summarize": cmd_summarize,
-     "init-config": cmd_init_config}[args.cmd](args)
+    {"serve": cmd_serve, "doctor": cmd_doctor, "update": cmd_update, "version": cmd_version,
+     "reindex": cmd_reindex, "summarize": cmd_summarize, "init-config": cmd_init_config}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,8 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}/jarvis"
 MODEL=""
 BACKEND="rocm"
 AUTOSTART=1
+REPO="${JARVIS_REPO:-https://github.com/ressjo/AIAgentLocal.git}"
+BRANCH="${JARVIS_BRANCH:-claude/epic-volta-vyvxlk}"
 VOICE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high"
 
 while [[ $# -gt 0 ]]; do
@@ -29,6 +31,17 @@ say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 
 command -v pacman >/dev/null || { echo "Dieses Skript ist für Arch-basierte Systeme (pacman)."; exit 1; }
 
+# ---------------------------------------------------------------- Fester Ort per Git
+# Aus einem ZIP-Download gestartet? Dann besser einen Git-Checkout anlegen – Updates gehen danach mit „jarvis update“.
+if [[ ! -d "$ROOT/.git" && -t 0 ]]; then
+  echo "Dieser Ordner ist ein ZIP-Download. Updates sind einfacher mit einem Git-Checkout unter ~/jarvis."
+  read -r -p "Nach ~/jarvis installieren (empfohlen)? [J/n] " answer
+  if [[ ! "$answer" =~ ^[nN] ]]; then
+    command -v git >/dev/null || sudo pacman -S --needed --noconfirm git
+    JARVIS_REPO="$REPO" JARVIS_BRANCH="$BRANCH" exec bash "$ROOT/scripts/bootstrap.sh" "$@"
+  fi
+fi
+
 # ---------------------------------------------------------------- Systempakete
 say "Installiere Systempakete"
 case "$BACKEND" in
@@ -40,7 +53,7 @@ if ! pacman -Si "$OLLAMA_PKG" >/dev/null 2>&1; then
   echo "Paket $OLLAMA_PKG nicht in den Repos gefunden – nutze 'ollama'."
   OLLAMA_PKG="ollama"
 fi
-sudo pacman -S --needed --noconfirm python uv fd ripgrep plocate xdg-utils polkit pacman-contrib \
+sudo pacman -S --needed --noconfirm python uv git fd ripgrep plocate xdg-utils polkit pacman-contrib \
   gtk3 curl "$OLLAMA_PKG"
 
 say "Starte Ollama-Dienst und Dateiindex"
@@ -97,7 +110,18 @@ fi
 # ---------------------------------------------------------------- Starter
 say "Richte Starter ein"
 mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
-ln -sf "$ROOT/.venv/bin/jarvis" "$HOME/.local/bin/jarvis"
+rm -f "$HOME/.local/bin/jarvis"   # früher ein Symlink in die .venv
+sed -e "s|@JARVIS_HOME@|$ROOT|g" -e "s|@JARVIS_BRANCH@|$BRANCH|g" -e "s|@JARVIS_REPO@|$REPO|g" \
+  "$ROOT/scripts/jarvis-launcher" > "$HOME/.local/bin/jarvis"
+chmod 755 "$HOME/.local/bin/jarvis"
+
+# ~/.local/bin in den PATH aufnehmen (einmalig)
+for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+  [[ -f "$rc" || "$rc" == "$HOME/.bashrc" ]] || continue
+  if ! grep -q "# jarvis-path" "$rc" 2>/dev/null; then
+    printf '\nexport PATH="$HOME/.local/bin:$PATH"  # jarvis-path\n' >> "$rc"
+  fi
+done
 install -m 755 "$ROOT/scripts/jarvis-open" "$HOME/.local/bin/jarvis-open"
 sed "s|@HOME@|$HOME|g" "$ROOT/scripts/jarvis.desktop" > "$HOME/.local/share/applications/jarvis.desktop"
 
@@ -110,8 +134,11 @@ fi
 
 say "Fertig!"
 cat <<EOF
+Installiert in: $ROOT
 Starten:   jarvis serve --open      (oder im Anwendungsmenü „JARVIS“)
 Prüfen:    jarvis doctor
+Updaten:   jarvis update
+(Neues Terminal öffnen oder „source ~/.bashrc“, falls „jarvis“ noch nicht gefunden wird.)
 Oberfläche: http://localhost:8765
 
 Tipp für AMD: Wird deine GPU von ROCm nicht erkannt (ollama ps zeigt 100% CPU), siehe README

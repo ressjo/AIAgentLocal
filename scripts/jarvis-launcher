@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# JARVIS-Starter (von scripts/install.sh nach ~/.local/bin/jarvis installiert).
+# Repariert sich selbst: fehlt die Python-Umgebung (z. B. nach einem neuen Download), wird sie neu angelegt.
+JARVIS_HOME="${JARVIS_HOME:-@JARVIS_HOME@}"
+
+if [ ! -f "$JARVIS_HOME/pyproject.toml" ]; then
+  echo "JARVIS wurde unter '$JARVIS_HOME' nicht gefunden." >&2
+  echo "Neu installieren:  git clone -b @JARVIS_BRANCH@ @JARVIS_REPO@ ~/jarvis && ~/jarvis/scripts/install.sh" >&2
+  exit 1
+fi
+
+if [ ! -x "$JARVIS_HOME/.venv/bin/jarvis" ]; then
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "uv fehlt – bitte '$JARVIS_HOME/scripts/install.sh' ausführen." >&2
+    exit 1
+  fi
+  echo "Python-Umgebung fehlt – richte sie neu ein (einmalig, dauert etwas) …" >&2
+  (cd "$JARVIS_HOME" && uv sync --extra voice --quiet) || exit 1
+fi
+
+exec "$JARVIS_HOME/.venv/bin/jarvis" "$@"

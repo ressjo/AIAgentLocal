@@ -32,10 +32,13 @@ Browser (localhost:8765)                          Python-Backend (FastAPI, nur 1
 ## Installation (Arch / Manjaro / EndeavourOS)
 
 ```bash
-git clone <dieses-repo> ~/AIAgentLocal
-cd ~/AIAgentLocal
-./scripts/install.sh            # Optionen: --model qwen3:8b · --vulkan · --cpu · --no-autostart
+sudo pacman -S --needed git
+git clone -b claude/epic-volta-vyvxlk https://github.com/ressjo/AIAgentLocal.git ~/jarvis
+~/jarvis/scripts/install.sh     # Optionen: --model qwen3:8b · --vulkan · --cpu · --no-autostart
 ```
+
+> Bitte per **Git** installieren, nicht als ZIP – dann gehen Updates mit einem Befehl (`jarvis update`).
+> Startest du `install.sh` doch aus einem ZIP-Ordner, bietet es an, nach `~/jarvis` umzuziehen.
 
 Das Skript
 1. installiert `ollama-rocm`, `uv`, `fd`, `ripgrep`, `plocate`, `xdg-utils`, `polkit`, `pacman-contrib`,
@@ -58,6 +61,21 @@ Oder im Anwendungsmenü **JARVIS** anklicken – öffnet die Oberfläche als eig
 > tools:
 >   nas_paths: [/mnt/nas]
 > ```
+
+## Aktualisieren
+
+```bash
+jarvis update
+```
+
+holt den neuesten Stand (`git pull`), aktualisiert die Python-Abhängigkeiten und startet einen laufenden
+Jarvis-Server automatisch neu – danach nur die Browser-Seite neu laden. `jarvis version` zeigt den installierten Stand.
+
+Deine **Konfiguration** (`~/.config/jarvis/`), **Stimmen** und das **Gedächtnis** (`~/.local/share/jarvis/`)
+liegen außerhalb des Projektordners und bleiben bei Updates immer erhalten.
+
+Der Befehl `jarvis` (`~/.local/bin/jarvis`) ist ein kleiner Starter, der auf den Projektordner zeigt. Fehlt
+dort die Python-Umgebung (z. B. nach einem neuen Download), richtet er sie beim nächsten Aufruf selbst neu ein.
 
 ## Bedienung
 
@@ -226,6 +244,7 @@ jarvis init-config           # Beispielkonfiguration anlegen
 
 | Problem | Lösung |
 |---|---|
+| `jarvis: Kommando nicht gefunden` | Neues Terminal öffnen (PATH wurde ergänzt) oder `~/jarvis/scripts/install.sh` erneut ausführen |
 | Orb bleibt „OFFLINE“ | Läuft `jarvis serve`? Log: `~/.local/state/jarvis.log` |
 | „Ollama nicht erreichbar“ | `sudo systemctl enable --now ollama` |
 | Keine Sprachausgabe (Piper) | `jarvis doctor` → Stimme fehlt? Dann spricht der Browser als Ersatz |
