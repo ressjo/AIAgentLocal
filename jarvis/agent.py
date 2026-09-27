@@ -74,6 +74,7 @@ class Agent:
         self.schemas = tool_schemas(cfg)
         self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
         self.lock = asyncio.Lock()
+        self.services: dict = {}
 
     # ---------- Prompt ----------
     def system_prompt(self) -> str:
@@ -99,6 +100,8 @@ Verhalten:
 - Nach einem Tool-Aufruf fasst du das Ergebnis in ein, zwei Sätzen zusammen, statt die Rohausgabe zu wiederholen.
 - Erfährst du etwas dauerhaft Wichtiges über den Nutzer (Name, Vorlieben, Geräte, Pfade, Projekte), speichere es mit remember.
 - Bei Fragen zu früheren Gesprächen nutze recall. Relevante Erinnerungen stehen unten, sind aber evtl. unvollständig.
+- Bei „Guten Morgen“, „Briefing“ oder „Was steht heute an?“ rufst du daily_briefing auf und fasst es als kurze, freundliche Begrüßung zusammen.
+- „Erinnere mich …“ und „Stell einen Timer …“ erledigst du mit set_reminder; Websites öffnest du mit open_website, Wetterfragen beantwortest du mit weather.
 - Wurde eine Aktion abgelehnt, akzeptiere das und schlage bei Bedarf eine Alternative vor.
 {self._trilium_hint()}{c.persona_extra}""".strip()
 
@@ -234,7 +237,7 @@ Verhalten:
         missing = missing_args(spec, args)
         if missing:
             return name, f"Fehlende Parameter: {', '.join(missing)}", f"{name}: Parameter fehlen"
-        ctx = ToolContext(cfg=self.cfg, memory=self.memory, emit=emit, call_id=call_id)
+        ctx = ToolContext(cfg=self.cfg, memory=self.memory, emit=emit, call_id=call_id, services=self.services)
         risk, reason = spec.assess(ctx, args)
         args_str = json.dumps(args, ensure_ascii=False)
         await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": reason})

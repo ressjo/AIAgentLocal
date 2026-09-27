@@ -108,12 +108,38 @@ Alles liegt als lesbare Dateien in `~/.local/share/jarvis/memory/`:
 | `session.json` | Aktueller Gesprächsverlauf + laufende Zusammenfassung (überlebt Neustarts) |
 | `index.sqlite` | Suchindex (Volltext + Embeddings) – nur Cache, mit `jarvis reindex` neu aufbaubar |
 
-**So bleibt der Kontext klein:** Jeder Prompt hat ein festes Budget (Standard 8 000 Tokens) aus
+**So bleibt der Kontext klein:** Jeder Prompt hat ein festes Budget (Standard 11 000 Tokens) aus
 System-Prompt, Fakten, den **relevantesten Erinnerungen** (hybride Suche: BM25-Volltext + bge-m3-Embeddings,
 leichte Bevorzugung aktueller Einträge), der laufenden Zusammenfassung und den letzten Nachrichten.
 Wird der Verlauf zu lang, faltet Jarvis die ältesten Nachrichten per LLM in die laufende Zusammenfassung –
 im Journal und im Index bleiben sie vollständig erhalten und werden bei Bedarf wieder hervorgeholt.
 So kann Jarvis sich über Monate „an alles erinnern“, ohne dass das Kontextfenster je überläuft.
+
+## Alltag: Websites, Wetter, Erinnerungen, Briefing
+
+**Websites** – „Öffne YouTube“, „Such auf Amazon nach 120-mm-Lüftern“, „Öffne heise.de“.
+Bekannt sind u. a. YouTube, Google, Wikipedia, Amazon, eBay, Kleinanzeigen, idealo, GitHub, Reddit, Google Maps,
+Netflix, Twitch, Spotify, Chefkoch, LEO, DeepL, Arch-Wiki und AUR. Eigene Seiten in der Config:
+
+```yaml
+websites:
+  nas: http://192.168.1.10:5000          # „Öffne das NAS“
+  geizhals: https://geizhals.de/?fs={q}  # {q} = Suchbegriff
+```
+
+**Wetter** (Open-Meteo, kostenlos, ohne Anmeldung) – „Wie wird das Wetter morgen?“, „Regnet es am Wochenende
+in Berlin?“. Standardort in der Config: `weather: {location: "Freiburg im Breisgau"}`.
+
+**Erinnerungen & Timer** – „Erinnere mich in 20 Minuten an die Pizza“, „Stell einen Timer auf 10 Minuten“,
+„Erinnere mich morgen um 9 an den Zahnarzt“, „Welche Erinnerungen habe ich?“, „Lösch die Zahnarzt-Erinnerung“.
+Zur fälligen Zeit gibt es eine Sprachansage, ein Banner mit Gong in der Oberfläche und eine Desktop-Benachrichtigung
+(auch wenn die Oberfläche geschlossen ist). Verpasste Erinnerungen (PC war aus) werden beim nächsten Start gemeldet.
+Anstehende Einträge stehen im Reiter **GEDÄCHTNIS** und lassen sich dort löschen.
+
+**Morgen-Briefing** – „Guten Morgen, Jarvis“ oder „Was steht heute an?“: Datum, Wetter, heutige Erinnerungen,
+verfügbare Systemupdates und Warnungen zu knappem Speicherplatz bzw. nicht gemountetem NAS.
+
+*Geplant:* Kalender (iCloud per CalDAV – Termine direkt mit dem iPhone) und Spotify-Steuerung.
 
 ## Telemetrie
 

@@ -24,6 +24,8 @@ class ToolContext:
     memory: Any
     emit: Callable[[dict], Awaitable[None]] | None = None
     call_id: str = ""
+    # Gemeinsame Dienste des Servers (z. B. "reminders": ReminderStore)
+    services: dict = field(default_factory=dict)
 
     async def output(self, text: str) -> None:
         """Live-Ausgabe eines laufenden Tools an die Oberfläche."""
@@ -144,5 +146,6 @@ def get_tool(name: str) -> ToolSpec | None:
 
 def load_all_tools() -> dict[str, ToolSpec]:
     # Import registriert die Tools per Decorator
-    from . import apps, files, memory_tools, packages, shell, system, trilium, web  # noqa: F401
+    from . import (apps, briefing, files, memory_tools, packages, reminder_tools, shell,  # noqa: F401
+                   system, trilium, weather, web)
     return REGISTRY

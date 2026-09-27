@@ -18,7 +18,7 @@ llm:
 
 memory:
   dir: ~/.local/share/jarvis/memory
-  context_budget_tokens: 8000   # so viel Prompt wird maximal gebaut (< num_ctx!)
+  context_budget_tokens: 11000  # so viel Prompt wird maximal gebaut (< num_ctx, Rest bleibt für die Antwort)
   retrieval_top_k: 6
   summarize_idle_minutes: 15
 
@@ -45,3 +45,11 @@ tools:
 trilium:
   url: ""                # z. B. http://localhost:8080 – leer lassen, um Trilium zu deaktivieren
   token: ""              # Trilium → Optionen → ETAPI → Token erstellen (oder $JARVIS_TRILIUM_TOKEN)
+
+weather:
+  location: ""           # Standardort für Wetter und Briefing, z. B. "Freiburg im Breisgau"
+
+websites: {}             # eigene Seiten für „öffne …“, z. B.:
+#  nas: http://192.168.1.10:5000
+#  proxmox: https://pve.local:8006
+#  geizhals: https://geizhals.de/?fs={q}      # {q} = Suchbegriff

@@ -92,6 +92,17 @@ def cmd_doctor(args) -> None:
     else:
         line(tr["online"], f"{cfg.trilium.url}" + (f" (Version {tr.get('version')})" if tr["online"] else ""),
              tr.get("error", ""))
+    print("Wetter & Erinnerungen:")
+    if cfg.weather.location:
+        from .tools.weather import WeatherError, geocode
+        try:
+            place = asyncio.run(geocode(cfg.weather.location))
+            line(True, f"Wetter-Ort: {place.get('name')} ({place.get('admin1') or place.get('country', '')})")
+        except WeatherError as e:
+            line(False, f"Wetter-Ort '{cfg.weather.location}'", str(e))
+    else:
+        print("  – kein Standardort (weather.location) – Wetter fragt dann nach dem Ort")
+    line(bool(shutil.which("notify-send")), "Desktop-Benachrichtigungen (notify-send)", "sudo pacman -S libnotify")
     print("NAS:")
     if not cfg.tools.nas_paths:
         print("  – kein NAS-Pfad konfiguriert (tools.nas_paths)")

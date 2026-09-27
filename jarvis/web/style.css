@@ -311,6 +311,30 @@ button { font-family: inherit; cursor: pointer; }
   animation: msg-in .3s;
 }
 
+/* ---------- Erinnerungen ---------- */
+.reminder-banner {
+  position: fixed; top: 76px; left: 50%; transform: translateX(-50%); z-index: 15;
+  width: min(560px, calc(100vw - 32px)); display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px; background: #04111e; border: 1px solid var(--warn);
+  box-shadow: 0 0 40px rgba(255,179,71,.3); animation: msg-in .35s, ring-glow 1.6s ease-in-out infinite;
+}
+@keyframes ring-glow { 50% { box-shadow: 0 0 12px rgba(255,179,71,.15); } }
+.reminder-icon svg { width: 30px; height: 30px; fill: var(--warn); animation: bell 1.2s ease-in-out infinite; transform-origin: 50% 10%; }
+@keyframes bell { 0%, 60%, 100% { transform: rotate(0); } 10%, 30% { transform: rotate(14deg); } 20%, 40% { transform: rotate(-14deg); } }
+.reminder-body { flex: 1; min-width: 0; }
+.reminder-kind { font-size: 11px; letter-spacing: .3em; color: var(--warn); }
+.reminder-text { font-size: 18px; margin-top: 2px; word-wrap: break-word; }
+.reminders { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.reminders li:not(.empty) {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13.5px;
+  border-left: 2px solid var(--warn); background: rgba(255,179,71,.05);
+}
+.rem-when { font-family: var(--mono); font-size: 11.5px; color: var(--warn); white-space: nowrap; }
+.rem-text { flex: 1; min-width: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .reminder-banner, .reminder-icon svg { animation: none; }
+}
+
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-thumb { background: rgba(63,208,255,.25); }
 

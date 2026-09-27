@@ -8,6 +8,8 @@ import json
 import logging
 import os
 import re
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -20,6 +22,8 @@ from .llm import FakeLLM, OllamaLLM
 from .memory import Memory
 from . import metrics
 from .memory.files import valid_day
+from .reminders import ReminderStore
+from .tools import proc
 from .tools.trilium import trilium_status
 from .voice.listen import AudioSession, WakeWordFactory, WhisperSTT
 from .voice import catalog
@@ -78,6 +82,8 @@ class Hub:
         self.cfg = cfg
         self.agent = agent
         self.clients: set[Client] = set()
+        # Erinnerungen, die fällig wurden, als keine Oberfläche offen war – werden beim Verbinden zugestellt
+        self.undelivered: list[dict] = []
         self.pending: dict[str, asyncio.Future] = {}
         self.tasks: set[asyncio.Task] = set()
         self.stt = stt
@@ -177,6 +183,8 @@ def create_app(cfg: Config) -> FastAPI:
     llm = FakeLLM() if fake else OllamaLLM(cfg.llm)
     memory = Memory(cfg.memory, llm)
     agent = Agent(cfg, llm, memory)
+    reminders = ReminderStore(cfg.memory.dir.parent / "reminders.json")
+    agent.services["reminders"] = reminders
 
     stt = wake = tts = None
     if cfg.voice.enabled:
@@ -192,6 +200,7 @@ def create_app(cfg: Config) -> FastAPI:
         hub.speaker.start()
         background.append(asyncio.create_task(summary_loop()))
         background.append(asyncio.create_task(metrics_loop()))
+        background.append(asyncio.create_task(reminder_loop()))
         if stt and os.environ.get("JARVIS_SKIP_WARMUP") != "1":
             background.append(asyncio.create_task(asyncio.to_thread(stt.warmup)))
         yield
@@ -200,6 +209,34 @@ def create_app(cfg: Config) -> FastAPI:
         await hub.speaker.close()
         await llm.close()
         memory.close()
+
+    async def fire_reminder(r, now) -> None:
+        late = (now - r.due_dt).total_seconds() > 120
+        kind = "Timer" if r.kind == "timer" else "Erinnerung"
+        spoken = (f"Verpasste {kind} von {r.due_dt.strftime('%H:%M')} Uhr: {r.text}" if late
+                  else ("Der Timer ist abgelaufen: " if r.kind == "timer" else "Erinnerung: ") + r.text)
+        reminders.mark_done(r.id)
+        memory.journal.append("Erinnerung", spoken)
+        event = {"type": "reminder", "id": r.id, "text": r.text, "kind": r.kind,
+                 "due": r.due, "late": late, "spoken": spoken}
+        if hub.clients:
+            await hub.broadcast(event)
+            hub.speaker.say(spoken)
+        else:
+            hub.undelivered.append(event)
+        if shutil.which("notify-send"):
+            await proc.launch(["notify-send", "--app-name=JARVIS", "--urgency=critical",
+                               f"JARVIS – {kind}", r.text], wait=1)
+
+    async def reminder_loop() -> None:
+        while True:
+            try:
+                now = datetime.now()
+                for r in reminders.due(now):
+                    await fire_reminder(r, now)
+            except Exception as e:  # noqa: BLE001
+                log.warning("Erinnerung fehlgeschlagen: %s", e)
+            await asyncio.sleep(1)
 
     async def metrics_loop() -> None:
         while True:
@@ -265,6 +302,16 @@ def create_app(cfg: Config) -> FastAPI:
             "trilium": await trilium_status(cfg),
             "busy": agent.lock.locked(),
         }
+
+    @app.get("/api/reminders")
+    async def get_reminders():
+        return [{"id": r.id, "text": r.text, "due": r.due, "kind": r.kind} for r in reminders.upcoming()]
+
+    @app.delete("/api/reminders/{rid}")
+    async def delete_reminder(rid: str):
+        if not reminders.cancel(rid):
+            raise HTTPException(404, "Erinnerung nicht gefunden")
+        return {"ok": True}
 
     @app.get("/api/metrics")
     async def get_metrics():
@@ -333,6 +380,11 @@ def create_app(cfg: Config) -> FastAPI:
         hub.clients.add(client)
         await client.send({"type": "hello", "busy": agent.lock.locked(),
                            "pending": [cid for cid in hub.pending]})
+        if hub.undelivered:
+            events, hub.undelivered = hub.undelivered, []
+            for event in events:
+                await client.send(event)
+                hub.speaker.say(event["spoken"])
         try:
             while True:
                 msg = await ws.receive()

@@ -27,7 +27,7 @@ class LLMConfig(BaseModel):
 class MemoryConfig(BaseModel):
     dir: Path = DATA_DIR / "memory"
     # Gesamtbudget (geschätzte Tokens) für den Prompt; muss deutlich unter num_ctx liegen
-    context_budget_tokens: int = 8000
+    context_budget_tokens: int = 11000
     retrieval_top_k: int = 6
     retrieval_max_tokens: int = 1500
     facts_max_tokens: int = 1200
@@ -88,6 +88,11 @@ class TriliumConfig(BaseModel):
         return bool(self.url and self.api_token)
 
 
+class WeatherConfig(BaseModel):
+    # Standardort, z. B. "Freiburg im Breisgau" – leer = Jarvis fragt nach dem Ort
+    location: str = ""
+
+
 class Config(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8765
@@ -100,6 +105,9 @@ class Config(BaseModel):
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     trilium: TriliumConfig = Field(default_factory=TriliumConfig)
+    weather: WeatherConfig = Field(default_factory=WeatherConfig)
+    # Zusätzliche Websites für open_website: Name → URL; "{q}" wird durch die Suche ersetzt
+    websites: dict[str, str] = Field(default_factory=dict)
 
     def expand_paths(self) -> "Config":
         self.memory.dir = self.memory.dir.expanduser()

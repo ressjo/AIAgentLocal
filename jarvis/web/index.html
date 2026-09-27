@@ -106,6 +106,10 @@
       </div>
       <div class="tab-body hidden" id="tab-memory">
         <div class="mem-section">
+          <div class="mem-title">ERINNERUNGEN</div>
+          <ul class="reminders" id="reminders"></ul>
+        </div>
+        <div class="mem-section">
           <div class="mem-title">FAKTEN</div>
           <ul class="facts" id="facts"></ul>
         </div>
@@ -164,6 +168,17 @@
   </div>
 
   <div class="toast hidden" id="toast"></div>
+
+  <div class="reminder-banner hidden" id="reminder-banner" role="alert">
+    <div class="reminder-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5-6.7V3.5a2 2 0 1 0-4 0v.8A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg>
+    </div>
+    <div class="reminder-body">
+      <div class="reminder-kind" id="reminder-kind">ERINNERUNG</div>
+      <div class="reminder-text" id="reminder-text"></div>
+    </div>
+    <button class="btn approve" id="reminder-ok">OK</button>
+  </div>
 
   <script src="/static/orb.js"></script>
   <script src="/static/voicefx.js"></script>

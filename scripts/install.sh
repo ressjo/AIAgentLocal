@@ -53,7 +53,7 @@ if ! pacman -Si "$OLLAMA_PKG" >/dev/null 2>&1; then
   echo "Paket $OLLAMA_PKG nicht in den Repos gefunden – nutze 'ollama'."
   OLLAMA_PKG="ollama"
 fi
-sudo pacman -S --needed --noconfirm python uv git fd ripgrep plocate xdg-utils polkit pacman-contrib \
+sudo pacman -S --needed --noconfirm python uv git fd ripgrep plocate xdg-utils polkit pacman-contrib libnotify \
   gtk3 curl "$OLLAMA_PKG"
 
 say "Starte Ollama-Dienst und Dateiindex"

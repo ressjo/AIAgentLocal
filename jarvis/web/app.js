@@ -263,6 +263,7 @@
       case "assistant_end":
         finishAssistant(ev.id, ev.cancelled);
         setTimeout(loadStatus, 300);
+        if (!$("tab-memory").classList.contains("hidden")) loadReminders();
         break;
       case "tool_call":
         toolCall(ev);
@@ -298,6 +299,9 @@
         break;
       case "memory":
         addSystem(ev.text);
+        break;
+      case "reminder":
+        showReminder(ev);
         break;
       case "metrics":
         showMetrics(ev);
@@ -887,7 +891,68 @@
     } catch { /* egal */ }
   }
 
+  // ---------------------------------------------------------------- Erinnerungen
+  function reminderWhen(iso) {
+    const d = new Date(iso);
+    const today = new Date();
+    const tomorrow = new Date(Date.now() + 86400000);
+    const time = d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+    if (d.toDateString() === today.toDateString()) return `heute ${time}`;
+    if (d.toDateString() === tomorrow.toDateString()) return `morgen ${time}`;
+    return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" }) + " " + time;
+  }
+
+  async function loadReminders() {
+    const list = $("reminders");
+    try {
+      const items = await getJSON("/api/reminders");
+      list.innerHTML = items.length ? "" : '<li class="empty">Keine anstehenden Erinnerungen.</li>';
+      for (const r of items) {
+        const li = document.createElement("li");
+        li.innerHTML = `<span class="rem-when"></span><span class="rem-text"></span><button class="ghost small" title="Löschen">✕</button>`;
+        li.querySelector(".rem-when").textContent = (r.kind === "timer" ? "⏱ " : "") + reminderWhen(r.due);
+        li.querySelector(".rem-text").textContent = r.text;
+        li.querySelector("button").onclick = async () => {
+          await fetch(`/api/reminders/${encodeURIComponent(r.id)}`, { method: "DELETE" });
+          loadReminders();
+        };
+        list.appendChild(li);
+      }
+    } catch {
+      list.innerHTML = '<li class="empty">Erinnerungen nicht ladbar.</li>';
+    }
+  }
+
+  function chime() {
+    if (!A.ctx) return;
+    const t0 = A.ctx.currentTime;
+    [880, 1318.5, 1760].forEach((freq, i) => {
+      const osc = A.ctx.createOscillator();
+      const gain = A.ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const t = t0 + i * 0.18;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.25, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+      osc.connect(gain).connect(A.ctx.destination);
+      osc.start(t);
+      osc.stop(t + 1);
+    });
+  }
+
+  function showReminder(ev) {
+    $("reminder-kind").textContent = ev.late ? "VERPASSTE ERINNERUNG" : ev.kind === "timer" ? "TIMER ABGELAUFEN" : "ERINNERUNG";
+    $("reminder-text").textContent = ev.text;
+    $("reminder-banner").classList.remove("hidden");
+    chime();
+    addSystem("🔔 " + ev.spoken);
+    if (!$("tab-memory").classList.contains("hidden")) loadReminders();
+  }
+  $("reminder-ok").onclick = () => $("reminder-banner").classList.add("hidden");
+
   async function loadMemory() {
+    loadReminders();
     try {
       const [facts, days] = await Promise.all([getJSON("/api/memory/facts"), getJSON("/api/memory/days")]);
       $("facts").innerHTML = facts.length
