@@ -97,6 +97,19 @@ Wird der Verlauf zu lang, faltet Jarvis die ältesten Nachrichten per LLM in die
 im Journal und im Index bleiben sie vollständig erhalten und werden bei Bedarf wieder hervorgeholt.
 So kann Jarvis sich über Monate „an alles erinnern“, ohne dass das Kontextfenster je überläuft.
 
+## Stimme & Jarvis-Effekt
+
+Im Reiter **STIMME** der Oberfläche:
+
+- **Deutsche Stimmen** per Klick installieren, **anhören** und **auswählen**: Thorsten (hoch/mittel/ruhig),
+  Pavoque (tiefer, sehr butlerhaft), Karlsson sowie zwei Frauenstimmen. Sie landen in
+  `~/.local/share/jarvis/voices/` – eigene Piper-Stimmen (`.onnx` + `.onnx.json`) dort ablegen, dann erscheinen sie ebenfalls.
+- **Jarvis-Effekt** (an/aus + Stärke): etwas tiefere, sonore Stimme, leichter Raumhall, dezenter Chorus und
+  „digitaler“ Schimmer. Das Sprechtempo bleibt gleich – Jarvis synthetisiert passend schneller.
+
+Die Originalstimme aus den Filmen (bzw. der deutschen Synchronfassung) ist nicht enthalten: Stimme und Aufnahmen
+gehören den Sprechern bzw. dem Studio.
+
 ## Trilium-Notizen
 
 Jarvis kann auf deine [Trilium](https://github.com/TriliumNext/Trilium)-Notizen zugreifen (lokal oder auf dem NAS):

@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .agent import Agent
@@ -21,6 +21,7 @@ from .memory import Memory
 from .memory.files import valid_day
 from .tools.trilium import trilium_status
 from .voice.listen import AudioSession, WakeWordFactory, WhisperSTT
+from .voice import catalog
 from .voice.tts import PiperTTS, Speaker
 
 log = logging.getLogger(__name__)
@@ -219,6 +220,11 @@ def create_app(cfg: Config) -> FastAPI:
         # Schutz vor DNS-Rebinding: nur Anfragen an localhost zulassen
         if not check_host(request.headers.get("host"), cfg.port):
             return JSONResponse({"error": "forbidden host"}, status_code=403)
+        # Schreibende Anfragen nur von der eigenen Oberfläche (Schutz vor CSRF)
+        origin = request.headers.get("origin")
+        if request.method not in ("GET", "HEAD") and origin and \
+                not check_host(re.sub(r"^https?://", "", origin), cfg.port):
+            return JSONResponse({"error": "forbidden origin"}, status_code=403)
         return await call_next(request)
 
     @app.get("/")
@@ -269,6 +275,34 @@ def create_app(cfg: Config) -> FastAPI:
         return {"summary": memory.conversation.running_summary,
                 "messages": [{"role": m["role"], "content": m["content"]} for m in msgs[-40:]]}
 
+    @app.get("/api/voices")
+    async def voices():
+        if not tts:
+            return {"available": False, "voices": []}
+        tts.available()
+        return {"available": True, "current": tts.current, "rate": tts.rate,
+                "voices": catalog.voice_list(tts.voices_dir, tts.current)}
+
+    @app.post("/api/voices/{name}/install")
+    async def install_voice(name: str):
+        if not tts:
+            raise HTTPException(400, "Sprachausgabe ist deaktiviert")
+        if name not in catalog.BY_NAME:
+            raise HTTPException(404, "Unbekannte Stimme")
+        try:
+            await catalog.install_voice(name, tts.voices_dir)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"Download fehlgeschlagen: {e}") from e
+        return {"ok": True}
+
+    @app.get("/api/voices/{name}/preview")
+    async def preview_voice(name: str, text: str = ""):
+        if not tts or name not in tts.installed() or not tts.available():
+            raise HTTPException(404, "Stimme nicht installiert")
+        sample = text.strip()[:200] or "Guten Abend. Alle Systeme sind einsatzbereit. Womit kann ich dienen?"
+        wav = await asyncio.to_thread(tts.synth, sample, name)
+        return Response(wav, media_type="audio/wav")
+
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):
         origin = ws.headers.get("origin", "")
@@ -303,6 +337,11 @@ def create_app(cfg: Config) -> FastAPI:
                     await hub.stop()
                 elif t == "tts":
                     client.tts = bool(data.get("enabled"))
+                elif t == "voice_settings" and tts:
+                    if data.get("voice"):
+                        tts.select(str(data["voice"]))
+                    if data.get("rate"):
+                        tts.set_rate(float(data["rate"]))
                 elif t == "wake":
                     await client.audio.set_wake(bool(data.get("enabled")))
                 elif t == "ptt_start":

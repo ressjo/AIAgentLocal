@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import json
 import logging
 import re
 import wave
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 from ..config import VoiceConfig
 
@@ -73,41 +75,79 @@ class SentenceSplitter:
 
 
 class PiperTTS:
+    """Piper mit mehreren installierbaren Stimmen. `rate` < 1 bedeutet: die Oberfläche spielt das Audio
+    langsamer (= tiefer) ab – Piper spricht dafür entsprechend schneller, damit das Tempo gleich bleibt."""
+
     def __init__(self, cfg: VoiceConfig):
         self.cfg = cfg
-        self._voice = None
+        self.voices_dir = cfg.tts_voice.parent
+        self.current = cfg.tts_voice.stem.removesuffix(".onnx")
+        self.rate = 1.0
+        self._voices: dict[str, tuple[object, int | None]] = {}
         self._error: str | None = None
 
+    def path(self, name: str | None = None) -> Path:
+        return self.voices_dir / f"{name or self.current}.onnx"
+
+    def installed(self) -> list[str]:
+        return sorted(p.stem for p in self.voices_dir.glob("*.onnx")) if self.voices_dir.exists() else []
+
+    def select(self, name: str) -> bool:
+        if name and self.path(name).exists():
+            self.current = name
+            return True
+        return False
+
+    def set_rate(self, rate: float) -> None:
+        self.rate = min(1.0, max(0.8, float(rate)))
+
     def available(self) -> bool:
-        if not self.cfg.tts_voice.exists():
-            self._error = f"Stimme fehlt: {self.cfg.tts_voice}"
-            return False
+        if not self.path().exists():
+            others = self.installed()
+            if others:
+                self.current = others[0]
+            else:
+                self._error = f"Stimme fehlt: {self.path()}"
+                return False
         try:
             import piper  # noqa: F401
         except ImportError:
             self._error = "piper-tts ist nicht installiert"
             return False
+        self._error = None
         return True
 
     @property
     def error(self) -> str | None:
         return self._error
 
-    def _load(self):
-        if self._voice is None:
+    def _load(self, name: str):
+        if name not in self._voices:
             from piper import PiperVoice
-            self._voice = PiperVoice.load(str(self.cfg.tts_voice))
-        return self._voice
+            voice = PiperVoice.load(str(self.path(name)))
+            self._voices[name] = (voice, self._speaker_id(name))
+        return self._voices[name]
 
-    def synth(self, text: str) -> bytes:
-        voice = self._load()
+    def _speaker_id(self, name: str) -> int | None:
+        from .catalog import BY_NAME
+        wanted = BY_NAME[name].speaker if name in BY_NAME else ""
+        meta = self.path(name).with_suffix(".onnx.json")
+        if not wanted or not meta.exists():
+            return None
+        ids = json.loads(meta.read_text(encoding="utf-8")).get("speaker_id_map") or {}
+        return ids.get(wanted)
+
+    def synth(self, text: str, name: str | None = None) -> bytes:
+        voice, speaker_id = self._load(name or self.current)
+        length_scale = self.cfg.tts_length_scale * self.rate
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wav:
             try:
                 from piper import SynthesisConfig
-                voice.synthesize_wav(text, wav, syn_config=SynthesisConfig(length_scale=self.cfg.tts_length_scale))
+                voice.synthesize_wav(text, wav, syn_config=SynthesisConfig(
+                    length_scale=length_scale, speaker_id=speaker_id))
             except ImportError:  # ältere piper-tts-Versionen
-                voice.synthesize(text, wav, length_scale=self.cfg.tts_length_scale)
+                voice.synthesize(text, wav, length_scale=length_scale, speaker_id=speaker_id)
         return buf.getvalue()
 
 
@@ -117,7 +157,7 @@ class Speaker:
 
     def __init__(self, tts: PiperTTS | None, send: Callable[[dict], Awaitable[None]],
                  wanted: Callable[[], bool]):
-        self.tts = tts if tts and tts.available() else None
+        self.tts = tts
         self.send = send
         self.wanted = wanted
         self.splitters: dict[str, SentenceSplitter] = {}
@@ -168,7 +208,7 @@ class Speaker:
             if gen != self.generation:
                 continue
             event = {"type": "speak", "id": msg_id, "seq": seq, "text": text}
-            if self.tts:
+            if self.tts and self.tts.available():
                 try:
                     wav = await asyncio.to_thread(self.tts.synth, text)
                     event["audio"] = base64.b64encode(wav).decode()

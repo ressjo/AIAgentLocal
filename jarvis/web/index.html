@@ -45,10 +45,26 @@
       <div class="tabs">
         <button class="tab active" data-tab="activity">AKTIVITÄT</button>
         <button class="tab" data-tab="memory">GEDÄCHTNIS</button>
+        <button class="tab" data-tab="voice">STIMME</button>
       </div>
       <div class="tab-body" id="tab-activity">
         <div class="activity" id="activity">
           <div class="empty">Noch keine Systemaktivität.</div>
+        </div>
+      </div>
+      <div class="tab-body hidden" id="tab-voice">
+        <div class="mem-section">
+          <div class="mem-title">JARVIS-EFFEKT</div>
+          <div class="fx-row">
+            <button class="toggle" id="fx-toggle">AUS</button>
+            <input type="range" id="fx-amount" min="0" max="100" value="60" aria-label="Effektstärke">
+            <span class="fx-value" id="fx-value">60 %</span>
+          </div>
+          <p class="fx-hint">Tiefere, sonore Stimme mit leichtem Hall und digitalem Schimmer.</p>
+        </div>
+        <div class="mem-section">
+          <div class="mem-title">DEUTSCHE STIMMEN</div>
+          <ul class="voices" id="voices"></ul>
         </div>
       </div>
       <div class="tab-body hidden" id="tab-memory">
@@ -113,6 +129,7 @@
   <div class="toast hidden" id="toast"></div>
 
   <script src="/static/orb.js"></script>
+  <script src="/static/voicefx.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

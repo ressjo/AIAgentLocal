@@ -20,6 +20,7 @@
     ws: null, connected: false, retry: 0,
     serverState: "idle", substate: "",
     tts: store.get("tts", true), wake: store.get("wake", false),
+    voiceName: store.get("voice", ""), fxOn: store.get("fx", true), fxAmount: store.get("fxAmount", 0.6),
     recording: false, transcribing: false, streamMic: false,
     playing: false, confirm: null, confirmListenSent: false,
     historyLoaded: false, status: null, errorUntil: 0,
@@ -36,6 +37,10 @@
     A.outAnalyser.fftSize = 256;
     A.outAnalyser.connect(A.ctx.destination);
     A.spec = new Uint8Array(A.outAnalyser.frequencyBinCount);
+    if (window.VoiceFX) {
+      A.fx = new window.VoiceFX(A.ctx, A.outAnalyser);
+      A.fx.set(S.fxOn, S.fxAmount);
+    }
     if (A.ctx.state === "suspended") await A.ctx.resume();
   }
 
@@ -109,7 +114,8 @@
         if (gen !== A.gen) return;
         const src = A.ctx.createBufferSource();
         src.buffer = buf;
-        src.connect(A.outAnalyser);
+        src.playbackRate.value = fxRate();
+        src.connect(A.fx ? A.fx.input : A.outAnalyser);
         src.onended = done;
         A.current = src;
         src.start();
@@ -118,6 +124,7 @@
         u.lang = "de-DE";
         if (germanVoice) u.voice = germanVoice;
         u.rate = 1.05;
+        u.pitch = S.fxOn ? 1 - 0.3 * S.fxAmount : 1;
         u.onend = done;
         u.onerror = done;
         u.onboundary = () => { A.synthLevel = 0.6 + Math.random() * 0.4; };
@@ -205,6 +212,7 @@
       S.connected = true;
       S.retry = 0;
       send({ type: "tts", enabled: S.tts });
+      sendVoiceSettings();
       if (S.wake && A.micReady) send({ type: "wake", enabled: true });
       refresh();
       loadStatus();
@@ -618,9 +626,116 @@
       document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
       $("tab-activity").classList.toggle("hidden", tab.dataset.tab !== "activity");
       $("tab-memory").classList.toggle("hidden", tab.dataset.tab !== "memory");
+      $("tab-voice").classList.toggle("hidden", tab.dataset.tab !== "voice");
       if (tab.dataset.tab === "memory") loadMemory();
+      if (tab.dataset.tab === "voice") loadVoices();
     };
   });
+
+  // ---------------------------------------------------------------- Stimme & Effekt
+  function fxRate() {
+    return S.fxOn ? +(1 - 0.08 * S.fxAmount).toFixed(3) : 1;
+  }
+
+  function sendVoiceSettings() {
+    send({ type: "voice_settings", voice: S.voiceName || undefined, rate: fxRate() });
+  }
+
+  function renderFx() {
+    $("fx-toggle").textContent = S.fxOn ? "AN" : "AUS";
+    $("fx-toggle").classList.toggle("on", S.fxOn);
+    $("fx-amount").value = Math.round(S.fxAmount * 100);
+    $("fx-value").textContent = Math.round(S.fxAmount * 100) + " %";
+    if (A.fx) A.fx.set(S.fxOn, S.fxAmount);
+  }
+
+  $("fx-toggle").onclick = () => {
+    S.fxOn = !S.fxOn;
+    store.set("fx", S.fxOn);
+    renderFx();
+    sendVoiceSettings();
+  };
+  $("fx-amount").oninput = (e) => {
+    S.fxAmount = e.target.value / 100;
+    store.set("fxAmount", S.fxAmount);
+    renderFx();
+  };
+  $("fx-amount").onchange = () => sendVoiceSettings();
+  renderFx();
+
+  async function loadVoices() {
+    const list = $("voices");
+    let data;
+    try {
+      data = await getJSON("/api/voices");
+    } catch {
+      list.innerHTML = '<li class="empty">Stimmen nicht ladbar.</li>';
+      return;
+    }
+    if (!data.available) {
+      list.innerHTML = '<li class="empty">Piper-Sprachausgabe ist deaktiviert – es spricht der Browser.</li>';
+      return;
+    }
+    if (!S.voiceName) S.voiceName = data.current;
+    list.innerHTML = "";
+    for (const v of data.voices) {
+      const li = document.createElement("li");
+      const current = v.name === data.current;
+      li.className = "voice" + (current ? " current" : "");
+      li.innerHTML = `<div class="voice-head"><span class="voice-name"></span><span class="voice-tag">${current ? "AKTIV" : v.installed ? "INSTALLIERT" : v.male ? "MÄNNLICH" : "WEIBLICH"}</span></div>
+        <div class="voice-desc"></div><div class="voice-actions"></div>`;
+      li.querySelector(".voice-name").textContent = v.label;
+      li.querySelector(".voice-desc").textContent = v.description;
+      const actions = li.querySelector(".voice-actions");
+      const btn = (label, fn) => {
+        const b = document.createElement("button");
+        b.className = "ghost";
+        b.textContent = label;
+        b.onclick = async () => { b.disabled = true; try { await fn(b); } finally { b.disabled = false; } };
+        actions.appendChild(b);
+        return b;
+      };
+      if (v.installed) {
+        btn("ANHÖREN", () => previewVoice(v.name));
+        if (!current) btn("AUSWÄHLEN", async () => {
+          S.voiceName = v.name;
+          store.set("voice", v.name);
+          sendVoiceSettings();
+          setTimeout(loadVoices, 150);
+        });
+      } else {
+        btn("INSTALLIEREN", async (b) => {
+          b.textContent = "LÄDT …";
+          const r = await fetch(`/api/voices/${encodeURIComponent(v.name)}/install`, { method: "POST" });
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            toast(err.detail || "Installation fehlgeschlagen");
+          }
+          loadVoices();
+          loadStatus();
+        });
+      }
+      list.appendChild(li);
+    }
+  }
+
+  async function previewVoice(name) {
+    await initAudio();
+    sendVoiceSettings();
+    const r = await fetch(`/api/voices/${encodeURIComponent(name)}/preview`);
+    if (!r.ok) { toast("Probe nicht möglich"); return; }
+    const buf = await A.ctx.decodeAudioData(await r.arrayBuffer());
+    stopSpeech(true);
+    const src = A.ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = fxRate();
+    src.connect(A.fx ? A.fx.input : A.outAnalyser);
+    A.current = src;
+    S.playing = true;
+    refresh();
+    src.onended = () => { S.playing = false; A.current = null; refresh(); };
+    src.start();
+  }
 
   let toastTimer;
   function toast(text) {
