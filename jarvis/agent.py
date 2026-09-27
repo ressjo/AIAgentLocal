@@ -113,6 +113,10 @@ Verhalten:
             hint += ("- Du hast Zugriff auf den Kalender des Nutzers (iPhone): Termine abfragen mit calendar_events, freie "
                      "Zeit mit calendar_free, neue Termine mit calendar_add (Datum/Uhrzeit anhand des heutigen Datums "
                      "als YYYY-MM-DD HH:MM angeben), ändern mit calendar_update, löschen mit calendar_delete.\n")
+        if self.cfg.paperless.enabled or self.cfg.trilium.enabled or self.cfg.calendar.enabled:
+            hint += ("- Meldet ein Dienst-Tool (Paperless, Trilium, Kalender) 'nicht erreichbar', Zertifikats- oder "
+                     "Token-Fehler: gib dem Nutzer die Meldung samt Tipp kurz weiter und empfiehl `jarvis doctor`. "
+                     "Starte dafür KEINE eigenen Shell-Diagnosen (systemctl, curl, ping).\n")
         if self.cfg.paperless.enabled:
             hint += ("- Die Dokumente des Nutzers (Rechnungen, Verträge, Briefe, Bescheide, Versicherungen …) liegen in "
                      "Paperless. Fragen dazu: erst paperless_search, dann mit der Dokument-ID paperless_ask (Frage zum "

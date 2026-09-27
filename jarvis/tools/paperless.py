@@ -19,6 +19,7 @@ from typing import Annotated, Any
 import httpx
 
 from . import proc
+from .netutil import client_kwargs, explain, html_instead_of_json, normalize_url
 from .registry import ToolContext, tool
 
 # Für Tests austauschbar (httpx.MockTransport)
@@ -44,12 +45,12 @@ class PaperlessClient:
     def __init__(self, cfg):
         p = cfg.paperless
         self.max_chars = p.max_chars
+        self.url = normalize_url(p.url, "/api")
         self.client = httpx.AsyncClient(
-            base_url=p.url.rstrip("/") + "/api",
+            base_url=self.url + "/api",
             headers={"Authorization": f"Token {p.api_token}", "Accept": "application/json"},
-            timeout=p.timeout,
             transport=TRANSPORT,
-            follow_redirects=True,
+            **client_kwargs(p.verify_ssl, p.timeout),
         )
         self._names: dict[str, dict[int, str]] = {}
 
@@ -60,10 +61,15 @@ class PaperlessClient:
         await self.client.aclose()
 
     async def request(self, method: str, path: str, **kw) -> httpx.Response:
-        try:
-            r = await self.client.request(method, path, **kw)
-        except httpx.HTTPError as e:
-            raise PaperlessError(f"Paperless ist nicht erreichbar ({e.__class__.__name__}). Läuft der Server?") from e
+        for attempt in (1, 2):
+            try:
+                r = await self.client.request(method, path, **kw)
+                break
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                if attempt == 2 or "certificate" in str(e).lower() or "name or service" in str(e).lower():
+                    raise PaperlessError(explain(e, "Paperless", self.url)) from e
+            except httpx.HTTPError as e:
+                raise PaperlessError(explain(e, "Paperless", self.url)) from e
         if r.status_code in (401, 403):
             raise PaperlessError("Der Paperless-Token ist ungültig oder hat keine Rechte "
                                  "(Paperless → Profil → API-Auth-Token).")
@@ -75,6 +81,9 @@ class PaperlessClient:
             return None
         if r.status_code >= 400:
             raise PaperlessError(f"Paperless-Fehler {r.status_code}: {r.text[:200]}")
+        if html_instead_of_json(r):
+            raise PaperlessError(f"Unter {self.url} antwortet eine Webseite statt der Paperless-API – "
+                                 "Adresse prüfen (nur Basis-URL, z. B. https://nas:8444).")
         return r.json()
 
     async def names(self, kind: str) -> dict[int, str]:
@@ -340,7 +349,9 @@ async def paperless_status(cfg) -> dict:
             r = await pc.request("GET", "/documents/", params={"page_size": 1})
             if r.status_code >= 400:
                 raise PaperlessError(f"Paperless-Fehler {r.status_code}")
+            if html_instead_of_json(r):
+                raise PaperlessError(f"Unter {pc.url} antwortet eine Webseite statt der Paperless-API.")
             return {"enabled": True, "online": True, "count": r.json().get("count", 0),
-                    "version": r.headers.get("x-version", "?")}
+                    "version": r.headers.get("x-version", "?"), "url": pc.url}
     except (PaperlessError, ValueError) as e:
-        return {"enabled": True, "online": False, "error": str(e)}
+        return {"enabled": True, "online": False, "error": str(e), "url": normalize_url(cfg.paperless.url, "/api")}

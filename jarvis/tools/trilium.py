@@ -17,6 +17,7 @@ from typing import Annotated, Any
 
 import httpx
 
+from .netutil import client_kwargs, explain, normalize_url
 from .proc import clip
 from .registry import CONFIRM, ToolContext, tool
 
@@ -201,11 +202,12 @@ class TriliumClient:
     def __init__(self, cfg):
         t = cfg.trilium
         self.max_chars = t.max_chars
+        self.url = normalize_url(t.url, "/etapi")
         self.client = httpx.AsyncClient(
-            base_url=t.url.rstrip("/") + "/etapi",
+            base_url=self.url + "/etapi",
             headers={"Authorization": t.api_token},
-            timeout=t.timeout,
             transport=TRANSPORT,
+            **client_kwargs(t.verify_ssl, t.timeout),
         )
 
     async def __aenter__(self):
@@ -218,7 +220,7 @@ class TriliumClient:
         try:
             r = await self.client.request(method, path, **kw)
         except httpx.HTTPError as e:
-            raise TriliumError(f"Trilium ist nicht erreichbar ({e.__class__.__name__}). Läuft der Server?") from e
+            raise TriliumError(explain(e, "Trilium", self.url)) from e
         if r.status_code == 401:
             raise TriliumError("Der ETAPI-Token ist ungültig (Trilium → Optionen → ETAPI).")
         return r

@@ -292,6 +292,11 @@ und öffnet sie als PDF – **nur lesend**, in Paperless wird nichts verändert.
    ```
 3. `jarvis doctor` zeigt „✔ … – N Dokumente“, danach Jarvis neu starten.
 
+Läuft Paperless (oder Trilium) per **HTTPS mit selbstsigniertem Zertifikat**, z. B. `https://192.168.178.79:8444`,
+zusätzlich `verify_ssl: false` eintragen – oder sicherer den Pfad zur CA-/Zertifikatsdatei:
+`verify_ssl: ~/certs/nas-ca.pem`. Heimnetz-Dienste spricht Jarvis immer direkt an, nie über einen System-Proxy.
+Kann Jarvis einen Dienst nicht erreichen, nennt die Meldung Adresse, Grund und Lösungstipp.
+
 Beispiele: „Such mir die letzte Stromrechnung“, „Wann kann ich meinen Handyvertrag kündigen?“,
 „Was steht in der Garantie vom Geschirrspüler?“, „Öffne das Dokument“, „Welche Dokumente kamen diese Woche?“.
 

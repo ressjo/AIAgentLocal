@@ -135,6 +135,8 @@ class TriliumConfig(BaseModel):
     token: str = ""
     timeout: float = 20.0
     max_chars: int = 8000
+    # HTTPS mit selbstsigniertem Zertifikat: false – oder Pfad zur CA-/Zertifikatsdatei
+    verify_ssl: bool | str = True
 
     @property
     def api_token(self) -> str:
@@ -151,6 +153,8 @@ class PaperlessConfig(BaseModel):
     # API-Token (Paperless → Profil oben rechts → API-Auth-Token); alternativ $JARVIS_PAPERLESS_TOKEN
     token: str = ""
     timeout: float = 30.0
+    # HTTPS mit selbstsigniertem Zertifikat: false – oder Pfad zur CA-/Zertifikatsdatei
+    verify_ssl: bool | str = True
     # so viel Dokumenttext geht höchstens an das Modell (größere Dokumente: nur relevante Stellen)
     max_chars: int = 5000
 

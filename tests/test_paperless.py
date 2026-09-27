@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from conftest import run
 from fake_paperless import TOKEN, FakePaperless
@@ -104,14 +105,16 @@ def test_errors(cfg, fake):
 
 def test_status_and_unreachable(cfg, fake, monkeypatch):
     st = run(pl.paperless_status(cfg))
-    assert st == {"enabled": True, "online": True, "count": 2, "version": "2.17.1"}
+    assert st == {"enabled": True, "online": True, "count": 2, "version": "2.17.1",
+                  "url": "http://paperless.local:8000"}
 
     def boom(request):
         raise httpx.ConnectError("nope")
 
     import httpx
     monkeypatch.setattr(pl, "TRANSPORT", httpx.MockTransport(boom))
-    assert "nicht erreichbar" in run(pl.paperless_search(ctx(cfg), "x"))
+    out = run(pl.paperless_search(ctx(cfg), "x"))
+    assert "Paperless unter http://paperless.local:8000" in out and "jarvis doctor" in out
 
 
 def test_split_passages_overlap_and_coverage():
@@ -119,3 +122,69 @@ def test_split_passages_overlap_and_coverage():
     parts = pl.split_passages(text, 500)
     assert all(len(p) <= 500 for p in parts) and len(parts) > 10
     assert parts[-1].endswith("hier.")
+
+
+def test_url_normalization():
+    from jarvis.tools.netutil import normalize_url
+    assert normalize_url("https:///192.168.178.79:8444") == "https://192.168.178.79:8444"
+    assert normalize_url("https://nas:8444/api/", "/api") == "https://nas:8444"
+    assert normalize_url("nas.local:8000") == "http://nas.local:8000"
+    assert normalize_url("HTTP:/nas:1/") == "HTTP://nas:1"
+    assert normalize_url("") == ""
+
+
+def test_client_uses_normalized_url_no_proxy_and_verify_option(cfg, monkeypatch):
+    import ssl
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+    cfg.paperless.url, cfg.paperless.token = "https:///192.168.178.79:8444/", "t"
+    pc = pl.PaperlessClient(cfg)
+    assert str(pc.client.base_url) == "https://192.168.178.79:8444/api/"
+    assert pc.client._trust_env is False
+    cfg.paperless.verify_ssl = False
+    from jarvis.tools.netutil import verify_arg
+    assert verify_arg(False) is False and verify_arg(True) is True
+    with pytest.raises((FileNotFoundError, ssl.SSLError, OSError)):
+        verify_arg("/gibt/es/nicht.pem")
+    run(pc.client.aclose())
+
+
+@pytest.mark.parametrize("exc,expected", [
+    (httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate"),
+     "verify_ssl: false"),
+    (httpx.ConnectError("[SSL: WRONG_VERSION_NUMBER] wrong version number"), "http:// statt https://"),
+    (httpx.ConnectError("[Errno -2] Name or service not known"), "Hostname nicht auflösbar"),
+    (httpx.ConnectError("[Errno 111] Connection refused"), "stimmt der Port"),
+    (httpx.ReadTimeout("timed out"), "Zeitüberschreitung"),
+    (httpx.ConnectError("All connection attempts failed"), "stimmt der Port"),
+    (httpx.ReadError(""), "mit https:// eintragen"),
+])
+def test_error_explanations(cfg, fake, monkeypatch, exc, expected):
+    calls = []
+
+    def boom(request):
+        calls.append(request)
+        raise exc
+
+    monkeypatch.setattr(pl, "TRANSPORT", httpx.MockTransport(boom))
+    out = run(pl.paperless_search(ctx(cfg), "x"))
+    assert expected in out and "http://paperless.local:8000" in out
+
+
+def test_retry_once_on_connect_error(cfg, fake, monkeypatch):
+    handler = fake.transport().handler
+    state = {"n": 0}
+
+    def flaky(request):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise httpx.ConnectError("connection reset")
+        return handler(request)
+
+    monkeypatch.setattr(pl, "TRANSPORT", httpx.MockTransport(flaky))
+    assert "[7] Handyvertrag" in run(pl.paperless_search(ctx(cfg), "Handyvertrag"))
+
+
+def test_html_login_page_instead_of_api(cfg, fake, monkeypatch):
+    monkeypatch.setattr(pl, "TRANSPORT", httpx.MockTransport(
+        lambda r: httpx.Response(200, text="<html>Login</html>", headers={"content-type": "text/html"})))
+    assert "Webseite statt der Paperless-API" in run(pl.paperless_search(ctx(cfg), "x"))

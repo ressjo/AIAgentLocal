@@ -70,10 +70,12 @@ tools:
 trilium:
   url: ""                # z. B. http://localhost:8080 – leer lassen, um Trilium zu deaktivieren
   token: ""              # Trilium → Optionen → ETAPI → Token erstellen (oder $JARVIS_TRILIUM_TOKEN)
+  verify_ssl: true       # HTTPS mit selbstsigniertem Zertifikat: false (oder Pfad zur CA-Datei)
 
 paperless:               # Paperless-ngx: Dokumente suchen, befragen, öffnen (nur lesend)
   url: ""                # z. B. http://nas.local:8000 – leer lassen, um Paperless zu deaktivieren
   token: ""              # Paperless → Profil (oben rechts) → API-Auth-Token (oder $JARVIS_PAPERLESS_TOKEN)
+  verify_ssl: true       # HTTPS mit selbstsigniertem Zertifikat: false (oder Pfad zur CA-Datei)
 
 weather:
   location: ""           # Standardort für Wetter und Briefing, z. B. "Freiburg im Breisgau"

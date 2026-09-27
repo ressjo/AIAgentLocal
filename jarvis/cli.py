@@ -111,15 +111,19 @@ def cmd_doctor(args) -> None:
     if not tr["enabled"]:
         print("  – nicht konfiguriert (trilium.url und trilium.token in der Config)")
     else:
-        line(tr["online"], f"{cfg.trilium.url}" + (f" (Version {tr.get('version')})" if tr["online"] else ""),
+        from .tools.netutil import normalize_url
+        line(tr["online"], f"{normalize_url(cfg.trilium.url, '/etapi')}" + (f" (Version {tr.get('version')})" if tr["online"] else ""),
              tr.get("error", ""))
+    proxies = [k for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy") if os.environ.get(k)]
+    if proxies and (cfg.trilium.enabled or cfg.paperless.enabled):
+        print(f"  ℹ Proxy gesetzt ({', '.join(proxies)}) – Trilium/Paperless werden bewusst direkt angesprochen")
     print("Paperless:")
     from .tools.paperless import paperless_status
     ps_ = asyncio.run(paperless_status(cfg))
     if not ps_["enabled"]:
         print("  – nicht konfiguriert (paperless.url und paperless.token in der Config)")
     else:
-        line(ps_["online"], f"{cfg.paperless.url}" + (f" – {ps_['count']} Dokumente (Version {ps_['version']})"
+        line(ps_["online"], f"{ps_.get('url') or cfg.paperless.url}" + (f" – {ps_['count']} Dokumente (Version {ps_['version']})"
                                                        if ps_["online"] else ""), ps_.get("error", ""))
     print("Kalender:")
     if not cfg.calendar.enabled:
