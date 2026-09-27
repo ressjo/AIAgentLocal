@@ -92,6 +92,14 @@ def cmd_doctor(args) -> None:
     else:
         line(tr["online"], f"{cfg.trilium.url}" + (f" (Version {tr.get('version')})" if tr["online"] else ""),
              tr.get("error", ""))
+    print("Kalender:")
+    if not cfg.calendar.enabled:
+        print("  – nicht konfiguriert (calendar.url, username, password)")
+    else:
+        from .tools.calendar_tools import calendar_status
+        cs = asyncio.run(calendar_status(cfg))
+        line(cs["online"], f"{cfg.calendar.url} – " + (", ".join(cs.get("calendars", [])) if cs["online"] else "Fehler"),
+             cs.get("error", ""))
     print("Wetter & Erinnerungen:")
     if cfg.weather.location:
         from .tools.weather import WeatherError, geocode

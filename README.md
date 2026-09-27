@@ -139,7 +139,38 @@ Anstehende Einträge stehen im Reiter **GEDÄCHTNIS** und lassen sich dort lösc
 **Morgen-Briefing** – „Guten Morgen, Jarvis“ oder „Was steht heute an?“: Datum, Wetter, heutige Erinnerungen,
 verfügbare Systemupdates und Warnungen zu knappem Speicherplatz bzw. nicht gemountetem NAS.
 
-*Geplant:* Kalender (iCloud per CalDAV – Termine direkt mit dem iPhone) und Spotify-Steuerung.
+*Geplant:* Spotify-Steuerung.
+
+## Kalender (iCloud / iPhone)
+
+Jarvis greift per **CalDAV** direkt auf deinen iCloud-Kalender zu – keine Synchronisation auf Linux nötig.
+Neue Termine erscheinen nach wenigen Sekunden auf dem iPhone.
+
+1. **App-spezifisches Passwort** erstellen (nötig wegen 2FA): [appleid.apple.com](https://appleid.apple.com) →
+   *Anmeldung und Sicherheit* → *App-spezifische Passwörter* → „+“ → Name „Jarvis“ → Passwort notieren.
+2. In `~/.config/jarvis/config.yaml` eintragen:
+   ```yaml
+   calendar:
+     url: https://caldav.icloud.com
+     username: deine-apple-id@icloud.com
+     password: "xxxx-xxxx-xxxx-xxxx"     # oder Umgebungsvariable JARVIS_CALENDAR_PASSWORD
+     calendars: [Privat]                 # welche Kalender Jarvis liest (leer = alle)
+     default_calendar: Privat            # hierhin kommen neue Termine
+   ```
+3. `jarvis doctor` zeigt unter „Kalender“ die gefundenen Kalender, danach Jarvis neu starten.
+
+| Beispiel | Tool | Bestätigung |
+|---|---|---|
+| „Was steht morgen an?“ · „Was hab ich nächste Woche?“ | `calendar_events` | – |
+| „Hab ich Freitag Nachmittag Zeit?“ | `calendar_free` | – |
+| „Trag Zahnarzt am Dienstag um 10 Uhr für 45 Minuten ein“ · „Urlaub vom 3. bis 7. Oktober“ | `calendar_add` | – |
+| „Verschieb den Friseur auf 15 Uhr“ | `calendar_update` | **ja** |
+| „Lösch das Training am Donnerstag“ | `calendar_delete` | **ja** |
+
+Die heutigen Termine erscheinen außerdem im **Morgen-Briefing**. Sommer-/Winterzeit wird korrekt berücksichtigt.
+Serientermine ändert Jarvis nicht einzeln (damit die Serie intakt bleibt) – die bitte am iPhone anpassen.
+Das Passwort lässt sich bei Apple jederzeit einzeln widerrufen. Funktioniert genauso mit Nextcloud oder anderen
+CalDAV-Servern.
 
 ## Telemetrie
 

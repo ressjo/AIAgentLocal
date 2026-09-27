@@ -106,9 +106,14 @@ Verhalten:
 {self._trilium_hint()}{c.persona_extra}""".strip()
 
     def _trilium_hint(self) -> str:
+        hint = ""
+        if self.cfg.calendar.enabled:
+            hint += ("- Du hast Zugriff auf den Kalender des Nutzers (iPhone): Termine abfragen mit calendar_events, freie "
+                     "Zeit mit calendar_free, neue Termine mit calendar_add (Datum/Uhrzeit anhand des heutigen Datums "
+                     "als YYYY-MM-DD HH:MM angeben), ändern mit calendar_update, löschen mit calendar_delete.\n")
         if not self.cfg.trilium.enabled:
-            return ""
-        return ("- Die persönlichen Notizen des Nutzers liegen in Trilium. Fragen zu seinen Notizen, Aufschrieben oder "
+            return hint
+        return hint + ("- Die persönlichen Notizen des Nutzers liegen in Trilium. Fragen zu seinen Notizen, Aufschrieben oder "
                 "Anleitungen beantwortest du mit trilium_search und trilium_read. Bei 'notier/schreib auf/leg eine "
                 "Notiz an' nutzt du trilium_create_note (landet in der Inbox), zum Ergänzen trilium_append.\n")
 

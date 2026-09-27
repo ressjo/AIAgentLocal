@@ -10,6 +10,7 @@ from pathlib import Path
 from ..memory.files import german_date
 from . import proc
 from .registry import ToolContext, tool
+from .calendar_tools import CalendarError, events_between
 from .reminder_tools import store_for
 from .weather import WeatherError, weather_report
 
@@ -23,6 +24,18 @@ async def _weather(ctx: ToolContext) -> str | None:
         return await weather_report(ctx.cfg.weather.location, 1)
     except WeatherError as e:
         return f"Wetter: {e}"
+
+
+async def _calendar(ctx: ToolContext) -> str | None:
+    if not ctx.cfg.calendar.enabled:
+        return None
+    try:
+        events = await events_between(ctx.cfg, datetime.now().date(), 1)
+    except CalendarError as e:
+        return f"Kalender: {e}"
+    if not events:
+        return "Kalender: heute keine Termine."
+    return "Termine heute:\n" + "\n".join(f"- {e.line()}" for e in events)
 
 
 async def _updates(ctx: ToolContext) -> str | None:
@@ -59,15 +72,18 @@ def _disks(ctx: ToolContext) -> str | None:
 
 
 @tool("Tagesüberblick für „Guten Morgen“ oder „Was steht heute an?“: Datum, Wetter am Standardort, heutige "
-      "Erinnerungen, verfügbare Systemupdates und Speicher-/NAS-Warnungen.")
+      "Kalendertermine, Erinnerungen, verfügbare Systemupdates und Speicher-/NAS-Warnungen.")
 async def daily_briefing(ctx: ToolContext) -> str:
     now = datetime.now()
     parts = [f"Heute ist {german_date(now)}, {now.strftime('%H:%M')} Uhr."]
-    weather, updates = await asyncio.gather(_weather(ctx), _updates(ctx), return_exceptions=True)
+    weather, calendar, updates = await asyncio.gather(_weather(ctx), _calendar(ctx), _updates(ctx),
+                                                       return_exceptions=True)
     if isinstance(weather, str):
         parts.append(weather)
     elif not ctx.cfg.weather.location:
         parts.append("Wetter: kein Standardort eingestellt (weather.location).")
+    if isinstance(calendar, str):
+        parts.append(calendar)
     reminders = store_for(ctx).today()
     if reminders:
         parts.append("Heutige Erinnerungen:\n" + "\n".join(

@@ -24,6 +24,7 @@ from . import metrics
 from .memory.files import valid_day
 from .reminders import ReminderStore
 from .tools import proc
+from .tools.calendar_tools import calendar_status
 from .tools.trilium import trilium_status
 from .voice.listen import AudioSession, WakeWordFactory, WhisperSTT
 from .voice import catalog
@@ -54,6 +55,10 @@ def describe_call(name: str, args: dict) -> str:
         return f"das Entfernen von {args.get('names', '')}"
     if name == "system_update":
         return "ein vollständiges Systemupdate"
+    if name == "calendar_update":
+        return f"das Ändern des Termins {args.get('query', '')}"
+    if name == "calendar_delete":
+        return f"das Löschen des Termins {args.get('query', '')}"
     if name == "trilium_update_note":
         return f"das Überschreiben der Trilium-Notiz {args.get('note', '')}"
     if name == "write_file":
@@ -300,6 +305,7 @@ def create_app(cfg: Config) -> FastAPI:
                 "dir": str(cfg.memory.dir),
             },
             "trilium": await trilium_status(cfg),
+            "calendar": await calendar_status(cfg),
             "busy": agent.lock.locked(),
         }
 

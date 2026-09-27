@@ -88,6 +88,27 @@ class TriliumConfig(BaseModel):
         return bool(self.url and self.api_token)
 
 
+class CalendarConfig(BaseModel):
+    # iCloud: https://caldav.icloud.com – funktioniert mit jedem CalDAV-Server (Nextcloud, Radicale, …)
+    url: str = ""
+    username: str = ""
+    # App-spezifisches Passwort (Apple-ID → Anmeldung und Sicherheit); alternativ $JARVIS_CALENDAR_PASSWORD
+    password: str = ""
+    # Kalender, die gelesen werden (leer = alle)
+    calendars: list[str] = Field(default_factory=list)
+    # Kalender für neue Termine (leer = erster gelesener)
+    default_calendar: str = ""
+    timeout: float = 20.0
+
+    @property
+    def api_password(self) -> str:
+        return self.password or os.environ.get("JARVIS_CALENDAR_PASSWORD", "")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.url and self.username and self.api_password)
+
+
 class WeatherConfig(BaseModel):
     # Standardort, z. B. "Freiburg im Breisgau" – leer = Jarvis fragt nach dem Ort
     location: str = ""
@@ -106,6 +127,7 @@ class Config(BaseModel):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     trilium: TriliumConfig = Field(default_factory=TriliumConfig)
     weather: WeatherConfig = Field(default_factory=WeatherConfig)
+    calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     # Zusätzliche Websites für open_website: Name → URL; "{q}" wird durch die Suche ersetzt
     websites: dict[str, str] = Field(default_factory=dict)
 

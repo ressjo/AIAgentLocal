@@ -53,3 +53,11 @@ websites: {}             # eigene Seiten für „öffne …“, z. B.:
 #  nas: http://192.168.1.10:5000
 #  proxmox: https://pve.local:8006
 #  geizhals: https://geizhals.de/?fs={q}      # {q} = Suchbegriff
+
+calendar:                # iCloud-Kalender (oder jeder andere CalDAV-Server)
+  url: ""                # iCloud: https://caldav.icloud.com
+  username: ""           # E-Mail-Adresse deiner Apple-ID
+  password: ""           # APP-SPEZIFISCHES Passwort (appleid.apple.com → Anmeldung und Sicherheit)
+                         # oder stattdessen Umgebungsvariable JARVIS_CALENDAR_PASSWORD
+  calendars: [Privat]    # welche Kalender gelesen werden (leer = alle)
+  default_calendar: Privat   # hierhin kommen neue Termine
