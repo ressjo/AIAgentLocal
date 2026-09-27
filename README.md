@@ -363,6 +363,7 @@ Alle Optionen mit Erklärung: [`jarvis/config.example.yaml`](jarvis/config.examp
 | `voice.wakeword_threshold` | Empfindlichkeit des Wake-Words (niedriger = empfindlicher) |
 | `tools.nas_paths` | Liste der gemounteten NAS-Verzeichnisse |
 | `tools.privilege_cmd` | `pkexec` oder `sudo` |
+| `tools.max_steps` | Max. Einzelschritte (Tool-Runden) pro Auftrag, Standard 25 – danach fasst Jarvis zusammen und macht auf „mach weiter“ fort |
 | `user_name`, `persona_extra` | Anrede und zusätzliche Persönlichkeit |
 
 ## Kommandos

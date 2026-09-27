@@ -100,3 +100,78 @@ def test_think_filter():
     f = ThinkFilter()
     out = "".join(f.feed(t) for t in ["Hal", "lo <thi", "nk>geheim</th", "ink> Welt"]) + f.flush()
     assert out == "Hallo  Welt"
+
+
+class ToolHappyLLM:
+    """Ruft immer wieder Tools auf; ohne Tools (Zwischenbilanz) antwortet es mit Text."""
+
+    def __init__(self, same_args=False):
+        self.same_args = same_args
+        self.calls = 0
+        self.final_requests = []
+
+    async def chat_stream(self, messages, tools=None):
+        if tools is None:
+            self.final_requests.append(messages[-1]["content"])
+            yield {"type": "token", "text": "Bisher erledigt: X."}
+            yield {"type": "done", "message": {"role": "assistant", "content": "Bisher erledigt: X."}, "stats": {}}
+            return
+        self.calls += 1
+        args = {"note": "gleich"} if self.same_args else {"note": f"n{self.calls}"}
+        yield {"type": "done", "message": {"role": "assistant", "content": "", "tool_calls": [
+            {"function": {"name": "system_info", "arguments": {}}},
+        ] if not self.same_args else [{"function": {"name": "system_info", "arguments": args}}]}, "stats": {}}
+
+
+def _run_with(cfg, memory, llm):
+    agent = Agent(cfg, llm, memory)
+    return run(collect(agent, "Mach was Großes"))
+
+
+def test_step_limit_from_config_ends_with_summary(cfg, memory, monkeypatch):
+    from jarvis.agent import Agent as A
+    executed = []
+
+    async def fake_exec(self, call, emit, confirm):
+        executed.append(call)
+        return "system_info", f"ok {len(executed)}", "system_info: ok"
+
+    monkeypatch.setattr(A, "_execute", fake_exec)
+    cfg.tools.max_steps = 4
+
+    class Varying(ToolHappyLLM):
+        async def chat_stream(self, messages, tools=None):
+            if tools is None:
+                async for ev in super().chat_stream(messages, None):
+                    yield ev
+                return
+            self.calls += 1
+            yield {"type": "done", "message": {"role": "assistant", "content": "", "tool_calls": [
+                {"function": {"name": "system_info", "arguments": {"i": self.calls}}}]}, "stats": {}}
+
+    llm = Varying()
+    answer, events, _ = _run_with(cfg, memory, llm)
+    assert llm.calls == 4 and len(executed) == 4
+    assert len(llm.final_requests) == 1 and "Schrittlimit" in llm.final_requests[0]
+    assert "Bisher erledigt: X." in answer and "mach weiter" in answer
+    hist = memory.conversation.history
+    assert hist[-1]["role"] == "assistant" and "mach weiter" in hist[-1]["content"]
+
+
+def test_repeated_identical_calls_are_skipped_and_stopped(cfg, memory, monkeypatch):
+    from jarvis.agent import Agent as A
+    executed = []
+
+    async def fake_exec(self, call, emit, confirm):
+        executed.append(call)
+        return "system_info", "ok", "system_info: ok"
+
+    monkeypatch.setattr(A, "_execute", fake_exec)
+    cfg.tools.max_steps = 25
+    llm = ToolHappyLLM(same_args=True)
+    answer, _, _ = _run_with(cfg, memory, llm)
+    assert len(executed) == 2          # 3. und 4. identischer Aufruf werden nicht ausgeführt
+    assert llm.calls == 4              # nach der 4. Wiederholung Schluss statt bis 25
+    assert "mach weiter" in answer
+    skipped = [m for m in memory.conversation.history if m["role"] == "tool" and "bereits ausgeführt" in m["content"]]
+    assert len(skipped) == 2

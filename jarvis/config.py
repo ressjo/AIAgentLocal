@@ -115,6 +115,8 @@ class ToolsConfig(BaseModel):
     # "auto" (yay/paru suchen), "yay", "paru" oder "none"
     aur_helper: str = "auto"
     shell_timeout: int = 120
+    # so viele Modellschritte (Tool-Runden) darf eine Aufgabe höchstens brauchen
+    max_steps: int = 25
     update_timeout: int = 3600
     max_output_chars: int = 6000
     searxng_url: str | None = None

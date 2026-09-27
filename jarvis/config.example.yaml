@@ -65,6 +65,7 @@ tools:
   privilege_cmd: pkexec  # pkexec (grafischer Passwortdialog) oder sudo (sudo -n, braucht NOPASSWD-Regel)
   aur_helper: auto       # auto | yay | paru | none
   shell_timeout: 120
+  max_steps: 25          # max. Einzelschritte (Tool-Runden) pro Auftrag; danach Zwischenbilanz + „mach weiter“
   searxng_url: null      # leer = DuckDuckGo. Nur EIGENE SearXNG-Instanz eintragen (öffentliche sperren die JSON-API)
 
 trilium:

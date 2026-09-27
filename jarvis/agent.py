@@ -24,7 +24,8 @@ from .tools.system import _os_name
 log = logging.getLogger(__name__)
 
 ANSWER_RESERVE = 1500  # Token, die im Kontextfenster für die Antwort frei bleiben
-MAX_STEPS = 10
+FINAL_NUDGE = ("(System: Das Schrittlimit für diese Aufgabe ist erreicht. Rufe keine Werkzeuge mehr auf. Fasse in "
+               "2–4 Sätzen zusammen, was du erledigt bzw. herausgefunden hast und was noch fehlt.)")
 Emit = Callable[[dict], Awaitable[None]]
 Confirm = Callable[[str, str, dict, str], Awaitable[bool]]
 
@@ -176,30 +177,10 @@ Verhalten:
         msg_id = uuid.uuid4().hex[:8]
         await emit({"type": "assistant_start", "id": msg_id})
         try:
-            for _ in range(MAX_STEPS):
-                filt = ThinkFilter()
-                final: dict = {}
-                reasoning_shown = False
-                await emit({"type": "state", "state": "thinking"})
-                async for ev in self._stream_fitting(hits):
-                    if ev["type"] == "token":
-                        text = filt.feed(ev["text"])
-                        if text:
-                            await emit({"type": "token", "id": msg_id, "text": text})
-                    elif ev["type"] == "reasoning":
-                        # Denk-Tokens gehören nicht in die Antwort – UI zeigt nur „denkt nach …“ (einmal pro Schritt)
-                        if not reasoning_shown:
-                            reasoning_shown = True
-                            await emit({"type": "reasoning", "id": msg_id})
-                    elif ev["type"] == "done":
-                        final = ev["message"]
-                        if ev.get("stats", {}).get("tps"):
-                            await emit({"type": "llm_stats", **ev["stats"]})
-                tail = filt.flush()
-                if tail:
-                    await emit({"type": "token", "id": msg_id, "text": tail})
-                content = strip_think(final.get("content", ""))
-                calls = final.get("tool_calls") or []
+            seen: dict[str, int] = {}  # gleiche Tool-Aufrufe zählen (Schleifenerkennung)
+            finished = False
+            for _ in range(max(1, self.cfg.tools.max_steps)):
+                content, calls = await self._step(hits, emit, msg_id)
                 entry = {"role": "assistant", "content": content}
                 if calls:
                     entry["tool_calls"] = calls
@@ -207,16 +188,38 @@ Verhalten:
                 if content:
                     spoken.append(content)
                 if not calls:
+                    finished = True
                     break
                 await emit({"type": "segment_end", "id": msg_id})
+                looping = False
                 for call in calls:
-                    name, result, note = await self._execute(call, emit, confirm)
+                    fn = call.get("function", {})
+                    key = fn.get("name", "") + json.dumps(fn.get("arguments"), sort_keys=True, ensure_ascii=False)
+                    seen[key] = seen.get(key, 0) + 1
+                    if seen[key] >= 3:
+                        # Nicht noch einmal ausführen – das Modell dreht sich im Kreis
+                        name = fn.get("name", "")
+                        result = ("Dieser Aufruf wurde mit denselben Argumenten bereits ausgeführt – das Ergebnis "
+                                  "steht oben. Nicht wiederholen, sondern mit dem vorhandenen Ergebnis antworten.")
+                        note = f"{name}: Wiederholung übersprungen"
+                        looping = looping or seen[key] >= 4
+                    else:
+                        name, result, note = await self._execute(call, emit, confirm)
                     conv.add({"role": "tool", "content": result, "tool_name": name})
                     tool_notes.append(note)
-            else:
-                spoken.append("Ich habe die Aufgabe nach zu vielen Einzelschritten abgebrochen.")
-                conv.add({"role": "assistant", "content": spoken[-1]})
-                await emit({"type": "token", "id": msg_id, "text": spoken[-1]})
+                if looping:
+                    break
+            if not finished:
+                # Limit erreicht oder Schleife: ohne Tools zusammenfassen lassen, statt hart abzubrechen
+                content, _ = await self._step(hits, emit, msg_id, final=True)
+                if not content:
+                    content = "Ich habe nach vielen Einzelschritten pausiert."
+                    await emit({"type": "token", "id": msg_id, "text": content})
+                hint = "Sag „mach weiter“, dann setze ich fort."
+                await emit({"type": "token", "id": msg_id, "text": "\n\n" + hint})
+                content = f"{content}\n\n{hint}"
+                conv.add({"role": "assistant", "content": content})
+                spoken.append(content)
         except LLMError as e:
             del conv.history[start_len:]
             await emit({"type": "error", "text": str(e)})
@@ -243,13 +246,43 @@ Verhalten:
             log.warning("Kompaktierung fehlgeschlagen: %s", e)
         return answer
 
-    async def _stream_fitting(self, hits):
+    async def _step(self, hits, emit: Emit, msg_id: str, final: bool = False) -> tuple[str, list]:
+        """Ein Modellschritt: streamt Tokens an die UI, liefert (Text, Tool-Aufrufe)."""
+        filt = ThinkFilter()
+        result: dict = {}
+        reasoning_shown = False
+        await emit({"type": "state", "state": "thinking"})
+        async for ev in self._stream_fitting(hits, final=final):
+            if ev["type"] == "token":
+                text = filt.feed(ev["text"])
+                if text:
+                    await emit({"type": "token", "id": msg_id, "text": text})
+            elif ev["type"] == "reasoning":
+                # Denk-Tokens gehören nicht in die Antwort – UI zeigt nur „denkt nach …“ (einmal pro Schritt)
+                if not reasoning_shown:
+                    reasoning_shown = True
+                    await emit({"type": "reasoning", "id": msg_id})
+            elif ev["type"] == "done":
+                result = ev["message"]
+                if ev.get("stats", {}).get("tps"):
+                    await emit({"type": "llm_stats", **ev["stats"]})
+        tail = filt.flush()
+        if tail:
+            await emit({"type": "token", "id": msg_id, "text": tail})
+        content = strip_think(result.get("content", ""))
+        return content, ([] if final else result.get("tool_calls") or [])
+
+    async def _stream_fitting(self, hits, final: bool = False):
         """Stream eines Schritts; passt der Prompt nicht ins Kontextfenster, einmal mit kleinerem Budget
-        neu versuchen (der Server meldet das, bevor ein Token kommt)."""
+        neu versuchen (der Server meldet das, bevor ein Token kommt). final=True: ohne Tools, mit der Bitte
+        um eine Zwischenbilanz."""
         self._budget_scale = 1.0
         for attempt in range(3):
             try:
-                async for ev in self.llm.chat_stream(self.build_messages(hits), self.schemas):
+                messages = self.build_messages(hits)
+                if final:
+                    messages.append({"role": "user", "content": FINAL_NUDGE})
+                async for ev in self.llm.chat_stream(messages, None if final else self.schemas):
                     yield ev
                 return
             except ContextOverflow as e:
