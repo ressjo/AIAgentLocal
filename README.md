@@ -7,7 +7,7 @@ echte Systemsteuerung – Updates, Pakete, Dateien, NAS, Programme, Websuche, Sh
 
 ```
 Browser (localhost:8765)                          Python-Backend (FastAPI, nur 127.0.0.1)
- ├─ Arc-Reactor-Orb (Canvas)            ◄──WS──►  Agent ── Tool-Schleife ──► 21 Tools
+ ├─ Neuronen-Orb (Canvas)              ◄──WS──►  Agent ── Tool-Schleife ──► Tools
  ├─ Chat · Aktivität · Gedächtnis                  │
  ├─ Mikrofon → 16 kHz PCM               ──WS──►   Wake-Word (openWakeWord) → VAD → Whisper
  └─ Wiedergabe + Pegel → Orb            ◄──────   Piper-TTS (satzweise, deutsche Stimme)

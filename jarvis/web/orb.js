@@ -1,4 +1,4 @@
-/* Animierter "Arc-Reactor"-Orb im Iron-Man-HUD-Stil (Canvas 2D).
+/* Animierter Orb im Iron-Man-HUD-Stil (Canvas 2D): rotierendes neuronales Netz mit Signalkaskaden im Inneren.
  * Zustände: offline, idle, listening, thinking, speaking, executing, confirm, error
  * Pegel (0..1) und optional ein Frequenzspektrum steuern die Reaktion auf Stimme/Audio. */
 (function () {
@@ -18,6 +18,161 @@
   const lerp = (a, b, t) => a + (b - a) * t;
   const TAU = Math.PI * 2;
 
+  /* Neuronales Netz: rotierende 3D-Kugel aus Neuronen, Synapsen zu den nächsten Nachbarn. Signale laufen
+   * über die Synapsen; kommt eines an, feuert das Neuron und löst mit einer zustandsabhängigen
+   * Wahrscheinlichkeit Folgesignale aus (Kaskaden). */
+  const NET = {
+    // rate: spontane Zündungen/s · spread: Weitergabe-Wahrscheinlichkeit je Synapse · speed: Signaltempo
+    // Bei ~3,5 weiterführenden Synapsen pro Neuron klingen Kaskaden unter spread ≈ 0,28 von selbst ab;
+    // nur beim Denken ist das Netz bewusst „überkritisch“ und läuft voll.
+    offline:   { rate: 0.15, spread: 0.1, speed: 0.6 },
+    idle:      { rate: 1.4, spread: 0.2, speed: 0.9 },
+    listening: { rate: 2, spread: 0.22, speed: 1.4, level: 40 },
+    thinking:  { rate: 18, spread: 0.34, speed: 2.2 },
+    speaking:  { rate: 2, spread: 0.24, speed: 1.7, level: 45 },
+    executing: { rate: 10, spread: 0.27, speed: 1.9 },
+    confirm:   { rate: 2, spread: 0.2, speed: 0.8 },
+    error:     { rate: 1, spread: 0.15, speed: 0.7 },
+  };
+  const MAX_PULSES = 320;
+
+  class NeuralNet {
+    constructor(count) {
+      this.nodes = [];
+      const golden = Math.PI * (3 - Math.sqrt(5));
+      for (let i = 0; i < count; i++) {
+        // Fibonacci-Kugel, leicht zufällig nach innen versetzt → Volumen statt Hülle
+        const y = 1 - (i / (count - 1)) * 2;
+        const r = Math.sqrt(1 - y * y);
+        const a = golden * i;
+        const depth = 0.45 + 0.55 * Math.cbrt(Math.random());
+        this.nodes.push({
+          x: Math.cos(a) * r * depth + (Math.random() - 0.5) * 0.08,
+          y: y * depth + (Math.random() - 0.5) * 0.08,
+          z: Math.sin(a) * r * depth + (Math.random() - 0.5) * 0.08,
+          fire: 0, links: [], px: 0, py: 0, pz: 0, ps: 1,
+        });
+      }
+      // Synapsen: jedes Neuron zu seinen 3 nächsten Nachbarn
+      const edges = new Set();
+      this.nodes.forEach((n, i) => {
+        const near = this.nodes
+          .map((m, j) => [j, (m.x - n.x) ** 2 + (m.y - n.y) ** 2 + (m.z - n.z) ** 2])
+          .filter(([j]) => j !== i)
+          .sort((a, b) => a[1] - b[1])
+          .slice(0, 3);
+        for (const [j] of near) edges.add(i < j ? `${i}-${j}` : `${j}-${i}`);
+      });
+      this.edges = [...edges].map((e) => e.split("-").map(Number));
+      for (const [a, b] of this.edges) {
+        this.nodes[a].links.push(b);
+        this.nodes[b].links.push(a);
+      }
+      this.pulses = [];
+      this.acc = 0;
+      this.rotY = 0;
+    }
+
+    fire(i, from, spread, speed) {
+      const n = this.nodes[i];
+      n.fire = 1;
+      for (const j of n.links) {
+        if (j === from || this.pulses.length >= MAX_PULSES) continue;
+        if (Math.random() < spread) {
+          this.pulses.push({ a: i, b: j, t: 0, v: speed * (0.7 + Math.random() * 0.6) });
+        }
+      }
+    }
+
+    update(dt, orb) {
+      const cfg = NET[orb.state] || NET.idle;
+      this.rotY += dt * (0.1 + orb.speed * 0.12);
+      this.rotX = 0.35 * Math.sin(orb.t * 0.13);
+      const rate = cfg.rate + (cfg.level ? orb.level * cfg.level : 0);
+      this.acc += rate * dt;
+      while (this.acc >= 1) {
+        this.acc -= 1;
+        this.fire((Math.random() * this.nodes.length) | 0, -1, cfg.spread + 0.12, cfg.speed);
+      }
+      const decay = Math.exp(-dt * 3.2);
+      for (const n of this.nodes) n.fire *= decay;
+      const alive = [];
+      for (const p of this.pulses) {
+        p.t += dt * p.v;
+        if (p.t >= 1) this.fire(p.b, p.a, cfg.spread, cfg.speed);
+        else alive.push(p);
+      }
+      this.pulses = alive.length > MAX_PULSES ? alive.slice(-MAX_PULSES) : alive;
+    }
+
+    draw(ctx, R, orb) {
+      const cy = Math.cos(this.rotY), sy = Math.sin(this.rotY);
+      const cx = Math.cos(this.rotX), sx = Math.sin(this.rotX);
+      const f = 2.6;
+      for (const n of this.nodes) {
+        const x1 = n.x * cy - n.z * sy;
+        const z1 = n.x * sy + n.z * cy;
+        const y2 = n.y * cx - z1 * sx;
+        const z2 = n.y * sx + z1 * cx;
+        const s = f / (f - z2);
+        n.px = x1 * R * s;
+        n.py = y2 * R * s;
+        n.pz = (z2 + 1) / 2;  // 0 = hinten, 1 = vorne
+        n.ps = s;
+      }
+      // Synapsen
+      ctx.lineWidth = 0.8;
+      for (const [a, b] of this.edges) {
+        const na = this.nodes[a], nb = this.nodes[b];
+        const depth = (na.pz + nb.pz) / 2;
+        const act = Math.max(na.fire, nb.fire);
+        ctx.strokeStyle = orb._rgba(0.04 + depth * 0.14 + act * 0.35, act * 60);
+        ctx.beginPath();
+        ctx.moveTo(na.px, na.py);
+        ctx.lineTo(nb.px, nb.py);
+        ctx.stroke();
+      }
+      // Signale mit kurzem Schweif
+      ctx.lineCap = "round";
+      for (const p of this.pulses) {
+        const na = this.nodes[p.a], nb = this.nodes[p.b];
+        const t0 = Math.max(0, p.t - 0.22);
+        const x = na.px + (nb.px - na.px) * p.t, y = na.py + (nb.py - na.py) * p.t;
+        const xt = na.px + (nb.px - na.px) * t0, yt = na.py + (nb.py - na.py) * t0;
+        const depth = na.pz + (nb.pz - na.pz) * p.t;
+        ctx.strokeStyle = orb._rgba(0.25 + depth * 0.55, 90);
+        ctx.lineWidth = 1 + depth * 1.4;
+        ctx.beginPath();
+        ctx.moveTo(xt, yt);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+        ctx.fillStyle = "rgba(255,255,255," + (0.35 + depth * 0.6).toFixed(3) + ")";
+        ctx.beginPath();
+        ctx.arc(x, y, 0.8 + depth * 1.3, 0, TAU);
+        ctx.fill();
+      }
+      ctx.lineCap = "butt";
+      // Neuronen (hinten zuerst)
+      const order = this.nodes.slice().sort((a, b) => a.pz - b.pz);
+      for (const n of order) {
+        const r = (0.9 + n.pz * 1.6) * n.ps;
+        if (n.fire > 0.05) {
+          const g = ctx.createRadialGradient(n.px, n.py, 0, n.px, n.py, r * 7 * n.fire + r);
+          g.addColorStop(0, orb._rgba(0.8 * n.fire, 120));
+          g.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(n.px, n.py, r * 7 * n.fire + r, 0, TAU);
+          ctx.fill();
+        }
+        ctx.fillStyle = orb._rgba(0.25 + n.pz * 0.6 + n.fire * 0.4, 40 + n.fire * 150);
+        ctx.beginPath();
+        ctx.arc(n.px, n.py, r + n.fire * 1.5, 0, TAU);
+        ctx.fill();
+      }
+    }
+  }
+
   class Orb {
     constructor(canvas) {
       this.canvas = canvas;
@@ -33,6 +188,7 @@
       this.rot = 0;
       this.bars = new Float32Array(120);
       this.particles = Array.from({ length: 90 }, () => this._particle(true));
+      this.net = new NeuralNet(150);
       this.reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       this._resize = this._resize.bind(this);
       window.addEventListener("resize", this._resize);
@@ -82,6 +238,7 @@
       const motion = this.reduced ? 0.25 : 1;
       this.t += dt * motion;
       this.rot += dt * this.speed * motion;
+      this.net.update(dt * motion, this);
       this._draw();
       requestAnimationFrame(this._frame.bind(this));
     }
@@ -178,42 +335,17 @@
       ctx.beginPath(); ctx.arc(0, 0, R * pulse * 0.98, 0, TAU); ctx.stroke();
       ctx.shadowBlur = 0;
 
-      // Arc-Reactor-Kern: dreieckige Speichen + Kernglühen
-      ctx.save();
-      ctx.rotate(-this.rot * 0.4);
-      for (let i = 0; i < 10; i++) {
-        const a0 = (i / 10) * TAU + 0.06, a1 = ((i + 1) / 10) * TAU - 0.06;
-        ctx.fillStyle = this._rgba(0.1 + 0.08 * Math.sin(this.t * 3 + i));
-        ctx.strokeStyle = this._rgba(0.45);
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(0, 0, R * 0.82 * pulse, a0, a1);
-        ctx.arc(0, 0, R * 0.52 * pulse, a1, a0, true);
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-      }
-      ctx.restore();
-
-      ctx.save();
-      ctx.rotate(this.rot * 0.9);
-      ctx.strokeStyle = this._rgba(0.7, 60);
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      for (let i = 0; i <= 3; i++) {
-        const a = (i / 3) * TAU - Math.PI / 2;
-        const r = R * 0.42 * pulse;
-        i === 0 ? ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r) : ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-      }
-      ctx.stroke();
-      ctx.restore();
-
-      const coreR = R * (0.34 + lvl * 0.12) * pulse;
+      // Weiches Leuchten im Zentrum, hinter dem Netz
+      const coreR = R * (0.5 + lvl * 0.2) * pulse;
       const core = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR);
-      core.addColorStop(0, "rgba(255,255,255,0.95)");
-      core.addColorStop(0.25, this._rgba(0.9, 80));
-      core.addColorStop(0.7, this._rgba(0.35));
+      core.addColorStop(0, this._rgba(0.28 + this.energy * 0.2 + lvl * 0.25, 60));
+      core.addColorStop(0.6, this._rgba(0.08));
       core.addColorStop(1, "rgba(0,0,0,0)");
       ctx.fillStyle = core;
       ctx.beginPath(); ctx.arc(0, 0, coreR, 0, TAU); ctx.fill();
+
+      // Neuronales Netz
+      this.net.draw(ctx, R * 0.86 * pulse, this);
 
       // Partikel
       for (const pt of this.particles) {
