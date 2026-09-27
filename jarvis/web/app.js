@@ -296,6 +296,12 @@
       case "confirm_done":
         closeConfirm(ev.id);
         break;
+      case "password_request":
+        openPassword(ev);
+        break;
+      case "password_done":
+        closePassword(ev.id);
+        break;
       case "speak":
         enqueueSpeech(ev);
         break;
@@ -692,8 +698,42 @@
   mic.addEventListener("pointerup", endPtt);
   mic.addEventListener("pointerleave", () => { if (pttActive) endPtt(); });
 
+  // ---------------------------------------------------------------- Passwort für sudo (Root-Rechte)
+  let pwId = null;
+  function openPassword(ev) {
+    pwId = ev.id;
+    $("pw-prompt").textContent = ev.prompt || "Root-Passwort (sudo)";
+    $("pw-cmd").textContent = ev.command || "";
+    $("pw-input").value = "";
+    $("pw-modal").classList.remove("hidden");
+    setTimeout(() => $("pw-input").focus(), 30);
+    if (ev.retry) toast("Falsches Passwort – bitte erneut eingeben.");
+  }
+  function closePassword(id) {
+    if (id && id !== pwId) return;
+    pwId = null;
+    $("pw-input").value = "";
+    $("pw-modal").classList.add("hidden");
+  }
+  $("pw-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!pwId) return;
+    const password = $("pw-input").value;
+    $("pw-input").value = "";  // nicht im DOM stehen lassen
+    send(password ? { type: "password", id: pwId, password } : { type: "password_cancel", id: pwId });
+    closePassword();
+  });
+  $("pw-cancel").onclick = () => {
+    if (pwId) send({ type: "password_cancel", id: pwId });
+    closePassword();
+  };
+  $("pw-input").addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); $("pw-cancel").click(); }
+  });
+
   document.addEventListener("keydown", (e) => {
     if (!$("boot").classList.contains("hidden")) return;
+    if (pwId) return;  // Passwortfeld hat Vorrang (kein Push-to-talk mit Leertaste)
     if (S.confirm) {
       if (e.key === "Enter") { e.preventDefault(); answerConfirm(true); }
       if (e.key === "Escape") { e.preventDefault(); answerConfirm(false); }

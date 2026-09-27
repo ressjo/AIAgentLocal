@@ -168,6 +168,21 @@
     </div>
   </div>
 
+  <div class="overlay hidden" id="pw-modal">
+    <form class="modal confirm-modal" id="pw-form" autocomplete="off">
+      <div class="modal-title"><span class="warn-dot"></span>ROOT-RECHTE BENÖTIGT</div>
+      <p class="confirm-summary" id="pw-prompt">Root-Passwort (sudo)</p>
+      <pre class="confirm-cmd" id="pw-cmd"></pre>
+      <input class="pw-input" id="pw-input" type="password" autocomplete="off" spellcheck="false"
+             placeholder="Passwort" aria-label="Passwort">
+      <p class="confirm-reason">Geht direkt an sudo – wird weder gespeichert noch an das Sprachmodell gegeben.</p>
+      <div class="modal-actions">
+        <button class="btn deny" type="button" id="pw-cancel">ABBRECHEN <kbd>Esc</kbd></button>
+        <button class="btn approve" type="submit">OK <kbd>Enter</kbd></button>
+      </div>
+    </form>
+  </div>
+
   <div class="overlay hidden" id="day-modal">
     <div class="modal day-modal">
       <div class="modal-title"><span id="day-title"></span><button class="ghost small" id="day-close">SCHLIESSEN</button></div>

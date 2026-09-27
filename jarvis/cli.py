@@ -102,9 +102,18 @@ def cmd_doctor(args) -> None:
                  f"xdg-mime default <programm>.desktop {mime}")
     print("Werkzeuge:")
     for tool, pkg in [("fd", "fd"), ("rg", "ripgrep"), ("plocate", "plocate"), ("xdg-open", "xdg-utils"),
-                      ("gtk-launch", "gtk3"), ("pkexec", "polkit"), ("checkupdates", "pacman-contrib"),
+                      ("gtk-launch", "gtk3"), ("sudo", "sudo"), ("pkexec", "polkit"), ("checkupdates", "pacman-contrib"),
                       ("yay", "yay (AUR, optional)")]:
         line(bool(shutil.which(tool)), tool, f"sudo pacman -S {pkg}" if "optional" not in pkg else pkg)
+    if cfg.tools.privilege_cmd == "jarvis":
+        from .askpass import helper_path, write_helper
+        try:
+            write_helper()
+            line(True, f"Root-Rechte: Passwortfeld in der Oberfläche (sudo -A, Helfer {helper_path()})")
+        except OSError as e:
+            line(False, "Askpass-Helfer anlegen", str(e))
+    else:
+        print(f"  ℹ Root-Rechte über {cfg.tools.privilege_cmd} (tools.privilege_cmd: jarvis = Passwortfeld im Dashboard)")
     print("Trilium:")
     from .tools.trilium import trilium_status
     tr = asyncio.run(trilium_status(cfg))

@@ -62,7 +62,7 @@ tools:
   search_paths:
     - "~"                # in YAML muss ~ in Anführungszeichen stehen
   nas_paths: []          # z. B. [/mnt/nas, /mnt/nas-media]
-  privilege_cmd: pkexec  # pkexec (grafischer Passwortdialog) oder sudo (sudo -n, braucht NOPASSWD-Regel)
+  privilege_cmd: jarvis  # jarvis = Passwortfeld im Dashboard · pkexec = Polkit-Dialog · sudo = nur mit NOPASSWD-Regel
   aur_helper: auto       # auto | yay | paru | none
   shell_timeout: 120
   max_steps: 25          # max. Einzelschritte (Tool-Runden) pro Auftrag; danach Zwischenbilanz + „mach weiter“

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import glob
 import os
+import re
 import signal
 import subprocess
 import tempfile
@@ -31,9 +32,23 @@ def _kill(proc: asyncio.subprocess.Process) -> None:
         pass
 
 
+_ASKPASS_RE = re.compile(r"\bsudo\s+(?:-\w+\s+)*-A\b|--sudoflags\s+-A\b")
+
+
 async def run(ctx: ToolContext, cmd: str | list[str], timeout: float, stream: bool = True,
               cwd: str | None = None) -> tuple[int | None, str]:
-    env = {**os.environ, **QUIET_ENV}
+    text = cmd if isinstance(cmd, str) else " ".join(cmd)
+    if _ASKPASS_RE.search(text):
+        # Root-Rechte über den Passwortdialog der Oberfläche (sudo -A → Jarvis-Askpass)
+        from ..askpass import privileged_env
+        with privileged_env(text) as extra:
+            return await _run(ctx, cmd, timeout, stream, cwd, extra)
+    return await _run(ctx, cmd, timeout, stream, cwd, {})
+
+
+async def _run(ctx: ToolContext, cmd: str | list[str], timeout: float, stream: bool, cwd: str | None,
+               extra_env: dict) -> tuple[int | None, str]:
+    env = {**os.environ, **QUIET_ENV, **extra_env}
     kwargs = dict(stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                   cwd=cwd or os.path.expanduser("~"), env=env, start_new_session=True)
     if isinstance(cmd, str):
@@ -137,7 +152,22 @@ def spawn_detached(argv: list[str]) -> None:
                      start_new_session=True, cwd=os.path.expanduser("~"), env=desktop_env())
 
 
+ROOT_DENIED_RE = re.compile(
+    r"sudo: (?:\d+ )?(?:incorrect password|no password was provided|a password is required|"
+    r"no askpass program|a terminal is required)|is not in the sudoers file|Sorry, try again|"
+    r"Error executing command as another user|Request dismissed|No authentication agent found|"
+    r"pkexec: .*not authorized|Not authorized", re.I)
+
+ROOT_DENIED_HINT = ("\n→ Root-Rechte wurden NICHT erteilt (Passwort abgebrochen, falsch oder nicht eingegeben). "
+                    "Nicht mit anderen Befehlen weiterprobieren oder Rechte prüfen – sag dem Nutzer Bescheid.")
+
+
+def root_denied(output: str) -> bool:
+    return bool(ROOT_DENIED_RE.search(output or ""))
+
+
 def format_result(rc: int | None, output: str, limit: int) -> str:
     status = "Zeitüberschreitung" if rc is None else f"Exit-Code {rc}"
     body = clip(output.strip(), limit) or "(keine Ausgabe)"
-    return f"{status}\n{body}"
+    hint = ROOT_DENIED_HINT if rc not in (None, 0) and root_denied(output) else ""
+    return f"{status}\n{body}{hint}"

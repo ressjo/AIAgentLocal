@@ -13,9 +13,12 @@ PKG_RE = re.compile(r"^[a-z0-9@._+-]+$")
 
 
 def privileged(ctx: ToolContext, argv: list[str]) -> list[str]:
-    if ctx.cfg.tools.privilege_cmd == "sudo":
+    mode = ctx.cfg.tools.privilege_cmd
+    if mode == "sudo":
         return ["sudo", "-n", *argv]
-    return ["pkexec", *argv]
+    if mode == "pkexec":
+        return ["pkexec", *argv]
+    return ["sudo", "-A", *argv]  # "jarvis": Passwortdialog in der Oberfläche
 
 
 def aur_helper(ctx: ToolContext) -> str | None:
@@ -29,10 +32,13 @@ def aur_helper(ctx: ToolContext) -> str | None:
 
 def helper_cmd(ctx: ToolContext, helper: str, *args: str) -> list[str]:
     # AUR-Helper laufen als normaler Nutzer und holen sich Root-Rechte selbst
-    if ctx.cfg.tools.privilege_cmd == "pkexec":
+    mode = ctx.cfg.tools.privilege_cmd
+    if mode == "pkexec":
         priv = ["--sudo", "pkexec"]
-    else:
+    elif mode == "sudo":
         priv = ["--sudoflags", "-n"]
+    else:
+        priv = ["--sudoflags", "-A"]
     unattended = (["--answerclean", "None", "--answerdiff", "None", "--answeredit", "None"]
                   if helper == "yay" else ["--skipreview"])
     return [helper, *priv, *args, "--noconfirm", *unattended]

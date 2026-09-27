@@ -16,6 +16,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from . import askpass
 from .agent import Agent
 from .config import Config
 from .llm import FakeLLM, LLMError
@@ -87,6 +88,7 @@ class Hub:
                  stt: WhisperSTT | None, wake: WakeWordFactory | None):
         self.cfg = cfg
         self.agent = agent
+        self.askpass = None  # AskpassBroker (Passwortfeld für sudo -A)
         self.think: bool | None = None  # Denkmodus-Knopf der Oberfläche (None = Profil-Einstellung)
         self.clients: set[Client] = set()
         # Erinnerungen, die fällig wurden, als keine Oberfläche offen war – werden beim Verbinden zugestellt
@@ -169,6 +171,8 @@ class Hub:
                 await self.broadcast({"type": "state", "state": "idle"})
 
     async def stop(self) -> None:
+        if self.askpass:
+            self.askpass.cancel_all()
         for fut in self.pending.values():
             if not fut.done():
                 fut.set_result(False)
@@ -200,6 +204,17 @@ def create_app(cfg: Config) -> FastAPI:
         wake = WakeWordFactory(cfg.voice)
         tts = PiperTTS(cfg.voice)
     hub = Hub(cfg, agent, tts, stt, wake)
+    # Root-Rechte per Passwortfeld in der Oberfläche (sudo -A)
+    helper = None
+    if cfg.tools.privilege_cmd == "jarvis":
+        try:
+            helper = askpass.write_helper()
+        except OSError as e:
+            log.warning("Askpass-Helfer konnte nicht angelegt werden: %s", e)
+    broker = askpass.AskpassBroker(cfg.port, notify=hub.broadcast, helper=helper,
+                                   has_ui=lambda: bool(hub.clients), say=hub.speaker.say)
+    askpass.BROKER = broker
+    hub.askpass = broker
     background: list[asyncio.Task] = []
 
     @contextlib.asynccontextmanager
@@ -335,6 +350,19 @@ def create_app(cfg: Config) -> FastAPI:
                                   "base_url": "", "managed": False, "active": True}]}
         return {"active": llm.active, "switching": llm.switching, "profiles": llm.describe()}
 
+    @app.post("/api/askpass")
+    async def askpass_request(request: Request):
+        """Vom Askpass-Helfer (sudo -A) aufgerufen – nur mit gültigem Einmal-Token."""
+        token = request.headers.get("x-jarvis-askpass", "")
+        try:
+            prompt = str((await request.json()).get("prompt", ""))[:200]
+        except ValueError:
+            prompt = ""
+        password = await broker.request(token, prompt)
+        if password is None:
+            return JSONResponse({"error": "abgelehnt"}, status_code=403)
+        return JSONResponse({"password": password}, headers={"Cache-Control": "no-store"})
+
     @app.post("/api/models/{name}/activate")
     async def activate_model(name: str):
         if not isinstance(llm, LLMRouter):
@@ -456,6 +484,11 @@ def create_app(cfg: Config) -> FastAPI:
                     await hub.stop()
                 elif t == "tts":
                     client.tts = bool(data.get("enabled"))
+                elif t == "password":
+                    # Passwort nur an den wartenden sudo weiterreichen – nie loggen oder speichern
+                    broker.answer(str(data.get("id", "")), data.get("password") or None)
+                elif t == "password_cancel":
+                    broker.answer(str(data.get("id", "")), None)
                 elif t == "think":
                     hub.think = bool(data.get("enabled"))
                 elif t == "voice_settings" and tts:

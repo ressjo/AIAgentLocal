@@ -327,6 +327,9 @@ button { font-family: inherit; cursor: pointer; }
 .confirm-cmd { font-family: var(--mono); font-size: 13px; background: rgba(0,0,0,.45); border: 1px solid rgba(255,179,71,.3); padding: 10px 12px; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto; margin: 0; }
 .confirm-reason { color: var(--warn); font-size: 13px; margin: 10px 0 16px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.pw-input { width: 100%; margin: 12px 0 4px; padding: 10px 12px; font: 15px var(--mono); color: var(--text, #d8f3ff);
+            background: rgba(0,0,0,.5); border: 1px solid var(--warn); outline: none; letter-spacing: .15em; }
+.pw-input:focus { box-shadow: 0 0 0 1px var(--warn), 0 0 16px rgba(255,179,71,.25); }
 .btn { height: 42px; padding: 0 18px; }
 .btn kbd { font-family: var(--mono); font-size: 10px; opacity: .6; margin-left: 6px; }
 .btn.approve { color: #04111e; background: var(--warn); border-color: var(--warn); font-weight: 700; }

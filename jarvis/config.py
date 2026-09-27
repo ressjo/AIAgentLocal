@@ -110,8 +110,9 @@ class VoiceConfig(BaseModel):
 class ToolsConfig(BaseModel):
     search_paths: list[Path] = Field(default_factory=lambda: [Path.home()])
     nas_paths: list[Path] = Field(default_factory=list)
-    # "pkexec" (grafischer Polkit-Dialog) oder "sudo" (sudo -n, benötigt NOPASSWD-Regel)
-    privilege_cmd: str = "pkexec"
+    # "jarvis" (Passwortfeld in der Jarvis-Oberfläche, sudo -A), "pkexec" (Polkit-Dialog des Systems)
+    # oder "sudo" (sudo -n, benötigt NOPASSWD-Regel)
+    privilege_cmd: str = "jarvis"
     # "auto" (yay/paru suchen), "yay", "paru" oder "none"
     aur_helper: str = "auto"
     shell_timeout: int = 120

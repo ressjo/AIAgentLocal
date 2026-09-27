@@ -320,11 +320,19 @@ Jarvis kann Befehle auf deinem System ausführen – deshalb:
 
 ### Root-Rechte
 
-Standard ist `privilege_cmd: pkexec`: Bei Root-Aktionen erscheint der grafische Passwortdialog deines
-Desktops (KDE/GNOME/…). Dafür muss Jarvis **innerhalb der Desktop-Sitzung** laufen – das erledigt der
-Autostart des Installationsskripts.
+Standard ist `privilege_cmd: jarvis`: Braucht eine Aktion Root-Rechte (nach deiner Bestätigung), erscheint im
+**Dashboard ein Passwortfeld** mit dem genauen Befehl; bei Sprachbedienung sagt Jarvis Bescheid. Technisch
+läuft das über `sudo -A` mit einem kleinen Helfer (`$XDG_RUNTIME_DIR/jarvis/askpass`), der mit einem
+Einmal-Token nur für genau diesen Befehl beim lokalen Jarvis-Server nachfragt. Das Passwort geht direkt an
+sudo – es wird weder gespeichert noch geloggt und erreicht nie das Sprachmodell. Abbrechen (oder STOP) lässt
+den Befehl scheitern; Jarvis probiert dann nicht auf eigene Faust weiter. Funktioniert unabhängig davon, wie
+Jarvis gestartet wurde (Terminal, Autostart, Dienst).
 
-Alternativ ohne Passwortdialog (z. B. als systemd-Dienst, `scripts/jarvis.service`):
+**Herunterfahren, Neustart, Standby, Sperren** erledigt das Tool `power` über systemd/logind – für die aktive
+Sitzung ganz ohne Passwort (nur nach Bestätigung). „Fahr in 30 Minuten herunter“ und „Abbrechen“ gehen auch.
+
+Andere Varianten: `privilege_cmd: pkexec` (Polkit-Dialog des Desktops – nur wenn Jarvis in der
+Desktop-Sitzung läuft) oder ganz ohne Passwort per NOPASSWD-Regel:
 
 ```bash
 # config.yaml → tools.privilege_cmd: sudo
@@ -363,7 +371,7 @@ Alle Optionen mit Erklärung: [`jarvis/config.example.yaml`](jarvis/config.examp
 | `voice.stt_model` | Whisper-Größe: `base`, `small`, `medium`, `large-v3` |
 | `voice.wakeword_threshold` | Empfindlichkeit des Wake-Words (niedriger = empfindlicher) |
 | `tools.nas_paths` | Liste der gemounteten NAS-Verzeichnisse |
-| `tools.privilege_cmd` | `pkexec` oder `sudo` |
+| `tools.privilege_cmd` | `jarvis` (Passwortfeld im Dashboard, Standard), `pkexec` oder `sudo` (NOPASSWD) |
 | `tools.max_steps` | Max. Einzelschritte (Tool-Runden) pro Auftrag, Standard 25 – danach fasst Jarvis zusammen und macht auf „mach weiter“ fort |
 | `user_name`, `persona_extra` | Anrede und zusätzliche Persönlichkeit |
 
@@ -387,7 +395,8 @@ jarvis init-config           # Beispielkonfiguration anlegen
 | Keine Sprachausgabe (Piper) | `jarvis doctor` → Stimme fehlt? Dann spricht der Browser als Ersatz |
 | Mikrofon geht nicht | Seite über `http://localhost:8765` öffnen (nicht über die IP), Mikrofonrechte im Browser prüfen |
 | Wake-Word löst zu oft/selten aus | `voice.wakeword_threshold` anpassen (0.3–0.7) |
-| `pkexec`: „Not authorized“ | Jarvis läuft außerhalb der Desktop-Sitzung → Autostart nutzen oder `privilege_cmd: sudo` |
+| `pkexec`: „Not authorized“ | Jarvis läuft außerhalb der Desktop-Sitzung → `privilege_cmd: jarvis` (Passwortfeld im Dashboard) |
+| Kein Passwortfeld erscheint | Dashboard muss offen sein; `jarvis doctor` prüft den Askpass-Helfer; `privilege_cmd: jarvis` gesetzt? |
 | Datei/Programm öffnet sich nicht | `jarvis doctor` → Abschnitt „Desktop“: grafische Sitzung + Standardprogramme prüfen. Fehlt ein Standardprogramm: `xdg-mime default org.kde.kate.desktop text/plain`. Oder direkt sagen: „öffne X mit Kate“ |
 | Websuche: SearXNG meldet `403 Forbidden` | Öffentliche SearXNG-Instanzen sperren die JSON-Schnittstelle. `tools.searxng_url` leer lassen (dann DuckDuckGo) oder eine eigene Instanz mit `search: formats: [html, json]` in deren `settings.yml` nutzen. Jarvis weicht automatisch auf DuckDuckGo aus. |
 | Kalender: Abfragen schlägt fehl, Anlegen klappt | `jarvis update` (Kalender nutzt jetzt klassisches HTTPS statt HTTP/3 und versucht es bei Abbrüchen erneut); Details im Log `~/.local/state/jarvis.log` |

@@ -195,11 +195,20 @@ def classify_command(command: str) -> tuple[str, str]:
     return SAFE, "nur lesender Befehl"
 
 
-_SUDO_RE = re.compile(r"(^|[;&|(]\s*|\s)sudo((?:\s+-[A-Za-z]+)*)\s+")
+_SUDO_RE = re.compile(r"(^|[;&|(]\s*|\s)sudo((?:\s+(?:-[ugpCrtUDRTh]\s+[^\s-]\S*|-[A-Za-z]+))*)\s+")
+# Optionen mit Wert (z. B. -u root) bleiben erhalten; -n/-S/-A werden durch den gewählten Modus ersetzt
+_SUDO_OWN_FLAGS = re.compile(r"\s+-[nSA]+\b")
+
+
+_PKEXEC_RE = re.compile(r"(^|[;&|(]\s*|\s)pkexec\s+")
 
 
 def apply_privilege(command: str, privilege_cmd: str) -> str:
-    """Ersetzt 'sudo' durch das konfigurierte Werkzeug (pkexec zeigt einen grafischen Dialog)."""
+    """Ersetzt 'sudo' durch das konfigurierte Werkzeug: 'jarvis' → sudo -A (Passwortdialog in der Oberfläche),
+    'pkexec' → grafischer Polkit-Dialog, 'sudo' → sudo -n (nur mit NOPASSWD-Regel)."""
+    if privilege_cmd == "jarvis":
+        command = _PKEXEC_RE.sub(lambda m: f"{m.group(1)}sudo ", command)
+        return _SUDO_RE.sub(lambda m: f"{m.group(1)}sudo -A{_SUDO_OWN_FLAGS.sub('', m.group(2))} ", command)
     if privilege_cmd == "pkexec":
         return _SUDO_RE.sub(lambda m: f"{m.group(1)}pkexec ", command)
     if privilege_cmd == "sudo":
