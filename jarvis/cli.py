@@ -113,6 +113,14 @@ def cmd_doctor(args) -> None:
     else:
         line(tr["online"], f"{cfg.trilium.url}" + (f" (Version {tr.get('version')})" if tr["online"] else ""),
              tr.get("error", ""))
+    print("Paperless:")
+    from .tools.paperless import paperless_status
+    ps_ = asyncio.run(paperless_status(cfg))
+    if not ps_["enabled"]:
+        print("  – nicht konfiguriert (paperless.url und paperless.token in der Config)")
+    else:
+        line(ps_["online"], f"{cfg.paperless.url}" + (f" – {ps_['count']} Dokumente (Version {ps_['version']})"
+                                                       if ps_["online"] else ""), ps_.get("error", ""))
     print("Kalender:")
     if not cfg.calendar.enabled:
         print("  – nicht konfiguriert (calendar.url, username, password)")

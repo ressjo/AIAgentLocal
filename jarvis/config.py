@@ -145,6 +145,24 @@ class TriliumConfig(BaseModel):
         return bool(self.url and self.api_token)
 
 
+class PaperlessConfig(BaseModel):
+    # z. B. http://nas.local:8000
+    url: str = ""
+    # API-Token (Paperless → Profil oben rechts → API-Auth-Token); alternativ $JARVIS_PAPERLESS_TOKEN
+    token: str = ""
+    timeout: float = 30.0
+    # so viel Dokumenttext geht höchstens an das Modell (größere Dokumente: nur relevante Stellen)
+    max_chars: int = 5000
+
+    @property
+    def api_token(self) -> str:
+        return self.token or os.environ.get("JARVIS_PAPERLESS_TOKEN", "")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.url and self.api_token)
+
+
 class CalendarConfig(BaseModel):
     # iCloud: https://caldav.icloud.com – funktioniert mit jedem CalDAV-Server (Nextcloud, Radicale, …)
     url: str = ""
@@ -183,6 +201,7 @@ class Config(BaseModel):
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     trilium: TriliumConfig = Field(default_factory=TriliumConfig)
+    paperless: PaperlessConfig = Field(default_factory=PaperlessConfig)
     weather: WeatherConfig = Field(default_factory=WeatherConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     # Zusätzliche Websites für open_website: Name → URL; "{q}" wird durch die Suche ersetzt

@@ -113,6 +113,11 @@ Verhalten:
             hint += ("- Du hast Zugriff auf den Kalender des Nutzers (iPhone): Termine abfragen mit calendar_events, freie "
                      "Zeit mit calendar_free, neue Termine mit calendar_add (Datum/Uhrzeit anhand des heutigen Datums "
                      "als YYYY-MM-DD HH:MM angeben), ändern mit calendar_update, löschen mit calendar_delete.\n")
+        if self.cfg.paperless.enabled:
+            hint += ("- Die Dokumente des Nutzers (Rechnungen, Verträge, Briefe, Bescheide, Versicherungen …) liegen in "
+                     "Paperless. Fragen dazu: erst paperless_search, dann mit der Dokument-ID paperless_ask (Frage zum "
+                     "Inhalt) – antworte aus den gelieferten Textstellen und nenne Titel und Datum des Dokuments. "
+                     "'Zeig/öffne das Dokument' → paperless_open. Merke dir die ID für Folgefragen.\n")
         if not self.cfg.trilium.enabled:
             return hint
         return hint + ("- Die persönlichen Notizen des Nutzers liegen in Trilium. Fragen zu seinen Notizen, Aufschrieben oder "

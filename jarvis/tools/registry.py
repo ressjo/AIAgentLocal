@@ -146,6 +146,6 @@ def get_tool(name: str) -> ToolSpec | None:
 
 def load_all_tools() -> dict[str, ToolSpec]:
     # Import registriert die Tools per Decorator
-    from . import (apps, briefing, calendar_tools, files, memory_tools, packages, reminder_tools, shell,  # noqa: F401
-                   system, trilium, weather, web)
+    from . import (apps, briefing, calendar_tools, files, memory_tools, packages, paperless,  # noqa: F401
+                   reminder_tools, shell, system, trilium, weather, web)
     return REGISTRY

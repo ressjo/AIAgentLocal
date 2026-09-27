@@ -27,6 +27,7 @@ Browser (localhost:8765)                          Python-Backend (FastAPI, nur 1
 | **Web** | Websuche (DuckDuckGo oder eigene SearXNG-Instanz) und Abruf/Extraktion von Webseiten |
 | **Shell** | Beliebige Bash-Befehle – lesende laufen sofort, verändernde nur nach Bestätigung, zerstörerische nie |
 | **Trilium** | Notizen durchsuchen und vorlesen, neue Notizen in der Inbox anlegen, an Notizen anhängen (siehe unten) |
+| **Paperless** | Dokumente (Rechnungen, Verträge, Briefe) suchen, Fragen zum Inhalt beantworten, als PDF öffnen – nur lesend (siehe unten) |
 | **Gedächtnis** | Merkt sich alles dauerhaft (siehe unten), `remember` / `recall` / `forget` |
 
 ## Installation (Arch / Manjaro / EndeavourOS)
@@ -276,6 +277,27 @@ Beispiele: „Was steht in meiner Notiz über Docker?“ · „Notier dir: Route
 „Häng an die Einkaufsliste Milch und Eier an.“ · „Leg eine Notiz ‚Server-Wartung‘ mit den Befehlen von eben an.“
 
 Die Trilium-Tools werden dem Sprachmodell nur angeboten, wenn `url` und Token gesetzt sind.
+
+## Paperless-Dokumente
+
+Jarvis durchsucht deine [Paperless-ngx](https://docs.paperless-ngx.com/)-Dokumente, beantwortet Fragen zum Inhalt
+und öffnet sie als PDF – **nur lesend**, in Paperless wird nichts verändert.
+
+1. In Paperless oben rechts auf dein Profil → **„API-Auth-Token“** erzeugen und kopieren.
+2. In `~/.config/jarvis/config.yaml`:
+   ```yaml
+   paperless:
+     url: http://nas.local:8000      # Adresse deiner Paperless-Instanz
+     token: "dein-api-token"         # oder Umgebungsvariable JARVIS_PAPERLESS_TOKEN
+   ```
+3. `jarvis doctor` zeigt „✔ … – N Dokumente“, danach Jarvis neu starten.
+
+Beispiele: „Such mir die letzte Stromrechnung“, „Wann kann ich meinen Handyvertrag kündigen?“,
+„Was steht in der Garantie vom Geschirrspüler?“, „Öffne das Dokument“, „Welche Dokumente kamen diese Woche?“.
+
+Zum Befragen holt Jarvis den OCR-Text aus Paperless. Kurze Dokumente gehen komplett ans Modell, bei langen nur
+die passendsten Textstellen (Stichworte + Embeddings) – so reicht auch das kleinere Kontextfenster von Bonsai.
+Geöffnete PDFs liegen zwischengespeichert in `~/.cache/jarvis/paperless/`.
 
 ## Sicherheit
 
