@@ -19,6 +19,7 @@ from .config import Config
 from .llm import FakeLLM, OllamaLLM
 from .memory import Memory
 from .memory.files import valid_day
+from .tools.trilium import trilium_status
 from .voice.listen import AudioSession, WakeWordFactory, WhisperSTT
 from .voice.tts import PiperTTS, Speaker
 
@@ -47,6 +48,8 @@ def describe_call(name: str, args: dict) -> str:
         return f"das Entfernen von {args.get('names', '')}"
     if name == "system_update":
         return "ein vollständiges Systemupdate"
+    if name == "trilium_update_note":
+        return f"das Überschreiben der Trilium-Notiz {args.get('note', '')}"
     if name == "write_file":
         return f"das Schreiben der Datei {args.get('path', '')}"
     return f"die Aktion {name}"
@@ -241,6 +244,7 @@ def create_app(cfg: Config) -> FastAPI:
                 "chunks": memory.index.count(),
                 "dir": str(cfg.memory.dir),
             },
+            "trilium": await trilium_status(cfg),
             "busy": agent.lock.locked(),
         }
 

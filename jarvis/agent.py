@@ -71,7 +71,7 @@ class Agent:
         self.llm = llm
         self.memory = memory
         self.tools = load_all_tools()
-        self.schemas = tool_schemas()
+        self.schemas = tool_schemas(cfg)
         self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
         self.lock = asyncio.Lock()
 
@@ -99,7 +99,14 @@ Verhalten:
 - Erfährst du etwas dauerhaft Wichtiges über den Nutzer (Name, Vorlieben, Geräte, Pfade, Projekte), speichere es mit remember.
 - Bei Fragen zu früheren Gesprächen nutze recall. Relevante Erinnerungen stehen unten, sind aber evtl. unvollständig.
 - Wurde eine Aktion abgelehnt, akzeptiere das und schlage bei Bedarf eine Alternative vor.
-{c.persona_extra}""".strip()
+{self._trilium_hint()}{c.persona_extra}""".strip()
+
+    def _trilium_hint(self) -> str:
+        if not self.cfg.trilium.enabled:
+            return ""
+        return ("- Die persönlichen Notizen des Nutzers liegen in Trilium. Fragen zu seinen Notizen, Aufschrieben oder "
+                "Anleitungen beantwortest du mit trilium_search und trilium_read. Bei 'notier/schreib auf/leg eine "
+                "Notiz an' nutzt du trilium_create_note (landet in der Inbox), zum Ergänzen trilium_append.\n")
 
     def build_messages(self, hits) -> list[dict]:
         conv = self.memory.conversation
@@ -216,8 +223,10 @@ Verhalten:
         name = fn.get("name", "")
         call_id = uuid.uuid4().hex[:8]
         spec = get_tool(name)
+        if spec and not spec.is_enabled(self.cfg):
+            spec = None
         if not spec:
-            return name, f"Unbekanntes Tool '{name}'. Verfügbar: {', '.join(self.tools)}", f"{name}: unbekannt"
+            return name, f"Unbekanntes Tool '{name}'. Verfügbar: {', '.join(n for n, t in self.tools.items() if t.is_enabled(self.cfg))}", f"{name}: unbekannt"
         args = coerce_args(spec, fn.get("arguments"))
         missing = missing_args(spec, args)
         if missing:

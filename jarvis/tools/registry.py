@@ -39,6 +39,10 @@ class ToolSpec:
     parameters: dict
     risk: str | RiskFn = SAFE
     param_types: dict[str, type] = field(default_factory=dict)
+    enabled: Callable[[Any], bool] | None = None
+
+    def is_enabled(self, cfg: Any) -> bool:
+        return self.enabled is None or cfg is None or bool(self.enabled(cfg))
 
     def schema(self) -> dict:
         return {"type": "function",
@@ -65,7 +69,8 @@ def _json_type(tp: Any) -> tuple[str, type]:
     return _JSON_TYPES.get(tp, "string"), tp if tp in _JSON_TYPES else str
 
 
-def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None):
+def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None,
+         enabled: Callable[[Any], bool] | None = None):
     def deco(func):
         sig = inspect.signature(func)
         hints = typing.get_type_hints(func, include_extras=True)
@@ -92,6 +97,7 @@ def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None):
             parameters={"type": "object", "properties": props, "required": required},
             risk=risk,
             param_types=types,
+            enabled=enabled,
         )
         REGISTRY[spec.name] = spec
         return func
@@ -127,8 +133,9 @@ def missing_args(spec: ToolSpec, args: dict) -> list[str]:
     return [p for p in spec.parameters["required"] if p not in args]
 
 
-def tool_schemas() -> list[dict]:
-    return [s.schema() for s in REGISTRY.values()]
+def tool_schemas(cfg: Any = None) -> list[dict]:
+    """Schemas aller Tools; mit cfg nur die aktivierten (z. B. Trilium nur, wenn konfiguriert)."""
+    return [s.schema() for s in REGISTRY.values() if s.is_enabled(cfg)]
 
 
 def get_tool(name: str) -> ToolSpec | None:
@@ -137,5 +144,5 @@ def get_tool(name: str) -> ToolSpec | None:
 
 def load_all_tools() -> dict[str, ToolSpec]:
     # Import registriert die Tools per Decorator
-    from . import apps, files, memory_tools, packages, shell, system, web  # noqa: F401
+    from . import apps, files, memory_tools, packages, shell, system, trilium, web  # noqa: F401
     return REGISTRY

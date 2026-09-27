@@ -71,6 +71,23 @@ class ToolsConfig(BaseModel):
         return ["~" if p is None else p for p in v]
 
 
+class TriliumConfig(BaseModel):
+    # z. B. http://localhost:8080 oder die Adresse auf dem NAS
+    url: str = ""
+    # ETAPI-Token (Trilium: Optionen → ETAPI); alternativ $JARVIS_TRILIUM_TOKEN
+    token: str = ""
+    timeout: float = 20.0
+    max_chars: int = 8000
+
+    @property
+    def api_token(self) -> str:
+        return self.token or os.environ.get("JARVIS_TRILIUM_TOKEN", "")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.url and self.api_token)
+
+
 class Config(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8765
@@ -82,6 +99,7 @@ class Config(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    trilium: TriliumConfig = Field(default_factory=TriliumConfig)
 
     def expand_paths(self) -> "Config":
         self.memory.dir = self.memory.dir.expanduser()

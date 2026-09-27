@@ -68,6 +68,14 @@ def cmd_doctor(args) -> None:
                       ("gtk-launch", "gtk3"), ("pkexec", "polkit"), ("checkupdates", "pacman-contrib"),
                       ("yay", "yay (AUR, optional)")]:
         line(bool(shutil.which(tool)), tool, f"sudo pacman -S {pkg}" if "optional" not in pkg else pkg)
+    print("Trilium:")
+    from .tools.trilium import trilium_status
+    tr = asyncio.run(trilium_status(cfg))
+    if not tr["enabled"]:
+        print("  – nicht konfiguriert (trilium.url und trilium.token in der Config)")
+    else:
+        line(tr["online"], f"{cfg.trilium.url}" + (f" (Version {tr.get('version')})" if tr["online"] else ""),
+             tr.get("error", ""))
     print("NAS:")
     if not cfg.tools.nas_paths:
         print("  – kein NAS-Pfad konfiguriert (tools.nas_paths)")

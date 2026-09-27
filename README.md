@@ -26,6 +26,7 @@ Browser (localhost:8765)                          Python-Backend (FastAPI, nur 1
 | **Programme** | Startet installierte Anwendungen über ihre `.desktop`-Einträge („öffne Firefox“, „starte den Dateimanager“) |
 | **Web** | Websuche (DuckDuckGo oder eigene SearXNG-Instanz) und Abruf/Extraktion von Webseiten |
 | **Shell** | Beliebige Bash-Befehle – lesende laufen sofort, verändernde nur nach Bestätigung, zerstörerische nie |
+| **Trilium** | Notizen durchsuchen und vorlesen, neue Notizen in der Inbox anlegen, an Notizen anhängen (siehe unten) |
 | **Gedächtnis** | Merkt sich alles dauerhaft (siehe unten), `remember` / `recall` / `forget` |
 
 ## Installation (Arch / Manjaro / EndeavourOS)
@@ -95,6 +96,32 @@ leichte Bevorzugung aktueller Einträge), der laufenden Zusammenfassung und den 
 Wird der Verlauf zu lang, faltet Jarvis die ältesten Nachrichten per LLM in die laufende Zusammenfassung –
 im Journal und im Index bleiben sie vollständig erhalten und werden bei Bedarf wieder hervorgeholt.
 So kann Jarvis sich über Monate „an alles erinnern“, ohne dass das Kontextfenster je überläuft.
+
+## Trilium-Notizen
+
+Jarvis kann auf deine [Trilium](https://github.com/TriliumNext/Trilium)-Notizen zugreifen (lokal oder auf dem NAS):
+
+1. In Trilium: **Optionen → ETAPI → „Neuen ETAPI-Token erstellen“**, Token kopieren.
+2. In `~/.config/jarvis/config.yaml` eintragen:
+   ```yaml
+   trilium:
+     url: http://localhost:8080      # bzw. http://nas.local:8080
+     token: "dein-etapi-token"       # oder Umgebungsvariable JARVIS_TRILIUM_TOKEN
+   ```
+3. `jarvis doctor` zeigt „✔ … (Version x.y)“, danach Jarvis neu starten.
+
+| Tool | Was passiert | Bestätigung |
+|---|---|---|
+| `trilium_search` | Volltextsuche (neueste zuerst) mit Vorschau; Triliums Suchsyntax wie `#label` geht auch | – |
+| `trilium_read` | Liest eine Notiz komplett (per Titel oder ID) | – |
+| `trilium_create_note` | Neue Notiz, standardmäßig in der **Inbox**, auf Wunsch unter einer genannten Notiz. Markdown (`##`, Listen, `- [ ]`-Aufgaben, Codeblöcke) wird zu Trilium-Formatierung | – |
+| `trilium_append` | Hängt Text an eine bestehende Notiz an | – |
+| `trilium_update_note` | Ersetzt den Inhalt (und optional den Titel) | **ja** |
+
+Beispiele: „Was steht in meiner Notiz über Docker?“ · „Notier dir: Router-Passwort liegt im Tresor.“ ·
+„Häng an die Einkaufsliste Milch und Eier an.“ · „Leg eine Notiz ‚Server-Wartung‘ mit den Befehlen von eben an.“
+
+Die Trilium-Tools werden dem Sprachmodell nur angeboten, wenn `url` und Token gesetzt sind.
 
 ## Sicherheit
 

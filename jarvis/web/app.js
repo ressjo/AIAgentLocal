@@ -735,6 +735,10 @@
     bootLine(`  ${st.voice.stt ? "✔" : "✘"} Spracherkennung`, st.voice.stt ? "ok" : "bad");
     bootLine(`  ${st.voice.tts ? "✔ Sprachausgabe (Piper)" : "~ Sprachausgabe über Browser"}`, st.voice.tts ? "ok" : "bad");
     bootLine(`  ${st.voice.wake ? "✔" : "✘"} Wake-Word „Hey Jarvis“`, st.voice.wake ? "ok" : "bad");
+    if (st.trilium && st.trilium.enabled) {
+      bootLine(`  ${st.trilium.online ? "✔ Trilium verbunden (v" + st.trilium.version + ")" : "✘ Trilium: " + (st.trilium.error || "offline")}`,
+        st.trilium.online ? "ok" : "bad");
+    }
     bootLine(`  ✔ Gedächtnis: ${st.memory.days} Tage, ${st.memory.facts} Fakten, ${st.memory.chunks} Einträge`, "ok");
   }
 

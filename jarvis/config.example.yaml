@@ -41,3 +41,7 @@ tools:
   aur_helper: auto       # auto | yay | paru | none
   shell_timeout: 120
   searxng_url: null      # z. B. http://localhost:8888 für eine eigene SearXNG-Instanz
+
+trilium:
+  url: ""                # z. B. http://localhost:8080 – leer lassen, um Trilium zu deaktivieren
+  token: ""              # Trilium → Optionen → ETAPI → Token erstellen (oder $JARVIS_TRILIUM_TOKEN)
