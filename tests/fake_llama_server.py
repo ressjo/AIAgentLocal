@@ -26,6 +26,8 @@ class Handler(BaseHTTPRequestHandler):
         loading = time.time() - STARTED < DELAY
         if self.path == "/health":
             return self._json(503 if loading else 200, {"status": "loading" if loading else "ok"})
+        if self.path == "/props":
+            return self._json(200, {"default_generation_settings": {"n_ctx": 12288}})
         if self.path == "/v1/models":
             return self._json(200, {"data": [{"id": "bonsai"}]})
         self._json(404, {})

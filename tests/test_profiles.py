@@ -241,6 +241,7 @@ def test_switch_starts_server_unloads_ollama_and_agent_works(cfg, llm, memory, t
     async def scenario():
         await router.activate("bonsai")
         assert router.active == "bonsai" and router.servers["bonsai"].running()
+        assert router.context_size == 12288  # vom Server (/props) übernommen
         assert ("/api/generate", {"model": "qwen3:8b", "keep_alive": 0}) in calls
         events = []
 
@@ -315,3 +316,38 @@ def test_agent_ignores_reasoning_events(cfg, memory):
     assert answer == "Antwort"
     assert [e["type"] for e in events].count("reasoning") == 1
     assert "überlege" not in json.dumps(events, ensure_ascii=False)
+
+
+def test_context_overflow_detected_and_agent_retries_smaller(cfg, memory):
+    from jarvis.llm import ContextOverflow
+
+    body = json.dumps({"error": {"code": 400, "message": "the request exceeds the available context size",
+                                 "type": "exceed_context_size_error", "n_prompt_tokens": 9000, "n_ctx": 8192}})
+    with pytest.raises(ContextOverflow) as exc:
+        collect(client_with(lambda req: httpx.Response(400, text=body)), [{"role": "user", "content": "x"}])
+    assert exc.value.n_ctx == 8192 and exc.value.n_prompt == 9000
+
+    class TightLLM:
+        context_size = 8192
+        sizes = []
+
+        async def chat_stream(self, messages, tools=None):
+            size = sum(len(m.get("content") or "") for m in messages)
+            self.sizes.append(size)
+            if len(self.sizes) == 1:
+                raise ContextOverflow("zu groß", 8192, 9000)
+            yield {"type": "done", "message": {"role": "assistant", "content": "passt"}, "stats": {}}
+
+    for i in range(30):
+        memory.conversation.add({"role": "user", "content": f"Frage {i} " + "y" * 900})
+        memory.conversation.add({"role": "assistant", "content": "Antwort " + "z" * 900})
+
+    async def emit(e):
+        pass
+
+    async def confirm(*a):
+        return False
+
+    llm = TightLLM()
+    assert run(Agent(cfg, llm, memory).run("Und jetzt?", emit, confirm)) == "passt"
+    assert len(llm.sizes) == 2 and llm.sizes[1] < llm.sizes[0]

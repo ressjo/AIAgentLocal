@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import Config
-from .llm import LLMError, strip_think
+from .llm import ContextOverflow, LLMError, strip_think
 from .memory import Memory, est_tokens
 from .memory.files import german_date
 from .tools.proc import clip
@@ -71,6 +71,7 @@ class Agent:
         self.cfg = cfg
         self.llm = llm
         self.memory = memory
+        self._budget_scale = 1.0  # < 1, wenn der Server „Kontext zu klein“ gemeldet hat
         self.tools = load_all_tools()
         self.schemas = tool_schemas(cfg)
         self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
@@ -134,11 +135,16 @@ Verhalten:
         return [{"role": "system", "content": system}, *conv.trimmed_history(max(budget, 1000))]
 
     def context_budget(self) -> int:
-        """Prompt-Budget: context_budget_tokens, aber nie mehr als das Kontextfenster des aktiven Modells
+        """Prompt-Budget: Kontextfenster des aktiven Modells (optional begrenzt durch context_budget_tokens)
         (abzüglich Platz für die Antwort) – z. B. Bonsai mit 8192 Token."""
-        profile = getattr(self.llm, "profile", None)
-        num_ctx = getattr(profile, "num_ctx", None) or self.cfg.llm.num_ctx
-        return max(3000, min(self.cfg.memory.context_budget_tokens, int(num_ctx) - ANSWER_RESERVE))
+        num_ctx = getattr(self.llm, "context_size", None)
+        if not num_ctx:
+            profile = getattr(self.llm, "profile", None)
+            num_ctx = getattr(profile, "num_ctx", None) or self.cfg.llm.num_ctx
+        budget = int(num_ctx) - ANSWER_RESERVE
+        if self.cfg.memory.context_budget_tokens:
+            budget = min(budget, self.cfg.memory.context_budget_tokens)
+        return max(2000, int(budget * self._budget_scale))
 
     def history_budget(self) -> int:
         m = self.cfg.memory
@@ -162,12 +168,11 @@ Verhalten:
         await emit({"type": "assistant_start", "id": msg_id})
         try:
             for _ in range(MAX_STEPS):
-                messages = self.build_messages(hits)
                 filt = ThinkFilter()
                 final: dict = {}
                 reasoning_shown = False
                 await emit({"type": "state", "state": "thinking"})
-                async for ev in self.llm.chat_stream(messages, self.schemas):
+                async for ev in self._stream_fitting(hits):
                     if ev["type"] == "token":
                         text = filt.feed(ev["text"])
                         if text:
@@ -228,6 +233,23 @@ Verhalten:
         except Exception as e:  # noqa: BLE001
             log.warning("Kompaktierung fehlgeschlagen: %s", e)
         return answer
+
+    async def _stream_fitting(self, hits):
+        """Stream eines Schritts; passt der Prompt nicht ins Kontextfenster, einmal mit kleinerem Budget
+        neu versuchen (der Server meldet das, bevor ein Token kommt)."""
+        self._budget_scale = 1.0
+        for attempt in range(3):
+            try:
+                async for ev in self.llm.chat_stream(self.build_messages(hits), self.schemas):
+                    yield ev
+                return
+            except ContextOverflow as e:
+                if attempt == 2:
+                    raise
+                ratio = (e.n_ctx - ANSWER_RESERVE) / e.n_prompt if e.n_ctx and e.n_prompt else 0.7
+                self._budget_scale *= max(0.3, min(0.85, ratio * 0.9))
+                log.warning("Kontext zu klein (%s/%s Token) – kürze Verlauf und versuche es erneut",
+                            e.n_prompt, e.n_ctx)
 
     def _repair_history(self) -> None:
         """Nach Abbruch: offene Tool-Calls mit Platzhalter-Ergebnissen schließen."""

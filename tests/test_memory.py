@@ -107,4 +107,6 @@ def test_budget_respects_model_context(cfg, memory):
     class Small:
         profile = ProfileConfig(backend="openai", base_url="http://x/v1", model="bonsai", num_ctx=8192)
 
-    assert Agent(cfg, Small(), memory).context_budget() == min(cfg.memory.context_budget_tokens, 8192 - 1500)
+    assert Agent(cfg, Small(), memory).context_budget() == 8192 - 1500
+    cfg.memory.context_budget_tokens = 5000
+    assert Agent(cfg, Small(), memory).context_budget() == 5000

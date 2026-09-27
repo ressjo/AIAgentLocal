@@ -73,6 +73,10 @@ def cmd_doctor(args) -> None:
                      "Pfad in llm.profiles.<name>.server.command prüfen")
             line(ps["online"], "    Server erreichbar" if ps["online"] else "    Server läuft gerade nicht",
                  "startet automatisch beim Aktivieren" if p.server else "Server von Hand starten")
+            if ps["online"]:
+                n_ctx = asyncio.run(OpenAICompatLLM(p).server_context())
+                if n_ctx:
+                    print(f"    ℹ Kontextfenster laut Server: {n_ctx} Token")
     print("Sprache:")
     from .voice.listen import WakeWordFactory, WhisperSTT
     from .voice.tts import PiperTTS

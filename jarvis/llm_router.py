@@ -15,7 +15,7 @@ from pathlib import Path
 import httpx
 
 from .config import LLMConfig, ProfileConfig, ServerConfig
-from .llm import LLMError, OllamaLLM, OpenAICompatLLM
+from .llm import ContextOverflow, LLMError, OllamaLLM, OpenAICompatLLM
 
 log = logging.getLogger(__name__)
 
@@ -137,6 +137,7 @@ class LLMRouter:
         self.servers: dict[str, ManagedServer] = {}
         self.switching: str | None = None
         self._lock = asyncio.Lock()
+        self.detected_ctx: dict[str, int] = {}  # vom Server gemeldete Kontextgröße je Profil
         self._build_client()
 
     # ---------- Auswahl ----------
@@ -168,6 +169,20 @@ class LLMRouter:
     @property
     def profile(self) -> ProfileConfig:
         return self.profiles[self.active]
+
+    @property
+    def context_size(self) -> int:
+        """Kontextfenster des aktiven Modells: vom Server gemeldet > Profil (num_ctx) > llm.num_ctx."""
+        return self.detected_ctx.get(self.active) or self.profile.num_ctx or self.cfg.num_ctx
+
+    async def detect_context(self) -> None:
+        if isinstance(self.client, OpenAICompatLLM):
+            n = await self.client.server_context()
+            if n:
+                if self.profile.num_ctx and n != self.profile.num_ctx:
+                    log.info("Profil '%s': Server meldet %d Token Kontext (Config: %d) – nutze %d",
+                             self.active, n, self.profile.num_ctx, n)
+                self.detected_ctx[self.active] = n
 
     def _client_for(self, p: ProfileConfig):
         if p.backend == "openai":
@@ -202,6 +217,7 @@ class LLMRouter:
         """Beim Start von Jarvis: aktives Profil vorbereiten (Server starten usw.)."""
         try:
             await self._prepare(self.active, progress)
+            await self.detect_context()
         except LLMError as e:
             log.error("Profil '%s' konnte nicht gestartet werden: %s", self.active, e)
 
@@ -235,11 +251,17 @@ class LLMRouter:
             self._write_state()
             if old_client is not None and old_client is not self.ollama:
                 await old_client.close()
+            await self.detect_context()
 
     # ---------- LLM-Schnittstelle ----------
     async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None) -> AsyncIterator[dict]:
-        async for ev in self.client.chat_stream(messages, tools):
-            yield ev
+        try:
+            async for ev in self.client.chat_stream(messages, tools):
+                yield ev
+        except ContextOverflow as e:
+            if e.n_ctx:  # Server kennt seine echte Größe – ab jetzt die verwenden
+                self.detected_ctx[self.active] = e.n_ctx
+            raise
 
     async def chat(self, messages: list[dict]) -> str:
         return await self.client.chat(messages)
@@ -253,7 +275,7 @@ class LLMRouter:
         if p.backend == "openai":
             emb = await self.ollama.status()
             st.update({"embed_model": self.cfg.embed_model, "embed_available": emb.get("embed_available", False)})
-        st.update({"profile": self.active, "label": p.label, "backend": p.backend, "switching": self.switching,
+        st.update({"context": self.context_size, "profile": self.active, "label": p.label, "backend": p.backend, "switching": self.switching,
                    "model": p.model})
         return st
 

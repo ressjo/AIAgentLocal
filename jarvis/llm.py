@@ -23,6 +23,30 @@ class LLMError(RuntimeError):
     pass
 
 
+class ContextOverflow(LLMError):
+    """Der Prompt passt nicht ins Kontextfenster des Modell-Servers."""
+
+    def __init__(self, message: str, n_ctx: int | None = None, n_prompt: int | None = None):
+        super().__init__(message)
+        self.n_ctx = n_ctx
+        self.n_prompt = n_prompt
+
+
+def _check_overflow(status: int, body: str) -> None:
+    """llama-server meldet einen zu großen Prompt als 400 exceed_context_size_error."""
+    if status not in (400, 500) or "exceed" not in body or "context" not in body:
+        return
+    n_ctx = n_prompt = None
+    try:
+        err = json.loads(body).get("error") or {}
+        n_ctx, n_prompt = err.get("n_ctx"), err.get("n_prompt_tokens")
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    raise ContextOverflow(
+        f"Das Gespräch passt nicht mehr ins Kontextfenster des Modells ({n_prompt or '?'} von {n_ctx or '?'} Token). "
+        "Mehr Kontext: BONSAI_CTX bzw. --ctx-size im Startbefehl erhöhen.", n_ctx, n_prompt)
+
+
 class OllamaLLM:
     def __init__(self, cfg: LLMConfig, transport: httpx.AsyncBaseTransport | None = None):
         self.cfg = cfg
@@ -232,6 +256,7 @@ class OpenAICompatLLM:
                                            json=self._payload(messages, tools, True)) as resp:
                 if resp.status_code != 200:
                     body = (await resp.aread()).decode(errors="replace")
+                    _check_overflow(resp.status_code, body)
                     raise LLMError(f"Modell-Server antwortet mit {resp.status_code}: {body[:300]}")
                 async for line in resp.aiter_lines():
                     line = line.strip()
@@ -281,9 +306,24 @@ class OpenAICompatLLM:
         except httpx.HTTPError as e:
             raise self._error(e) from e
         if resp.status_code != 200:
+            _check_overflow(resp.status_code, resp.text)
             raise LLMError(f"Modell-Server antwortet mit {resp.status_code}: {resp.text[:300]}")
         choices = resp.json().get("choices") or [{}]
         return strip_think((choices[0].get("message") or {}).get("content") or "")
+
+    async def server_context(self) -> int | None:
+        """Tatsächliche Kontextgröße des llama-servers (GET /props), sonst None."""
+        root = str(self._client.base_url).rstrip("/")
+        root = root[:-3] if root.endswith("/v1") else root
+        try:
+            resp = await self._client.get(root + "/props", timeout=3)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            n = (data.get("default_generation_settings") or {}).get("n_ctx") or data.get("n_ctx")
+            return int(n) if n else None
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+            return None
 
     async def status(self) -> dict:
         try:

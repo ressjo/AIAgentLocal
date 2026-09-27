@@ -84,7 +84,7 @@ class LLMConfig(BaseModel):
 class MemoryConfig(BaseModel):
     dir: Path = DATA_DIR / "memory"
     # Gesamtbudget (geschätzte Tokens) für den Prompt; muss deutlich unter num_ctx liegen
-    context_budget_tokens: int = 11000
+    context_budget_tokens: int | None = None  # None = automatisch: Kontextfenster des Modells minus Antwortreserve
     retrieval_top_k: int = 6
     retrieval_max_tokens: int = 1500
     facts_max_tokens: int = 1200

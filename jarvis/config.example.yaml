@@ -29,21 +29,21 @@ llm:
   #     base_url: http://127.0.0.1:8080/v1
   #     model: bonsai
   #     api_key: "ein-langes-zufaelliges-passwort"   # gleicher Wert wie --api-key unten
-  #     num_ctx: 8192
+  #     num_ctx: 16384                 # optional – Jarvis liest die echte Größe vom Server
   #     embed_on_cpu: true             # Gedächtnis-Embeddings auf der CPU (VRAM ist knapp)
   #     unload_ollama: true            # Ollama-Modelle vorher aus dem VRAM entladen
   #     server:                        # Jarvis startet/stoppt den Server selbst
   #       command: ~/bonsai/scripts/start_llama_server.sh -np 1 --reasoning-budget 0 --api-key ein-langes-zufaelliges-passwort
   #       env:
   #         HSA_OVERRIDE_GFX_VERSION: "10.3.0"
-  #         BONSAI_CTX: "8192"
+  #         BONSAI_CTX: "16384"          # Kontextfenster; startet der Server nicht (VRAM), zurück auf 8192
   #         BONSAI_KV4: "1"
   #         BONSAI_MMPROJ_CPU: "1"
   #       startup_timeout: 240
 
 memory:
   dir: ~/.local/share/jarvis/memory
-  context_budget_tokens: 11000  # so viel Prompt wird maximal gebaut (< num_ctx, Rest bleibt für die Antwort)
+  # context_budget_tokens: 11000  # nur zum Begrenzen – Standard: automatisch nach Kontextfenster des Modells
   retrieval_top_k: 6
   summarize_idle_minutes: 15
 

@@ -216,14 +216,14 @@ llm:
       base_url: http://127.0.0.1:8080/v1
       model: bonsai
       api_key: "ein-langes-zufaelliges-passwort"
-      num_ctx: 8192
+      num_ctx: 16384                          # optional – Jarvis liest die echte Größe vom Server
       embed_on_cpu: true
       unload_ollama: true
       server:
         command: ~/bonsai/scripts/start_llama_server.sh -np 1 --reasoning-budget 0 --api-key ein-langes-zufaelliges-passwort
         env:
           HSA_OVERRIDE_GFX_VERSION: "10.3.0"   # RX 6600/6650/6700 (gfx103x) als unterstütztes gfx1030 ausgeben
-          BONSAI_CTX: "8192"
+          BONSAI_CTX: "16384"                 # Kontextfenster (bei VRAM-Mangel zurück auf 8192)
           BONSAI_KV4: "1"                     # komprimierter KV-Cache
           BONSAI_MMPROJ_CPU: "1"              # Bildmodul in den RAM (Jarvis braucht es nicht)
         startup_timeout: 240
@@ -331,7 +331,7 @@ Alle Optionen mit Erklärung: [`jarvis/config.example.yaml`](jarvis/config.examp
 |---|---|
 | `llm.model` | Ollama-Modell, z. B. `qwen3:14b`, `qwen3:8b`, `qwen2.5:14b` |
 | `llm.think` | Qwen3-Denkmodus (langsamer, bei kniffligen Aufgaben genauer) |
-| `memory.context_budget_tokens` | Maximale Prompt-Größe – muss unter `llm.num_ctx` liegen |
+| `memory.context_budget_tokens` | Optionale Obergrenze der Prompt-Größe – Standard: automatisch (Kontextfenster des Modells minus Reserve für die Antwort) |
 | `voice.stt_model` | Whisper-Größe: `base`, `small`, `medium`, `large-v3` |
 | `voice.wakeword_threshold` | Empfindlichkeit des Wake-Words (niedriger = empfindlicher) |
 | `tools.nas_paths` | Liste der gemounteten NAS-Verzeichnisse |
