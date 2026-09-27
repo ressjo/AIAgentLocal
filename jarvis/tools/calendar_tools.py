@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 import os
 import re
 import threading
@@ -20,7 +21,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from ..memory.files import WEEKDAYS
 from .registry import CONFIRM, ToolContext, tool
 
-CACHE_SECONDS = 600
+log = logging.getLogger(__name__)
+
+# Kurz halten: iCloud schließt untätige Verbindungen nach einiger Zeit
+CACHE_SECONDS = 120
 SEARCH_BACK_DAYS = 1
 SEARCH_AHEAD_DAYS = 90
 _cache: dict[tuple, tuple[float, Any, list]] = {}
@@ -165,11 +169,24 @@ def _cal_name(cal) -> str:
         return getattr(cal, "name", "") or ""
 
 
+def _use_plain_https(client) -> None:
+    """HTTP/3 (QUIC) abschalten: iCloud beendet untätige QUIC-Verbindungen („keepalive timeout“), was bei den
+    Folgeabrufen einzelner Termine zu Fehlern führt. Klassisches HTTPS ist hier robuster."""
+    try:
+        import niquests
+        old = client.session
+        client.session = niquests.Session(disable_http3=True, multiplexed=False)
+        old.close()
+    except (ImportError, TypeError, AttributeError):
+        pass
+
+
 class CalendarClient:
     """Synchroner Zugriff (caldav ist synchron) – Aufrufe laufen über asyncio.to_thread."""
 
     def __init__(self, cfg):
         self.cfg = cfg.calendar
+        self.skipped = 0  # Termine, die sich nicht lesen ließen
 
     def _calendars(self) -> list:
         key = (self.cfg.url, self.cfg.username)
@@ -182,6 +199,7 @@ class CalendarClient:
         try:
             client = caldav.DAVClient(url=self.cfg.url, username=self.cfg.username,
                                       password=self.cfg.api_password, timeout=self.cfg.timeout)
+            _use_plain_https(client)
             calendars = client.principal().calendars()
         except dav_error.AuthorizationError as e:
             raise CalendarError("Anmeldung am Kalender fehlgeschlagen – Apple-ID und app-spezifisches Passwort "
@@ -219,7 +237,12 @@ class CalendarClient:
         for cal in self.read_calendars():
             name = _cal_name(cal)
             for obj in cal.search(start=start, end=end, event=True, expand=True):
-                ev = _normalize(obj, name)
+                try:
+                    ev = _normalize(obj, name)
+                except Exception:  # noqa: BLE001 – ein kaputter Termin soll nicht die ganze Liste verhindern
+                    log.warning("Termin konnte nicht gelesen werden: %s", getattr(obj, "url", "?"), exc_info=True)
+                    self.skipped += 1
+                    continue
                 if ev and ev.end_dt() > start and ev.start_dt() < end:
                     out.append(ev)
         return sorted(out, key=lambda e: (e.start_dt(), e.title))
@@ -282,12 +305,20 @@ def invalidate_cache() -> None:
 
 
 async def _call(fn, *args, **kwargs):
-    try:
-        return await asyncio.to_thread(fn, *args, **kwargs)
-    except CalendarError:
-        raise
-    except Exception as e:  # noqa: BLE001
-        raise CalendarError(f"Kalenderfehler: {e}") from e
+    """Führt einen Kalenderzugriff aus; bei Verbindungsproblemen einmal mit frischer Verbindung wiederholen."""
+    for attempt in (1, 2):
+        try:
+            return await asyncio.to_thread(fn, *args, **kwargs)
+        except CalendarError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            invalidate_cache()
+            if attempt == 1:
+                log.warning("Kalenderzugriff fehlgeschlagen (%s: %s) – neuer Versuch", type(e).__name__, e)
+                continue
+            log.exception("Kalenderzugriff endgültig fehlgeschlagen")
+            raise CalendarError(f"Kalenderfehler ({type(e).__name__}): {e or 'ohne Details'} – "
+                                "Details im Log ~/.local/state/jarvis.log") from e
 
 
 def _pick(matches: list[Event], query: str) -> Event:
@@ -312,15 +343,19 @@ async def calendar_events(
     start: Annotated[str, "Erster Tag: 'heute', 'morgen', Wochentag oder YYYY-MM-DD (Standard heute)"] = "",
     days: Annotated[int, "Anzahl Tage (Standard 1, eine Woche = 7)"] = 1,
 ) -> str:
+    client = CalendarClient(ctx.cfg)
     try:
         day = parse_day(start)
-        events = await events_between(ctx.cfg, day, min(days, 62))
+        begin = datetime.combine(day, datetime.min.time(), tzinfo=local_tz())
+        events = await _call(client.events, begin, begin + timedelta(days=max(1, min(days, 62))))
     except CalendarError as e:
         return str(e)
     span = _day(day) if days <= 1 else f"{_day(day)} bis {_day(day + timedelta(days=days - 1))}"
+    note = (f"\n(Hinweis: {client.skipped} Termin(e) konnten nicht gelesen werden – Details im Log.)"
+            if client.skipped else "")
     if not events:
-        return f"Keine Termine ({span})."
-    return f"Termine {span}:\n" + "\n".join(e.line() for e in events)
+        return f"Keine lesbaren Termine ({span})." + note if client.skipped else f"Keine Termine ({span})."
+    return f"Termine {span}:\n" + "\n".join(e.line() for e in events) + note
 
 
 @tool("Findet freie Zeitfenster an einem Tag (z. B. für „Hab ich am Freitag Nachmittag Zeit?“).", enabled=_enabled)

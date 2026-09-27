@@ -309,6 +309,8 @@ jarvis init-config           # Beispielkonfiguration anlegen
 | Wake-Word löst zu oft/selten aus | `voice.wakeword_threshold` anpassen (0.3–0.7) |
 | `pkexec`: „Not authorized“ | Jarvis läuft außerhalb der Desktop-Sitzung → Autostart nutzen oder `privilege_cmd: sudo` |
 | Datei/Programm öffnet sich nicht | `jarvis doctor` → Abschnitt „Desktop“: grafische Sitzung + Standardprogramme prüfen. Fehlt ein Standardprogramm: `xdg-mime default org.kde.kate.desktop text/plain`. Oder direkt sagen: „öffne X mit Kate“ |
+| Websuche: SearXNG meldet `403 Forbidden` | Öffentliche SearXNG-Instanzen sperren die JSON-Schnittstelle. `tools.searxng_url` leer lassen (dann DuckDuckGo) oder eine eigene Instanz mit `search: formats: [html, json]` in deren `settings.yml` nutzen. Jarvis weicht automatisch auf DuckDuckGo aus. |
+| Kalender: Abfragen schlägt fehl, Anlegen klappt | `jarvis update` (Kalender nutzt jetzt klassisches HTTPS statt HTTP/3 und versucht es bei Abbrüchen erneut); Details im Log `~/.local/state/jarvis.log` |
 | Dateisuche findet neue Dateien nicht | `sudo updatedb` (plocate-Index wird täglich aktualisiert) |
 
 ## Entwicklung

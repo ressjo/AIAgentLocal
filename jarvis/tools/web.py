@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import shutil
 from typing import Annotated
@@ -12,6 +13,8 @@ import httpx
 
 from . import proc
 from .registry import ToolContext, tool
+
+log = logging.getLogger(__name__)
 
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 
@@ -87,12 +90,20 @@ async def open_website(
     return f"Öffnen fehlgeschlagen ({err}).{hint} URL: {url}"
 
 
+# Für Tests austauschbar (httpx.MockTransport)
+TRANSPORT: httpx.AsyncBaseTransport | None = None
+
+
 async def _searxng(url: str, query: str, n: int) -> list[dict]:
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=20, transport=TRANSPORT, headers={"User-Agent": UA}) as client:
         r = await client.get(f"{url.rstrip('/')}/search", params={"q": query, "format": "json", "language": "de"})
-        r.raise_for_status()
-        return [{"title": x.get("title", ""), "href": x.get("url", ""), "body": x.get("content", "")}
-                for x in r.json().get("results", [])[:n]]
+    if r.status_code in (403, 429):
+        # Öffentliche Instanzen sperren die JSON-Schnittstelle meist für Programme
+        raise RuntimeError(f"SearXNG-Instanz verweigert den Zugriff (HTTP {r.status_code}) – JSON-Format dort "
+                           "vermutlich deaktiviert")
+    r.raise_for_status()
+    return [{"title": x.get("title", ""), "href": x.get("url", ""), "body": x.get("content", "")}
+            for x in r.json().get("results", [])[:n]]
 
 
 def _ddgs(query: str, n: int) -> list[dict]:
@@ -107,17 +118,23 @@ async def web_search(
     max_results: Annotated[int, "Anzahl Treffer (Standard 5)"] = 5,
 ) -> str:
     n = max(1, min(max_results, 10))
-    try:
-        if ctx.cfg.tools.searxng_url:
+    note = ""
+    results: list[dict] = []
+    if ctx.cfg.tools.searxng_url:
+        try:
             results = await _searxng(ctx.cfg.tools.searxng_url, query, n)
-        else:
-            results = await asyncio.to_thread(_ddgs, query, n)
-    except Exception as e:  # noqa: BLE001
-        return f"Websuche fehlgeschlagen: {e}"
+        except Exception as e:  # noqa: BLE001 – dann DuckDuckGo als Rückfall
+            log.warning("SearXNG fehlgeschlagen (%s) – nutze DuckDuckGo", e)
+            note = f"(Hinweis: {e}; Ergebnisse stattdessen von DuckDuckGo.)\n\n"
     if not results:
-        return "Keine Suchergebnisse."
-    return "\n\n".join(f"{i}. {r.get('title', '')}\n{r.get('href', '')}\n{r.get('body', '')}"
-                       for i, r in enumerate(results, 1))
+        try:
+            results = await asyncio.to_thread(_ddgs, query, n)
+        except Exception as e:  # noqa: BLE001
+            return f"{note}Websuche fehlgeschlagen: {e}"
+    if not results:
+        return note + "Keine Suchergebnisse."
+    return note + "\n\n".join(f"{i}. {r.get('title', '')}\n{r.get('href', '')}\n{r.get('body', '')}"
+                              for i, r in enumerate(results, 1))
 
 
 @tool("Ruft eine Webseite ab und gibt den lesbaren Haupttext zurück.")

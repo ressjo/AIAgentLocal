@@ -221,3 +221,20 @@ def test_briefing_survives_missing_sources(cfg, monkeypatch):
     monkeypatch.setattr(briefing.shutil, "which", lambda n: None)
     out = run(briefing.daily_briefing(ctx(cfg)))
     assert "kein Standardort" in out and "keine Erinnerungen" in out
+
+
+def test_searxng_403_falls_back_to_duckduckgo(cfg, monkeypatch):
+    cfg.tools.searxng_url = "https://searx.example"
+    monkeypatch.setattr(web, "TRANSPORT", httpx.MockTransport(lambda r: httpx.Response(403, text="forbidden")))
+    monkeypatch.setattr(web, "_ddgs", lambda q, n: [{"title": "Ryzen AI Max", "href": "https://amd.com", "body": "Neu"}])
+    out = run(web.web_search(ctx(cfg), "Ryzen AI Max neues"))
+    assert "HTTP 403" in out and "DuckDuckGo" in out
+    assert "1. Ryzen AI Max\nhttps://amd.com" in out
+
+
+def test_searxng_success(cfg, monkeypatch):
+    cfg.tools.searxng_url = "http://localhost:8888"
+    payload = {"results": [{"title": "T", "url": "https://t.de", "content": "C"}]}
+    monkeypatch.setattr(web, "TRANSPORT", httpx.MockTransport(lambda r: httpx.Response(200, json=payload)))
+    monkeypatch.setattr(web, "_ddgs", lambda q, n: pytest.fail("DuckDuckGo darf nicht genutzt werden"))
+    assert run(web.web_search(ctx(cfg), "x")) == "1. T\nhttps://t.de\nC"

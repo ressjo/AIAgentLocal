@@ -202,3 +202,54 @@ def test_briefing_includes_todays_events(ccfg, monkeypatch):
 
 def test_status(ccfg):
     assert run(cal.calendar_status(ccfg)) == {"enabled": True, "online": True, "calendars": ["Privat"]}
+
+
+def test_plain_https_session(ccfg):
+    client = cal.CalendarClient(ccfg)
+    client.read_calendars()
+    _, dav, _ = next(iter(cal._cache.values()))
+    assert getattr(dav.session, "_disable_http3", True) is True
+
+
+def test_retry_after_connection_drop(ccfg, monkeypatch):
+    d = date.today() + timedelta(days=6)
+    run(cal.calendar_add(ctx(ccfg), "Kino", f"{day_str(d)} 20:00", 120))
+    real = cal.CalendarClient.events
+    calls = []
+
+    def flaky(self, start, end):
+        calls.append(1)
+        if len(calls) == 1:
+            raise ConnectionError("peer closed: keepalive timeout")
+        return real(self, start, end)
+
+    monkeypatch.setattr(cal.CalendarClient, "events", flaky)
+    out = run(cal.calendar_events(ctx(ccfg), day_str(d)))
+    assert "20:00–22:00 Kino" in out and len(calls) == 2
+
+
+def test_persistent_error_is_reported(ccfg, monkeypatch):
+    def broken(self, start, end):
+        raise ConnectionError("kaputt")
+
+    monkeypatch.setattr(cal.CalendarClient, "events", broken)
+    out = run(cal.calendar_events(ctx(ccfg)))
+    assert "Kalenderfehler (ConnectionError): kaputt" in out and "jarvis.log" in out
+
+
+def test_broken_event_is_skipped(ccfg, monkeypatch):
+    d = date.today() + timedelta(days=8)
+    run(cal.calendar_add(ctx(ccfg), "Gut", f"{day_str(d)} 09:00"))
+    run(cal.calendar_add(ctx(ccfg), "Kaputt", f"{day_str(d)} 11:00"))
+    real = cal._normalize
+
+    def picky(obj, name):
+        ev = real(obj, name)
+        if ev and ev.title == "Kaputt":
+            raise ValueError("seltsames iCloud-Format")
+        return ev
+
+    monkeypatch.setattr(cal, "_normalize", picky)
+    out = run(cal.calendar_events(ctx(ccfg), day_str(d)))
+    assert "Gut" in out and "Kaputt" not in out
+    assert "1 Termin(e) konnten nicht gelesen werden" in out
