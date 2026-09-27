@@ -79,6 +79,10 @@
         <div class="substate" id="substate-label"></div>
       </div>
       <div class="live-transcript" id="live-transcript"></div>
+      <div class="thought" id="thought" aria-hidden="true">
+        <div class="thought-head">GEDANKENGANG</div>
+        <div class="thought-text" id="thought-text"></div>
+      </div>
     </section>
 
     <section class="panel side-panel">
@@ -135,6 +139,7 @@
       </button>
     </form>
     <div class="toggles">
+      <button class="toggle" id="btn-think" title="Denkmodus: Jarvis denkt vor der Antwort nach – langsamer, dafür gründlicher. Der Gedankengang erscheint im Orb.">DENKEN</button>
       <button class="toggle" id="btn-wake" title="Wake-Word „Hey Jarvis“">WAKE</button>
       <button class="toggle on" id="btn-tts" title="Sprachausgabe">TON</button>
       <button class="toggle danger" id="btn-stop" title="Aktuelle Aufgabe abbrechen (Esc)">STOP</button>

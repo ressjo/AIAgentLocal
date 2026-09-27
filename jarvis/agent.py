@@ -38,6 +38,11 @@ class ThinkFilter:
     def __init__(self):
         self.buf = ""
         self.inside = False
+        self.thought: list[str] = []  # Text innerhalb von <think>, abholbar mit take_thought()
+
+    def take_thought(self) -> str:
+        text, self.thought = "".join(self.thought), []
+        return text
 
     def feed(self, text: str) -> str:
         self.buf += text
@@ -46,8 +51,7 @@ class ThinkFilter:
             tag = self.CLOSE if self.inside else self.OPEN
             idx = self.buf.find(tag)
             if idx >= 0:
-                if not self.inside:
-                    out.append(self.buf[:idx])
+                (self.thought if self.inside else out).append(self.buf[:idx])
                 self.buf = self.buf[idx + len(tag):]
                 self.inside = not self.inside
                 continue
@@ -56,8 +60,7 @@ class ThinkFilter:
             for k in range(1, len(tag)):
                 if self.buf.endswith(tag[:k]):
                     keep = k
-            if not self.inside:
-                out.append(self.buf[: len(self.buf) - keep])
+            (self.thought if self.inside else out).append(self.buf[: len(self.buf) - keep])
             self.buf = self.buf[len(self.buf) - keep:] if keep else ""
             return "".join(out)
 
@@ -73,6 +76,7 @@ class Agent:
         self.llm = llm
         self.memory = memory
         self._budget_scale = 1.0  # < 1, wenn der Server „Kontext zu klein“ gemeldet hat
+        self._think: bool | None = None
         self.tools = load_all_tools()
         self.schemas = tool_schemas(cfg)
         self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
@@ -162,9 +166,14 @@ Verhalten:
         return max(1500, self.context_budget() - fixed)
 
     # ---------- Ablauf ----------
-    async def run(self, user_text: str, emit: Emit, confirm: Confirm) -> str:
+    async def run(self, user_text: str, emit: Emit, confirm: Confirm, think: bool | None = None) -> str:
+        """think: Denkmodus für diese Anfrage (None = Einstellung des Modell-Profils)."""
         async with self.lock:
-            return await self._run(user_text, emit, confirm)
+            self._think = think
+            try:
+                return await self._run(user_text, emit, confirm)
+            finally:
+                self._think = None
 
     async def _run(self, user_text: str, emit: Emit, confirm: Confirm) -> str:
         conv = self.memory.conversation
@@ -250,18 +259,18 @@ Verhalten:
         """Ein Modellschritt: streamt Tokens an die UI, liefert (Text, Tool-Aufrufe)."""
         filt = ThinkFilter()
         result: dict = {}
-        reasoning_shown = False
         await emit({"type": "state", "state": "thinking"})
         async for ev in self._stream_fitting(hits, final=final):
             if ev["type"] == "token":
                 text = filt.feed(ev["text"])
+                thought = filt.take_thought()
+                if thought:
+                    await emit({"type": "reasoning", "id": msg_id, "text": thought})
                 if text:
                     await emit({"type": "token", "id": msg_id, "text": text})
             elif ev["type"] == "reasoning":
-                # Denk-Tokens gehören nicht in die Antwort – UI zeigt nur „denkt nach …“ (einmal pro Schritt)
-                if not reasoning_shown:
-                    reasoning_shown = True
-                    await emit({"type": "reasoning", "id": msg_id})
+                # Denkkette: nicht Teil der Antwort, wird nur angezeigt (Orb-Zoom) und nicht vorgelesen
+                await emit({"type": "reasoning", "id": msg_id, "text": ev.get("text", "")})
             elif ev["type"] == "done":
                 result = ev["message"]
                 if ev.get("stats", {}).get("tps"):
@@ -282,7 +291,8 @@ Verhalten:
                 messages = self.build_messages(hits)
                 if final:
                     messages.append({"role": "user", "content": FINAL_NUDGE})
-                async for ev in self.llm.chat_stream(messages, None if final else self.schemas):
+                kwargs = {} if self._think is None else {"think": self._think}
+                async for ev in self.llm.chat_stream(messages, None if final else self.schemas, **kwargs):
                     yield ev
                 return
             except ContextOverflow as e:

@@ -313,9 +313,66 @@ def test_agent_ignores_reasoning_events(cfg, memory):
         return False
 
     answer = run(Agent(cfg, ThinkingLLM(), memory).run("Hi", emit, confirm))
-    assert answer == "Antwort"
-    assert [e["type"] for e in events].count("reasoning") == 1
-    assert "überlege" not in json.dumps(events, ensure_ascii=False)
+    assert answer == "Antwort"  # Denkkette ist nicht Teil der Antwort …
+    assert "".join(e["text"] for e in events if e["type"] == "reasoning") == "überlege weiter"  # … wird aber gezeigt
+    assert all("überlege" not in e.get("text", "") for e in events if e["type"] == "token")
+    assert "überlege" not in json.dumps(memory.conversation.history, ensure_ascii=False)
+
+
+def test_think_toggle_per_request(cfg, memory):
+    bodies = []
+
+    def handler(req):
+        bodies.append(json.loads(req.content))
+        return httpx.Response(200, text=sse({"choices": [{"delta": {"content": "ok"}}]}))
+
+    llm = client_with(handler)
+    collect(llm, [{"role": "user", "content": "x"}])
+
+    async def go(think):
+        return [e async for e in llm.chat_stream([{"role": "user", "content": "x"}], None, think=think)]
+
+    run(go(True))
+    run(go(False))
+    assert [b["chat_template_kwargs"]["enable_thinking"] for b in bodies] == [False, True, False]
+
+    seen = []
+
+    class Spy:
+        async def chat_stream(self, messages, tools=None, **kw):
+            seen.append(kw)
+            yield {"type": "done", "message": {"role": "assistant", "content": "ok"}, "stats": {}}
+
+    async def emit(e):
+        pass
+
+    async def confirm(*a):
+        return False
+
+    agent = Agent(cfg, Spy(), memory)
+    run(agent.run("a", emit, confirm))
+    run(agent.run("b", emit, confirm, think=True))
+    assert seen == [{}, {"think": True}]
+
+
+def test_inline_think_tags_become_reasoning(cfg, memory):
+    class InlineLLM:
+        async def chat_stream(self, messages, tools=None):
+            for t in ["<thi", "nk>Ich prüfe", " kurz</think>", "Fertig."]:
+                yield {"type": "token", "text": t}
+            yield {"type": "done", "message": {"role": "assistant", "content": "<think>Ich prüfe kurz</think>Fertig."},
+                   "stats": {}}
+
+    events = []
+
+    async def emit(e):
+        events.append(e)
+
+    async def confirm(*a):
+        return False
+
+    assert run(Agent(cfg, InlineLLM(), memory).run("x", emit, confirm)) == "Fertig."
+    assert "".join(e["text"] for e in events if e["type"] == "reasoning") == "Ich prüfe kurz"
 
 
 def test_context_overflow_detected_and_agent_retries_smaller(cfg, memory):

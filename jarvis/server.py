@@ -87,6 +87,7 @@ class Hub:
                  stt: WhisperSTT | None, wake: WakeWordFactory | None):
         self.cfg = cfg
         self.agent = agent
+        self.think: bool | None = None  # Denkmodus-Knopf der Oberfläche (None = Profil-Einstellung)
         self.clients: set[Client] = set()
         # Erinnerungen, die fällig wurden, als keine Oberfläche offen war – werden beim Verbinden zugestellt
         self.undelivered: list[dict] = []
@@ -157,7 +158,7 @@ class Hub:
 
     async def _run(self, text: str) -> None:
         try:
-            await self.agent.run(text, self.emit, self.confirm)
+            await self.agent.run(text, self.emit, self.confirm, think=self.think)
         except asyncio.CancelledError:
             pass
         except Exception as e:  # noqa: BLE001
@@ -455,6 +456,8 @@ def create_app(cfg: Config) -> FastAPI:
                     await hub.stop()
                 elif t == "tts":
                     client.tts = bool(data.get("enabled"))
+                elif t == "think":
+                    hub.think = bool(data.get("enabled"))
                 elif t == "voice_settings" and tts:
                     if data.get("voice"):
                         tts.select(str(data["voice"]))

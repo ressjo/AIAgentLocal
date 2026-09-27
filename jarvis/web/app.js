@@ -19,7 +19,7 @@
   const S = {
     ws: null, connected: false, retry: 0,
     serverState: "idle", substate: "",
-    tts: store.get("tts", true), wake: store.get("wake", false),
+    tts: store.get("tts", true), wake: store.get("wake", false), think: store.get("think", false),
     voiceName: store.get("voice", ""), fxOn: store.get("fx", true), fxAmount: store.get("fxAmount", 0.6),
     recording: false, transcribing: false, streamMic: false,
     playing: false, confirm: null, confirmListenSent: false,
@@ -201,6 +201,7 @@
     $("btn-mic").classList.toggle("recording", S.recording);
     $("btn-wake").classList.toggle("on", S.wake);
     $("btn-tts").classList.toggle("on", S.tts);
+    $("btn-think").classList.toggle("on", S.think);
   }
 
   // ---------------------------------------------------------------- WebSocket
@@ -213,6 +214,7 @@
       S.connected = true;
       S.retry = 0;
       send({ type: "tts", enabled: S.tts });
+      send({ type: "think", enabled: S.think });
       sendVoiceSettings();
       if (S.wake && A.micReady) send({ type: "wake", enabled: true });
       refresh();
@@ -259,10 +261,12 @@
       case "token":
         appendToken(ev.id, ev.text);
         T.tokenTimes.push(performance.now());
+        if (Thought.active) Thought.zoomOut();
         if (S.substate === THINKING_SUB) { S.substate = ""; break; }
         return;  // Zustand ändert sich pro Token nicht – kein refresh() nötig
       case "reasoning":
-        // Modell denkt (Thinking-Tokens) – nicht im Chat zeigen, nur als Hinweis am Orb
+        // Denkkette: nicht in die Antwort, sondern in den Orb (hineinzoomen) und später aufklappbar im Chat
+        Thought.add(ev.id, ev.text || "");
         if (S.substate !== THINKING_SUB) S.substate = THINKING_SUB;
         else return;
         break;
@@ -270,12 +274,14 @@
         appendToken(ev.id, "\n\n");
         break;
       case "assistant_end":
+        Thought.finish(ev.id);
         finishAssistant(ev.id, ev.cancelled);
         if (S.substate === THINKING_SUB) S.substate = "";
         setTimeout(loadStatus, 300);
         if (!$("tab-memory").classList.contains("hidden")) loadReminders();
         break;
       case "tool_call":
+        if (Thought.active) Thought.zoomOut();
         toolCall(ev);
         break;
       case "tool_output":
@@ -469,6 +475,62 @@
       setTimeout(go, 100);
     }
   }
+  // Denkmodus: Gedankengang im Orb anzeigen (Zoom per CSS), danach aufklappbar an der Antwort
+  const Thought = {
+    active: false, text: "", byMsg: {}, queued: false, since: 0, outTimer: null, warned: false,
+    add(id, text) {
+      if (!text) return;
+      this.byMsg[id] = (this.byMsg[id] || "") + text;
+      if (!this.active) {
+        this.active = true;
+        this.since = performance.now();
+        this.text = "";
+        clearTimeout(this.outTimer);
+        $("thought-text").textContent = "";
+        document.querySelector(".core").classList.add("zoomed");
+      }
+      this.text += text;
+      if (!this.queued) {
+        this.queued = true;
+        let done = false;
+        const go = () => {
+          if (done) return;
+          done = true;
+          this.queued = false;
+          const el = $("thought-text");
+          el.textContent = this.text.length > 6000 ? "…" + this.text.slice(-6000) : this.text;
+          el.scrollTop = el.scrollHeight;
+        };
+        requestAnimationFrame(go);
+        setTimeout(go, 120);
+      }
+    },
+    zoomOut() {
+      if (!this.active) return;
+      this.active = false;
+      // kurz stehen lassen, damit das Zoomen nicht flackert
+      const wait = Math.max(0, 700 - (performance.now() - this.since));
+      clearTimeout(this.outTimer);
+      this.outTimer = setTimeout(() => document.querySelector(".core").classList.remove("zoomed"), wait);
+    },
+    finish(id) {
+      this.zoomOut();
+      const text = (this.byMsg[id] || "").trim();
+      delete this.byMsg[id];
+      const a = assistants[id];
+      if (text && a) {
+        const d = document.createElement("details");
+        d.className = "thought-log";
+        d.innerHTML = "<summary>GEDANKENGANG</summary><pre></pre>";
+        d.querySelector("pre").textContent = text;
+        a.el.insertBefore(d, a.el.querySelector(".body"));
+      } else if (!text && S.think && !this.warned) {
+        this.warned = true;
+        toast("Denkmodus an, aber das Modell hat keinen Gedankengang geliefert – bei Bonsai '--reasoning-budget 0' aus dem Startbefehl entfernen.");
+      }
+    },
+  };
+
   function finishAssistant(id, cancelled) {
     const a = assistants[id];
     if (!a) return;
@@ -661,6 +723,15 @@
     send({ type: "user_message", text });
     $("input").value = "";
   });
+
+  $("btn-think").onclick = () => {
+    S.think = !S.think;
+    store.set("think", S.think);
+    send({ type: "think", enabled: S.think });
+    toast(S.think ? "Denkmodus an – Antworten dauern länger, der Gedankengang erscheint im Orb."
+                  : "Denkmodus aus – schnelle Antworten.");
+    refresh();
+  };
 
   $("btn-tts").onclick = () => {
     S.tts = !S.tts;

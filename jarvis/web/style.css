@@ -150,8 +150,35 @@ button { font-family: inherit; cursor: pointer; }
 .tool-chip.denied, .tool-chip.blocked, .tool-chip.error { color: var(--danger); border-color: rgba(255,93,108,.4); }
 
 /* ---------- Kern / Orb ---------- */
-.core { position: relative; min-height: 0; display: flex; align-items: center; justify-content: center; }
-#orb { position: absolute; inset: 0; width: 100%; height: 100%; }
+.core { position: relative; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+#orb { position: absolute; inset: 0; width: 100%; height: 100%;
+       transform-origin: 50% 47%; transition: transform .8s cubic-bezier(.2,.8,.2,1), opacity .8s; }
+
+/* Denkmodus: in den Orb hineinzoomen, Gedankengang in der Mitte (nur CSS-Transform → GPU, kein Neuzeichnen) */
+.core.zoomed #orb { transform: scale(1.75); opacity: .3; }
+.thought {
+  position: absolute; left: 50%; top: calc(92px + (100% - 92px) * .47); z-index: 2;
+  width: min(58%, 540px); height: min(48%, 380px);
+  display: flex; flex-direction: column; opacity: 0; pointer-events: none;
+  padding: 14px 18px; border-radius: 50% / 18%;
+  background: radial-gradient(ellipse at center, rgba(2,8,18,.78) 0%, rgba(2,8,18,.55) 60%, transparent 100%);
+  transform: translate(-50%, -50%) scale(.55);
+  transition: opacity .5s, transform .8s cubic-bezier(.2,.8,.2,1);
+}
+.core.zoomed .thought { opacity: 1; transform: translate(-50%, -50%) scale(1); pointer-events: auto; }
+.thought-head { font-size: 11px; letter-spacing: .45em; color: #9aa6ff; text-align: center; margin-bottom: 8px;
+                text-shadow: 0 0 10px currentColor; }
+.thought-text {
+  flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none;
+  font-family: var(--mono); font-size: 14px; line-height: 1.6; color: #e2ecff; white-space: pre-wrap;
+  text-shadow: 0 0 8px rgba(120,140,255,.45);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 22%, #000 100%);
+}
+.thought-log { margin: 2px 0 6px; font-size: 12px; color: var(--muted); }
+.thought-log summary { cursor: pointer; letter-spacing: .15em; font-size: 10px; }
+.thought-log pre { white-space: pre-wrap; font-family: var(--mono); font-size: 12px; max-height: 240px; overflow: auto;
+                   margin: 6px 0 0; padding: 6px 8px; border-left: 2px solid rgba(154,166,255,.4); color: #aab8d8; }
+@media (prefers-reduced-motion: reduce) { #orb, .thought { transition: none; } }
 .core-label { position: absolute; bottom: 9%; left: 0; right: 0; text-align: center; pointer-events: none; }
 .state { font-size: 20px; letter-spacing: .6em; color: var(--accent); text-shadow: 0 0 16px currentColor; padding-left: .6em; transition: color .4s; }
 .substate { margin-top: 4px; font-family: var(--mono); font-size: 12px; color: var(--muted); min-height: 1.2em; }

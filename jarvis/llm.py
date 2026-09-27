@@ -57,26 +57,29 @@ class OllamaLLM:
     async def close(self) -> None:
         await self._client.aclose()
 
-    def _payload(self, messages: list[dict], tools: list[dict] | None, stream: bool) -> dict:
+    def _payload(self, messages: list[dict], tools: list[dict] | None, stream: bool,
+                 think: bool | None = None) -> dict:
         payload: dict[str, Any] = {
             "model": self.cfg.model,
             "messages": messages,
             "stream": stream,
             "keep_alive": self.cfg.keep_alive,
             "options": {"temperature": self.cfg.temperature, "num_ctx": self.cfg.num_ctx},
-            "think": self.cfg.think,
+            "think": self.cfg.think if think is None else think,
         }
         if tools:
             payload["tools"] = tools
         return payload
 
-    async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None) -> AsyncIterator[dict]:
-        """Liefert {"type": "token", "text": ...} und abschließend {"type": "done", "message": {...}}."""
+    async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
+                          think: bool | None = None) -> AsyncIterator[dict]:
+        """Liefert {"type": "token", "text": ...} und abschließend {"type": "done", "message": {...}}.
+        think: Denkmodus für diese Anfrage (None = Einstellung aus der Config)."""
         content: list[str] = []
         tool_calls: list[dict] = []
         stats: dict[str, Any] = {}
         try:
-            async with self._client.stream("POST", "/api/chat", json=self._payload(messages, tools, True)) as resp:
+            async with self._client.stream("POST", "/api/chat", json=self._payload(messages, tools, True, think)) as resp:
                 if resp.status_code != 200:
                     body = (await resp.aread()).decode(errors="replace")
                     raise LLMError(f"Ollama antwortet mit {resp.status_code}: {body[:300]}")
@@ -214,7 +217,8 @@ class OpenAICompatLLM:
     async def close(self) -> None:
         await self._client.aclose()
 
-    def _payload(self, messages: list[dict], tools: list[dict] | None, stream: bool) -> dict:
+    def _payload(self, messages: list[dict], tools: list[dict] | None, stream: bool,
+                 think: bool | None = None) -> dict:
         p = self.profile
         payload: dict[str, Any] = {
             "model": p.model,
@@ -223,9 +227,8 @@ class OpenAICompatLLM:
             "temperature": p.temperature,
             "cache_prompt": True,
         }
-        if not p.think:
-            # Qwen-basierte Modelle (auch Bonsai): Denkmodus aus – deutlich schneller
-            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        # Qwen-basierte Modelle (auch Bonsai): Denkmodus aus – deutlich schneller; per Anfrage einschaltbar
+        payload["chat_template_kwargs"] = {"enable_thinking": bool(p.think if think is None else think)}
         if stream:
             payload["stream_options"] = {"include_usage": True}
         if tools:
@@ -238,13 +241,15 @@ class OpenAICompatLLM:
         if not OpenAICompatLLM._warned_reasoning:
             OpenAICompatLLM._warned_reasoning = True
             log.warning("Modell-Server %s denkt trotz think: false (Reasoning-Tokens kosten Zeit). "
-                        "Tipp: '--reasoning-budget 0' an den llama-server-Befehl anhängen.", self.profile.base_url)
+                        "Tipp: '--reasoning-budget 0' an den llama-server-Befehl anhängen (dann wirkt allerdings "
+                        "auch der DENKEN-Knopf nicht mehr).", self.profile.base_url)
 
     def _error(self, e: Exception) -> LLMError:
         return LLMError(f"Modell-Server {self.profile.base_url} nicht erreichbar ({type(e).__name__}) – "
                         "läuft llama-server?")
 
-    async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None) -> AsyncIterator[dict]:
+    async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
+                          think: bool | None = None) -> AsyncIterator[dict]:
         content: list[str] = []
         calls: dict[int, dict] = {}
         timings: dict = {}
@@ -253,7 +258,7 @@ class OpenAICompatLLM:
         started = time.monotonic()
         try:
             async with self._client.stream("POST", "/chat/completions",
-                                           json=self._payload(messages, tools, True)) as resp:
+                                           json=self._payload(messages, tools, True, think)) as resp:
                 if resp.status_code != 200:
                     body = (await resp.aread()).decode(errors="replace")
                     _check_overflow(resp.status_code, body)
@@ -276,7 +281,7 @@ class OpenAICompatLLM:
                         if reasoning:
                             # Modell „denkt“ (Thinking-Tokens): nicht Teil der Antwort, aber sichtbar machen
                             first_token = first_token or time.monotonic()
-                            if not self.profile.think:
+                            if not (self.profile.think if think is None else think):
                                 self._warn_reasoning()
                             yield {"type": "reasoning", "text": reasoning}
                         text = delta.get("content")
@@ -401,9 +406,16 @@ class FakeLLM:
         return {"role": "assistant",
                 "content": f"Sehr wohl. Sie sagten: {text}. Wie kann ich sonst behilflich sein?"}
 
-    async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None) -> AsyncIterator[dict]:
+    async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
+                          think: bool | None = None) -> AsyncIterator[dict]:
         self.calls.append(messages)
         msg = self._decide(messages)
+        if think:
+            for word in re.findall(r"\S+\s*", "Der Nutzer möchte etwas wissen. Ich überlege kurz, welche Werkzeuge "
+                                               "passen, und antworte dann knapp."):
+                if self.delay:
+                    await asyncio.sleep(self.delay)
+                yield {"type": "reasoning", "text": word}
         for word in re.findall(r"\S+\s*", msg["content"]):
             if self.delay:
                 await asyncio.sleep(self.delay)

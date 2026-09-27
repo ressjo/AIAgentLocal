@@ -254,9 +254,10 @@ class LLMRouter:
             await self.detect_context()
 
     # ---------- LLM-Schnittstelle ----------
-    async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None) -> AsyncIterator[dict]:
+    async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
+                          think: bool | None = None) -> AsyncIterator[dict]:
         try:
-            async for ev in self.client.chat_stream(messages, tools):
+            async for ev in self.client.chat_stream(messages, tools, think=think):
                 yield ev
         except ContextOverflow as e:
             if e.n_ctx:  # Server kennt seine echte Größe – ab jetzt die verwenden
