@@ -44,6 +44,7 @@ class OllamaLLM:
         """Liefert {"type": "token", "text": ...} und abschließend {"type": "done", "message": {...}}."""
         content: list[str] = []
         tool_calls: list[dict] = []
+        stats: dict[str, Any] = {}
         try:
             async with self._client.stream("POST", "/api/chat", json=self._payload(messages, tools, True)) as resp:
                 if resp.status_code != 200:
@@ -62,6 +63,7 @@ class OllamaLLM:
                     if msg.get("tool_calls"):
                         tool_calls.extend(msg["tool_calls"])
                     if chunk.get("done"):
+                        stats = generation_stats(chunk)
                         break
         except httpx.ConnectError as e:
             raise LLMError(
@@ -70,7 +72,7 @@ class OllamaLLM:
         message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}
         if tool_calls:
             message["tool_calls"] = tool_calls
-        yield {"type": "done", "message": message}
+        yield {"type": "done", "message": message, "stats": stats}
 
     async def chat(self, messages: list[dict]) -> str:
         try:
@@ -104,6 +106,18 @@ class OllamaLLM:
             "embed_model": self.cfg.embed_model,
             "embed_available": has(self.cfg.embed_model),
         }
+
+
+def generation_stats(chunk: dict) -> dict:
+    """Token-Statistik aus dem letzten Ollama-Chunk (Dauern in Nanosekunden)."""
+    def rate(count, duration):
+        return round(count / (duration / 1e9), 1) if count and duration else None
+    return {
+        "tokens": chunk.get("eval_count"),
+        "tps": rate(chunk.get("eval_count"), chunk.get("eval_duration")),
+        "prompt_tokens": chunk.get("prompt_eval_count"),
+        "prompt_tps": rate(chunk.get("prompt_eval_count"), chunk.get("prompt_eval_duration")),
+    }
 
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.S)
@@ -155,7 +169,9 @@ class FakeLLM:
             if self.delay:
                 await asyncio.sleep(self.delay)
             yield {"type": "token", "text": word}
-        yield {"type": "done", "message": msg}
+        n = max(1, len(msg["content"].split()))
+        yield {"type": "done", "message": msg,
+               "stats": {"tokens": n, "tps": 42.0, "prompt_tokens": 800, "prompt_tps": 950.0}}
 
     async def chat(self, messages: list[dict]) -> str:
         self.calls.append(messages)

@@ -157,6 +157,8 @@ Verhalten:
                             await emit({"type": "token", "id": msg_id, "text": text})
                     else:
                         final = ev["message"]
+                        if ev.get("stats", {}).get("tps"):
+                            await emit({"type": "llm_stats", **ev["stats"]})
                 tail = filt.flush()
                 if tail:
                     await emit({"type": "token", "id": msg_id, "text": tail})

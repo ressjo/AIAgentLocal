@@ -97,6 +97,21 @@ Wird der Verlauf zu lang, faltet Jarvis die ältesten Nachrichten per LLM in die
 im Journal und im Index bleiben sie vollständig erhalten und werden bei Bedarf wieder hervorgeholt.
 So kann Jarvis sich über Monate „an alles erinnern“, ohne dass das Kontextfenster je überläuft.
 
+## Telemetrie
+
+Oben über dem Orb zeigt eine HUD-Leiste live (alle 2 s, mit Verlaufskurve):
+
+| Kachel | Quelle |
+|---|---|
+| **TOK/S** | Live geschätzt während Jarvis schreibt, danach der exakte Wert von Ollama (+ Prompt-Verarbeitung) |
+| **GPU** | Auslastung in % und Temperatur |
+| **VRAM** | Belegter / gesamter Grafikspeicher |
+| **RAM** | Belegter / gesamter Arbeitsspeicher, dazu CPU-Last |
+| **LEISTUNG** | Leistungsaufnahme der Grafikkarte in Watt |
+
+NVIDIA wird über `nvidia-smi` gelesen, AMD direkt über den `amdgpu`-Treiber (sysfs) – es sind keine
+Zusatzprogramme nötig. Ab 80 % färben sich die Balken orange, ab 95 % rot.
+
 ## Stimme & Jarvis-Effekt
 
 Im Reiter **STIMME** der Oberfläche:

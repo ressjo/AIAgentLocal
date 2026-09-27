@@ -216,6 +216,7 @@
       if (S.wake && A.micReady) send({ type: "wake", enabled: true });
       refresh();
       loadStatus();
+      getJSON("/api/metrics").then(showMetrics).catch(() => {});
       if (!S.historyLoaded) loadHistory();
     };
     ws.onclose = () => {
@@ -254,6 +255,7 @@
         break;
       case "token":
         appendToken(ev.id, ev.text);
+        T.tokenTimes.push(performance.now());
         break;
       case "segment_end":
         appendToken(ev.id, "\n\n");
@@ -296,6 +298,16 @@
         break;
       case "memory":
         addSystem(ev.text);
+        break;
+      case "metrics":
+        showMetrics(ev);
+        break;
+      case "llm_stats":
+        T.exactTps = ev.tps;
+        T.lastExact = Date.now();
+        T.tokenTimes = [];
+        setTile("tps", ev.tps, { sub: `${ev.tokens || "?"} Tok · Prompt ${fmt(ev.prompt_tps, 0)}/s` });
+        pushSpark("tps", ev.tps);
         break;
       case "conversation_reset":
         $("chat").innerHTML = "";
@@ -736,6 +748,91 @@
     src.onended = () => { S.playing = false; A.current = null; refresh(); };
     src.start();
   }
+
+  // ---------------------------------------------------------------- Telemetrie
+  const T = { tokenTimes: [], exactTps: null, lastExact: 0, spark: {} };
+  const SPARK_MAX = { gpu: 100, power: null, vram: null, ram: null, tps: null };
+
+  function fmt(v, digits = 1) {
+    return v === null || v === undefined || Number.isNaN(v) ? "–" : Number(v).toLocaleString("de-DE", {
+      minimumFractionDigits: digits, maximumFractionDigits: digits });
+  }
+
+  function setTile(key, value, { sub = "", pct = null, digits = 1, title = "" } = {}) {
+    const el = $("tele-" + key);
+    if (!el) return;
+    el.querySelector(".tele-num").textContent = fmt(value, digits);
+    el.querySelector(".tele-sub").textContent = sub;
+    el.classList.toggle("na", value === null || value === undefined);
+    el.classList.toggle("warn", pct !== null && pct >= 80 && pct < 95);
+    el.classList.toggle("crit", pct !== null && pct >= 95);
+    el.querySelector(".tele-bar i").style.width = pct === null ? "0" : Math.min(100, pct) + "%";
+    if (title) el.title = title;
+  }
+
+  function pushSpark(key, value) {
+    if (value === null || value === undefined) return;
+    const arr = (T.spark[key] = T.spark[key] || []);
+    arr.push(value);
+    if (arr.length > 30) arr.shift();
+    const canvas = document.querySelector(`#tele-${key} .tele-spark`);
+    if (!canvas || canvas.offsetParent === null) return;
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width, h = canvas.height;
+    const max = SPARK_MAX[key] || Math.max(...arr) * 1.15 || 1;
+    ctx.clearRect(0, 0, w, h);
+    ctx.beginPath();
+    arr.forEach((v, i) => {
+      const x = (i / 29) * w, y = h - 2 - (v / max) * (h - 4);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    const color = getComputedStyle(canvas.parentElement.querySelector(".tele-bar i")).backgroundColor;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.lineTo(((arr.length - 1) / 29) * w, h);
+    ctx.lineTo(0, h);
+    ctx.globalAlpha = 0.15;
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  function showMetrics(m) {
+    const g = m.gpu;
+    const gb = (b) => (b === null || b === undefined ? null : b / 1024 ** 3);
+    if (g) {
+      setTile("gpu", g.util, { pct: g.util, digits: 0, sub: g.temp !== null && g.temp !== undefined ? `${fmt(g.temp, 0)} °C` : "", title: g.name });
+      const vp = g.vram_total ? (100 * g.vram_used) / g.vram_total : null;
+      setTile("vram", gb(g.vram_used), { pct: vp, sub: `von ${fmt(gb(g.vram_total))} GB`, title: g.name });
+      setTile("power", g.power, { digits: 0, sub: g.name ? g.name.replace(/^(NVIDIA|AMD)\s+/i, "") : "", title: g.name });
+      pushSpark("gpu", g.util);
+      pushSpark("vram", gb(g.vram_used));
+      pushSpark("power", g.power);
+    } else {
+      setTile("gpu", null, { sub: "keine GPU erkannt" });
+      setTile("vram", null);
+      setTile("power", null);
+    }
+    if (m.ram) {
+      setTile("ram", gb(m.ram.used), { pct: (100 * m.ram.used) / m.ram.total,
+        sub: `von ${fmt(gb(m.ram.total))} GB` + (m.cpu !== null && m.cpu !== undefined ? ` · CPU ${fmt(m.cpu, 0)} %` : "") });
+      pushSpark("ram", gb(m.ram.used));
+    }
+  }
+
+  // Live-Token/s während des Streamens (gleitendes 2-s-Fenster), danach exakter Ollama-Wert
+  setInterval(() => {
+    const now = performance.now();
+    T.tokenTimes = T.tokenTimes.filter((t) => now - t < 2000);
+    const streaming = Object.keys(assistants).length > 0;
+    if (streaming && T.tokenTimes.length >= 3 && Date.now() - T.lastExact > 1500) {
+      const span = (now - T.tokenTimes[0]) / 1000 || 1;
+      const live = T.tokenTimes.length / Math.max(span, 0.25);
+      setTile("tps", live, { sub: "live" });
+    }
+  }, 500);
+  setTile("tps", null, { sub: "wartet auf Antwort" });
 
   let toastTimer;
   function toast(text) {

@@ -34,6 +34,43 @@
 
     <section class="core">
       <canvas id="orb" aria-label="Jarvis Statusanzeige"></canvas>
+      <div class="telemetry" id="telemetry" aria-label="Systemauslastung">
+        <div class="tele" id="tele-tps">
+          <div class="tele-label">TOK/S</div>
+          <div class="tele-value"><span class="tele-num">–</span><span class="tele-unit"></span></div>
+          <div class="tele-sub"></div>
+          <div class="tele-bar"><i></i></div>
+          <canvas class="tele-spark" width="120" height="22"></canvas>
+        </div>
+        <div class="tele" id="tele-gpu">
+          <div class="tele-label">GPU</div>
+          <div class="tele-value"><span class="tele-num">–</span><span class="tele-unit">%</span></div>
+          <div class="tele-sub"></div>
+          <div class="tele-bar"><i></i></div>
+          <canvas class="tele-spark" width="120" height="22"></canvas>
+        </div>
+        <div class="tele" id="tele-vram">
+          <div class="tele-label">VRAM</div>
+          <div class="tele-value"><span class="tele-num">–</span><span class="tele-unit">GB</span></div>
+          <div class="tele-sub"></div>
+          <div class="tele-bar"><i></i></div>
+          <canvas class="tele-spark" width="120" height="22"></canvas>
+        </div>
+        <div class="tele" id="tele-ram">
+          <div class="tele-label">RAM</div>
+          <div class="tele-value"><span class="tele-num">–</span><span class="tele-unit">GB</span></div>
+          <div class="tele-sub"></div>
+          <div class="tele-bar"><i></i></div>
+          <canvas class="tele-spark" width="120" height="22"></canvas>
+        </div>
+        <div class="tele" id="tele-power">
+          <div class="tele-label">LEISTUNG</div>
+          <div class="tele-value"><span class="tele-num">–</span><span class="tele-unit">W</span></div>
+          <div class="tele-sub"></div>
+          <div class="tele-bar"><i></i></div>
+          <canvas class="tele-spark" width="120" height="22"></canvas>
+        </div>
+      </div>
       <div class="core-label">
         <div class="state" id="state-label">OFFLINE</div>
         <div class="substate" id="substate-label"></div>

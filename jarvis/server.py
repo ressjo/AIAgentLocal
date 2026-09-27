@@ -18,6 +18,7 @@ from .agent import Agent
 from .config import Config
 from .llm import FakeLLM, OllamaLLM
 from .memory import Memory
+from . import metrics
 from .memory.files import valid_day
 from .tools.trilium import trilium_status
 from .voice.listen import AudioSession, WakeWordFactory, WhisperSTT
@@ -190,6 +191,7 @@ def create_app(cfg: Config) -> FastAPI:
     async def lifespan(app: FastAPI):
         hub.speaker.start()
         background.append(asyncio.create_task(summary_loop()))
+        background.append(asyncio.create_task(metrics_loop()))
         if stt and os.environ.get("JARVIS_SKIP_WARMUP") != "1":
             background.append(asyncio.create_task(asyncio.to_thread(stt.warmup)))
         yield
@@ -198,6 +200,16 @@ def create_app(cfg: Config) -> FastAPI:
         await hub.speaker.close()
         await llm.close()
         memory.close()
+
+    async def metrics_loop() -> None:
+        while True:
+            if hub.clients:
+                try:
+                    data = await asyncio.to_thread(metrics.collect)
+                    await hub.broadcast({"type": "metrics", **data})
+                except Exception as e:  # noqa: BLE001
+                    log.debug("Telemetrie fehlgeschlagen: %s", e)
+            await asyncio.sleep(2)
 
     async def summary_loop() -> None:
         await asyncio.sleep(30)
@@ -253,6 +265,10 @@ def create_app(cfg: Config) -> FastAPI:
             "trilium": await trilium_status(cfg),
             "busy": agent.lock.locked(),
         }
+
+    @app.get("/api/metrics")
+    async def get_metrics():
+        return await asyncio.to_thread(metrics.collect)
 
     @app.get("/api/memory/days")
     async def memory_days():
