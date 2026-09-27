@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import glob
 import os
 import signal
 import subprocess
+import tempfile
 
 from .registry import ToolContext
 
@@ -65,10 +67,74 @@ async def run(ctx: ToolContext, cmd: str | list[str], timeout: float, stream: bo
     return rc, "".join(chunks)
 
 
+DESKTOP_VARS = ("DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XAUTHORITY",
+                "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE", "DESKTOP_SESSION", "KDE_FULL_SESSION", "XDG_DATA_DIRS")
+
+
+def _systemd_user_env() -> dict[str, str]:
+    try:
+        out = subprocess.run(["systemctl", "--user", "show-environment"], capture_output=True, text=True,
+                             timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    env = {}
+    for line in out.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key in DESKTOP_VARS:
+            env[key] = value
+    return env
+
+
+def desktop_env() -> dict[str, str]:
+    """Umgebung mit Zugriff auf die grafische Sitzung – auch wenn Jarvis z. B. als Dienst gestartet wurde."""
+    env = {**os.environ}
+    if not (env.get("DISPLAY") or env.get("WAYLAND_DISPLAY")) or not env.get("DBUS_SESSION_BUS_ADDRESS"):
+        for key, value in _systemd_user_env().items():
+            env.setdefault(key, value)
+    runtime = env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    if not env.get("DBUS_SESSION_BUS_ADDRESS") and os.path.exists(f"{runtime}/bus"):
+        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={runtime}/bus"
+    if not env.get("WAYLAND_DISPLAY"):
+        sockets = sorted(glob.glob(f"{runtime}/wayland-[0-9]"))
+        if sockets:
+            env["WAYLAND_DISPLAY"] = os.path.basename(sockets[0])
+    if not env.get("DISPLAY") and os.path.exists("/tmp/.X11-unix/X0"):
+        env["DISPLAY"] = ":0"
+    return env
+
+
+def has_display(env: dict[str, str] | None = None) -> bool:
+    env = env if env is not None else desktop_env()
+    return bool(env.get("DISPLAY") or env.get("WAYLAND_DISPLAY"))
+
+
+async def launch(argv: list[str], wait: float = 2.0) -> tuple[bool, str]:
+    """Startet ein Programm unabhängig von Jarvis und prüft kurz, ob es sofort mit Fehler endet.
+    Liefert (erfolgreich, Fehlermeldung)."""
+    with tempfile.TemporaryFile() as err:
+        try:
+            p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
+                                 start_new_session=True, cwd=os.path.expanduser("~"), env=desktop_env())
+        except OSError as e:
+            return False, str(e)
+        waited = 0.0
+        while waited < wait:
+            rc = p.poll()
+            if rc is not None:
+                if rc == 0:
+                    return True, ""
+                err.seek(0)
+                msg = err.read().decode(errors="replace").strip()
+                return False, f"Exit-Code {rc}" + (f": {msg[-500:]}" if msg else "")
+            await asyncio.sleep(0.1)
+            waited += 0.1
+    return True, ""  # läuft noch → Programm wurde gestartet
+
+
 def spawn_detached(argv: list[str]) -> None:
     """Startet ein Programm unabhängig von Jarvis (überlebt dessen Neustart)."""
     subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=True, cwd=os.path.expanduser("~"))
+                     start_new_session=True, cwd=os.path.expanduser("~"), env=desktop_env())
 
 
 def format_result(rc: int | None, output: str, limit: int) -> str:

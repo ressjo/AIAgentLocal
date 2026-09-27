@@ -84,27 +84,61 @@ def match_app(query: str, apps: list[App]) -> App | None:
     return best if best_score >= 0.6 else None
 
 
-def _exec_argv(exec_line: str) -> list[str]:
-    cleaned = re.sub(r"%[fFuUdDnNickvm]", "", exec_line).replace("%%", "%")
-    return shlex.split(cleaned)
+def _exec_argv(exec_line: str, files: list[str] | None = None) -> list[str]:
+    """Exec-Zeile einer .desktop-Datei in argv umwandeln; Dateien für %f/%F/%u/%U einsetzen."""
+    files = files or []
+    argv, placed = [], False
+    for part in shlex.split(exec_line.replace("%%", "\x00")):
+        if part in ("%f", "%u"):
+            argv += files[:1]
+            placed = True
+        elif part in ("%F", "%U"):
+            argv += files
+            placed = True
+        else:
+            cleaned = re.sub(r"%[fFuUdDnNickvm]", "", part).replace("\x00", "%")
+            if cleaned:
+                argv.append(cleaned)
+    if files and not placed:
+        argv += files
+    return argv
+
+
+async def launch_app(app: App, files: list[str] | None = None) -> tuple[bool, str]:
+    """Startet eine Anwendung (optional mit Dateien) und meldet, ob der Start fehlschlug."""
+    files = files or []
+    if shutil.which("gio"):
+        ok, err = await proc.launch(["gio", "launch", str(app.path), *files])
+        if ok:
+            return ok, err
+    if shutil.which("gtk-launch"):
+        ok, err = await proc.launch(["gtk-launch", app.id.removesuffix(".desktop"), *files])
+        if ok:
+            return ok, err
+    argv = _exec_argv(app.exec, files)
+    if not argv:
+        return False, "keine Exec-Zeile"
+    return await proc.launch(argv)
+
+
+def _no_display_hint() -> str:
+    return (" Jarvis hat keinen Zugriff auf die grafische Sitzung (DISPLAY/WAYLAND_DISPLAY fehlt) – "
+            "starte Jarvis aus der Desktop-Sitzung (Autostart oder Terminal im Desktop).")
 
 
 @tool("Startet ein installiertes Programm (z. B. 'Firefox', 'Dateimanager', 'Steam', 'Terminal').")
 async def open_app(ctx: ToolContext, name: Annotated[str, "Name des Programms"]) -> str:
     app = match_app(name, list_apps())
     if app:
-        if shutil.which("gtk-launch"):
-            proc.spawn_detached(["gtk-launch", app.id.removesuffix(".desktop")])
-        elif shutil.which("gio"):
-            proc.spawn_detached(["gio", "launch", str(app.path)])
-        else:
-            proc.spawn_detached(_exec_argv(app.exec))
-        return f"Gestartet: {app.name}"
+        ok, err = await launch_app(app)
+        if ok:
+            return f"Gestartet: {app.name}"
+        return f"Start von {app.name} fehlgeschlagen ({err})." + ("" if proc.has_display() else _no_display_hint())
     binary = shutil.which(name.strip().lower())
     if binary:
-        proc.spawn_detached([binary])
-        return f"Gestartet: {binary}"
-    return f"Kein Programm namens '{name}' gefunden. Mit list_apps nach installierten Programmen suchen."
+        ok, err = await proc.launch([binary])
+        return f"Gestartet: {binary}" if ok else f"Start von {binary} fehlgeschlagen ({err})."
+    return f"Kein Programm namens '{name}' gefunden. Mit list_installed_apps nach installierten Programmen suchen."
 
 
 @tool("Listet installierte Programme auf, optional gefiltert.")

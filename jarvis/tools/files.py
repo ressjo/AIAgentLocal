@@ -178,18 +178,79 @@ async def read_file(ctx: ToolContext, path: Annotated[str, "Pfad zur Datei"]) ->
     return proc.clip(data.decode(errors="replace"), TEXT_LIMIT)
 
 
-@tool("Öffnet eine Datei, einen Ordner oder eine URL mit dem Standardprogramm (xdg-open).")
-async def open_file(ctx: ToolContext, path: Annotated[str, "Pfad zur Datei/zum Ordner oder eine URL"]) -> str:
+async def _resolve_target(ctx: ToolContext, target: str) -> tuple[Path | None, str]:
+    """Pfad direkt verwenden oder – bei bloßem Dateinamen – im Home/NAS danach suchen."""
+    p = Path(target).expanduser()
+    if p.is_absolute() and p.exists():
+        return p, ""
+    if not p.is_absolute() and (Path.home() / p).exists():
+        return Path.home() / p, ""
+    name = p.name
+    if not name:
+        return None, f"Nicht gefunden: {p}"
+    roots = [*ctx.cfg.tools.search_paths, *[n for n in ctx.cfg.tools.nas_paths if n.exists()]]
+    hits = await _find(ctx, name, roots, "", use_locate=True, max_hits=50)
+    hits = [h for h in hits if os.path.exists(h)]
+    exact = [h for h in hits if os.path.basename(h).lower() == name.lower()]
+    candidates = exact or hits
+    if len(candidates) == 1:
+        return Path(candidates[0]), ""
+    if not candidates:
+        return None, f"Nicht gefunden: {target} (auch keine Datei mit diesem Namen im Home/NAS)."
+    return None, ("Mehrere Dateien passen – bitte den vollständigen Pfad nennen:\n"
+                  + _describe(candidates, 10))
+
+
+@tool("Öffnet eine Datei, einen Ordner oder eine URL – mit dem Standardprogramm oder einem gewünschten Programm. "
+      "Ein bloßer Dateiname genügt, die Datei wird dann gesucht.")
+async def open_file(
+    ctx: ToolContext,
+    path: Annotated[str, "Pfad, Dateiname oder URL"],
+    app: Annotated[str, "Optional: Programm, mit dem geöffnet werden soll (z. B. 'Kate', 'VS Code', 'GIMP')"] = "",
+) -> str:
+    from .apps import _no_display_hint, launch_app, list_apps, match_app
+
     target = path.strip()
     if not target.startswith(("http://", "https://")):
-        p = Path(target).expanduser()
-        if not p.exists():
-            return f"Nicht gefunden: {p}"
-        target = str(p)
-    if not shutil.which("xdg-open"):
-        return "xdg-open ist nicht installiert (Paket xdg-utils)."
-    proc.spawn_detached(["xdg-open", target])
-    return f"Geöffnet: {target}"
+        resolved, problem = await _resolve_target(ctx, target)
+        if not resolved:
+            return problem
+        target = str(resolved)
+
+    if app.strip():
+        match = match_app(app, list_apps())
+        if not match:
+            return f"Programm '{app}' nicht gefunden – Datei nicht geöffnet."
+        ok, err = await launch_app(match, [target])
+        if ok:
+            return f"Geöffnet mit {match.name}: {target}"
+        return f"Öffnen mit {match.name} fehlgeschlagen ({err}).{'' if proc.has_display() else _no_display_hint()}"
+
+    opener = next((c for c in (["xdg-open"], ["gio", "open"]) if shutil.which(c[0])), None)
+    if not opener:
+        return "Weder xdg-open noch gio ist installiert (Paket xdg-utils)."
+    ok, err = await proc.launch([*opener, target])
+    if ok:
+        return f"Geöffnet: {target}"
+    hint = "" if proc.has_display() else _no_display_hint()
+    if not hint and not target.startswith("http"):
+        mime = await _mime_default(ctx, target)
+        if mime:
+            hint = f" {mime}"
+    return f"Öffnen fehlgeschlagen ({err}).{hint} Tipp: mit dem Parameter app ein Programm angeben."
+
+
+async def _mime_default(ctx: ToolContext, target: str) -> str:
+    if not shutil.which("xdg-mime"):
+        return ""
+    _, mime = await proc.run(ctx, ["xdg-mime", "query", "filetype", target], timeout=5, stream=False)
+    mime = mime.strip()
+    if not mime:
+        return ""
+    _, app = await proc.run(ctx, ["xdg-mime", "query", "default", mime], timeout=5, stream=False)
+    app = app.strip()
+    return (f"Dateityp {mime}, Standardprogramm: {app}." if app
+            else f"Für den Dateityp {mime} ist kein Standardprogramm eingestellt.")
 
 
 def _write_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:

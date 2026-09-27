@@ -63,6 +63,20 @@ def cmd_doctor(args) -> None:
     line(tts.available(), f"Piper-Stimme {cfg.voice.tts_voice.name}", tts.error or "")
     wake = WakeWordFactory(cfg.voice)
     line(wake.available(), f"Wake-Word '{cfg.voice.wakeword_model}'", wake.error or "")
+    print("Desktop (Dateien/Programme öffnen):")
+    from .tools.proc import desktop_env
+    env = desktop_env()
+    session = env.get("WAYLAND_DISPLAY") or env.get("DISPLAY")
+    line(bool(session), f"Grafische Sitzung: {session or 'nicht gefunden'}",
+         "Jarvis aus der Desktop-Sitzung starten (Autostart/Terminal)")
+    line(bool(env.get("DBUS_SESSION_BUS_ADDRESS")), "D-Bus-Sitzung", "Jarvis aus der Desktop-Sitzung starten")
+    if shutil.which("xdg-mime"):
+        import subprocess
+        for mime, label in (("text/plain", "Texteditor"), ("application/pdf", "PDF"), ("inode/directory", "Ordner")):
+            app = subprocess.run(["xdg-mime", "query", "default", mime], capture_output=True, text=True,
+                                 env=env).stdout.strip()
+            line(bool(app), f"Standardprogramm {label}: {app or 'keins'}",
+                 f"xdg-mime default <programm>.desktop {mime}")
     print("Werkzeuge:")
     for tool, pkg in [("fd", "fd"), ("rg", "ripgrep"), ("plocate", "plocate"), ("xdg-open", "xdg-utils"),
                       ("gtk-launch", "gtk3"), ("pkexec", "polkit"), ("checkupdates", "pacman-contrib"),
