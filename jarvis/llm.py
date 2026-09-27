@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import re
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -20,9 +21,11 @@ class LLMError(RuntimeError):
 
 
 class OllamaLLM:
-    def __init__(self, cfg: LLMConfig):
+    def __init__(self, cfg: LLMConfig, transport: httpx.AsyncBaseTransport | None = None):
         self.cfg = cfg
-        self._client = httpx.AsyncClient(base_url=cfg.base_url, timeout=cfg.request_timeout)
+        # Embeddings auf der CPU rechnen (spart Grafikspeicher, wenn ein anderes Modell die GPU belegt)
+        self.embed_on_cpu = False
+        self._client = httpx.AsyncClient(base_url=cfg.base_url, timeout=cfg.request_timeout, transport=transport)
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -84,12 +87,33 @@ class OllamaLLM:
         return strip_think(resp.json().get("message", {}).get("content", ""))
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        resp = await self._client.post(
-            "/api/embed", json={"model": self.cfg.embed_model, "input": texts, "keep_alive": self.cfg.keep_alive}
-        )
+        payload: dict[str, Any] = {"model": self.cfg.embed_model, "input": texts, "keep_alive": self.cfg.keep_alive}
+        if self.embed_on_cpu:
+            payload["options"] = {"num_gpu": 0}
+        try:
+            resp = await self._client.post("/api/embed", json=payload)
+        except httpx.HTTPError as e:
+            raise LLMError(f"Ollama für Embeddings nicht erreichbar: {e}") from e
         if resp.status_code != 200:
             raise LLMError(f"Embedding fehlgeschlagen ({resp.status_code}): {resp.text[:200]}")
         return resp.json()["embeddings"]
+
+    async def loaded_models(self) -> list[str]:
+        try:
+            resp = await self._client.get("/api/ps", timeout=5)
+            return [m["name"] for m in resp.json().get("models", [])]
+        except (httpx.HTTPError, ValueError, KeyError):
+            return []
+
+    async def unload_all(self) -> list[str]:
+        """Alle geladenen Ollama-Modelle aus dem (Grafik-)Speicher entfernen."""
+        names = await self.loaded_models()
+        for name in names:
+            try:
+                await self._client.post("/api/generate", json={"model": name, "keep_alive": 0}, timeout=30)
+            except httpx.HTTPError:
+                pass
+        return names
 
     async def status(self) -> dict:
         try:
@@ -106,6 +130,161 @@ class OllamaLLM:
             "embed_model": self.cfg.embed_model,
             "embed_available": has(self.cfg.embed_model),
         }
+
+
+def to_openai_messages(messages: list[dict]) -> list[dict]:
+    """Nachrichten im internen (Ollama-)Format → OpenAI-Format: Tool-Calls bekommen IDs, Tool-Ergebnisse werden
+    in Reihenfolge ihrer Aufrufe zugeordnet, Argumente als JSON-String."""
+    out: list[dict] = []
+    pending: list[str] = []
+    counter = 0
+    for m in messages:
+        role = m.get("role")
+        if role == "assistant" and m.get("tool_calls"):
+            calls = []
+            for call in m["tool_calls"]:
+                fn = call.get("function", {})
+                args = fn.get("arguments", {})
+                counter += 1
+                cid = f"call_{counter}"
+                pending.append(cid)
+                calls.append({"id": cid, "type": "function", "function": {
+                    "name": fn.get("name", ""),
+                    "arguments": args if isinstance(args, str) else json.dumps(args, ensure_ascii=False)}})
+            out.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": calls})
+        elif role == "tool":
+            if pending:
+                cid = pending.pop(0)
+            else:
+                counter += 1
+                cid = f"call_{counter}"
+            out.append({"role": "tool", "tool_call_id": cid, "content": m.get("content", "")})
+        else:
+            out.append({"role": role, "content": m.get("content", "")})
+    return out
+
+
+def _parse_args(raw: str) -> Any:
+    if not raw or not raw.strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw  # coerce_args versucht es erneut und ignoriert Unbrauchbares
+
+
+class OpenAICompatLLM:
+    """OpenAI-kompatibler Server (llama-server aus llama.cpp, LM Studio, vLLM …) mit Streaming und Tool-Calls."""
+
+    def __init__(self, profile, timeout: float = 300.0, transport: httpx.AsyncBaseTransport | None = None):
+        self.profile = profile
+        headers = {"Authorization": f"Bearer {profile.api_key}"} if profile.api_key else {}
+        self._client = httpx.AsyncClient(base_url=profile.base_url, timeout=timeout, headers=headers,
+                                         transport=transport)
+
+    async def close(self) -> None:
+        await self._client.aclose()
+
+    def _payload(self, messages: list[dict], tools: list[dict] | None, stream: bool) -> dict:
+        p = self.profile
+        payload: dict[str, Any] = {
+            "model": p.model,
+            "messages": to_openai_messages(messages),
+            "stream": stream,
+            "temperature": p.temperature,
+            "cache_prompt": True,
+        }
+        if not p.think:
+            # Qwen-basierte Modelle (auch Bonsai): Denkmodus aus – deutlich schneller
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        if stream:
+            payload["stream_options"] = {"include_usage": True}
+        if tools:
+            payload["tools"] = tools
+        return payload
+
+    def _error(self, e: Exception) -> LLMError:
+        return LLMError(f"Modell-Server {self.profile.base_url} nicht erreichbar ({type(e).__name__}) – "
+                        "läuft llama-server?")
+
+    async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None) -> AsyncIterator[dict]:
+        content: list[str] = []
+        calls: dict[int, dict] = {}
+        timings: dict = {}
+        usage: dict = {}
+        first_token = None
+        started = time.monotonic()
+        try:
+            async with self._client.stream("POST", "/chat/completions",
+                                           json=self._payload(messages, tools, True)) as resp:
+                if resp.status_code != 200:
+                    body = (await resp.aread()).decode(errors="replace")
+                    raise LLMError(f"Modell-Server antwortet mit {resp.status_code}: {body[:300]}")
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    chunk = json.loads(data)
+                    if chunk.get("error"):
+                        raise LLMError(str(chunk["error"]))
+                    timings = chunk.get("timings") or timings
+                    usage = chunk.get("usage") or usage
+                    for choice in chunk.get("choices") or []:
+                        delta = choice.get("delta") or {}
+                        text = delta.get("content")
+                        if text:
+                            first_token = first_token or time.monotonic()
+                            content.append(text)
+                            yield {"type": "token", "text": text}
+                        for tc in delta.get("tool_calls") or []:
+                            first_token = first_token or time.monotonic()
+                            slot = calls.setdefault(tc.get("index", len(calls)), {"name": "", "arguments": ""})
+                            fn = tc.get("function") or {}
+                            if fn.get("name"):
+                                slot["name"] += fn["name"]
+                            if fn.get("arguments"):
+                                slot["arguments"] += fn["arguments"]
+        except httpx.HTTPError as e:
+            raise self._error(e) from e
+        message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}
+        if calls:
+            message["tool_calls"] = [{"function": {"name": c["name"], "arguments": _parse_args(c["arguments"])}}
+                                     for _, c in sorted(calls.items()) if c["name"]]
+        yield {"type": "done", "message": message, "stats": openai_stats(timings, usage, first_token, started)}
+
+    async def chat(self, messages: list[dict]) -> str:
+        try:
+            resp = await self._client.post("/chat/completions", json=self._payload(messages, None, False))
+        except httpx.HTTPError as e:
+            raise self._error(e) from e
+        if resp.status_code != 200:
+            raise LLMError(f"Modell-Server antwortet mit {resp.status_code}: {resp.text[:300]}")
+        choices = resp.json().get("choices") or [{}]
+        return strip_think((choices[0].get("message") or {}).get("content") or "")
+
+    async def status(self) -> dict:
+        try:
+            resp = await self._client.get("/models", timeout=3)
+            ok = resp.status_code == 200
+        except httpx.HTTPError as e:
+            return {"online": False, "error": str(e), "model": self.profile.model}
+        return {"online": ok, "model": self.profile.model, "model_available": ok,
+                **({} if ok else {"error": f"HTTP {resp.status_code}"})}
+
+
+def openai_stats(timings: dict, usage: dict, first_token: float | None, started: float) -> dict:
+    """Token/s aus llama.cpp-Timings, sonst aus usage + gemessener Zeit."""
+    if timings.get("predicted_per_second"):
+        return {"tokens": timings.get("predicted_n"), "tps": round(timings["predicted_per_second"], 1),
+                "prompt_tokens": timings.get("prompt_n"),
+                "prompt_tps": round(timings["prompt_per_second"], 1) if timings.get("prompt_per_second") else None}
+    tokens = usage.get("completion_tokens")
+    elapsed = time.monotonic() - (first_token or started)
+    return {"tokens": tokens, "tps": round(tokens / elapsed, 1) if tokens and elapsed > 0 else None,
+            "prompt_tokens": usage.get("prompt_tokens"), "prompt_tps": None}
 
 
 def generation_stats(chunk: dict) -> dict:

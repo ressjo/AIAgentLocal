@@ -12,7 +12,44 @@ CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / 
 DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "jarvis"
 
 
+class ServerConfig(BaseModel):
+    """Optionaler Modell-Server, den Jarvis selbst startet und stoppt (z. B. llama-server für Bonsai)."""
+    command: str
+    env: dict[str, str] = Field(default_factory=dict)
+    cwd: str = ""
+    startup_timeout: float = 240.0
+    # Standard: <base_url ohne /v1>/health
+    health_url: str = ""
+
+
+class ProfileConfig(BaseModel):
+    """Ein Modell-Profil. Leere Felder übernehmen die Werte aus dem llm-Block."""
+    label: str = ""
+    # "ollama" oder "openai" (OpenAI-kompatibler Server: llama-server, LM Studio, vLLM …)
+    backend: str = "ollama"
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+    temperature: float | None = None
+    num_ctx: int | None = None
+    think: bool | None = None
+    # Embeddings (Gedächtnis) über Ollama auf der CPU rechnen – spart Grafikspeicher
+    embed_on_cpu: bool = False
+    # Vor dem Aktivieren alle Ollama-Modelle aus dem Grafikspeicher entladen
+    unload_ollama: bool = False
+    server: ServerConfig | None = None
+
+    @field_validator("backend")
+    @classmethod
+    def _backend(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in ("ollama", "openai"):
+            raise ValueError("backend muss 'ollama' oder 'openai' sein")
+        return v
+
+
 class LLMConfig(BaseModel):
+    # Adresse von Ollama (für Ollama-Profile und immer für die Embeddings des Gedächtnisses)
     base_url: str = "http://localhost:11434"
     model: str = "qwen3:14b"
     embed_model: str = "bge-m3"
@@ -22,6 +59,26 @@ class LLMConfig(BaseModel):
     think: bool = False
     keep_alive: str = "30m"
     request_timeout: float = 300.0
+    # Modell-Profile; leer = ein Profil "standard" aus den Werten oben
+    profiles: dict[str, ProfileConfig] = Field(default_factory=dict)
+    # Profil beim Start (eine Auswahl in der Oberfläche wird gemerkt und hat Vorrang)
+    active: str = ""
+
+    def resolved_profiles(self) -> dict[str, ProfileConfig]:
+        """Alle Profile mit aufgefüllten Standardwerten."""
+        raw = self.profiles or {"standard": ProfileConfig(backend="ollama")}
+        out = {}
+        for name, p in raw.items():
+            default_url = self.base_url if p.backend == "ollama" else "http://127.0.0.1:8080/v1"
+            out[name] = p.model_copy(update={
+                "label": p.label or name,
+                "base_url": (p.base_url or default_url).rstrip("/"),
+                "model": p.model or (self.model if p.backend == "ollama" else "default"),
+                "temperature": self.temperature if p.temperature is None else p.temperature,
+                "num_ctx": self.num_ctx if p.num_ctx is None else p.num_ctx,
+                "think": self.think if p.think is None else p.think,
+            })
+        return out
 
 
 class MemoryConfig(BaseModel):

@@ -58,6 +58,25 @@ button { font-family: inherit; cursor: pointer; }
 .brand-name { font-size: 22px; font-weight: 700; letter-spacing: .32em; color: var(--accent); text-shadow: 0 0 14px rgba(63,208,255,.6); }
 .brand-sub { font-size: 11px; letter-spacing: .2em; color: var(--muted); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pills { display: flex; gap: 8px; }
+.pill-wrap { position: relative; }
+.pill-button { font-family: inherit; color: inherit; cursor: pointer; }
+.pill-button:hover, .pill-button[aria-expanded="true"] { border-color: var(--accent); }
+.pill .caret { color: var(--muted); font-size: 10px; }
+.model-menu {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 300px;
+  background: #04111e; border: 1px solid var(--accent); box-shadow: 0 0 30px rgba(63,208,255,.25); padding: 6px;
+}
+.model-menu .mm-title { font-size: 10px; letter-spacing: .3em; color: var(--muted); padding: 6px 8px 4px; }
+.model-item {
+  display: block; width: 100%; text-align: left; background: none; border: 1px solid transparent; color: var(--text);
+  padding: 8px 10px; font-family: inherit; cursor: pointer;
+}
+.model-item:hover { border-color: var(--panel-border); background: rgba(63,208,255,.06); }
+.model-item.active { border-left: 2px solid var(--accent); background: rgba(63,208,255,.08); }
+.model-item:disabled { opacity: .5; cursor: wait; }
+.model-item .mi-head { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; }
+.model-item .mi-tag { font-family: var(--mono); font-size: 10px; letter-spacing: .12em; color: var(--accent); }
+.model-item .mi-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px; }
 .pill {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 10px; border: 1px solid var(--panel-border); border-radius: 3px;

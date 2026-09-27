@@ -1,10 +1,11 @@
-"""Kommandozeile: jarvis [serve|doctor|reindex|summarize|init-config]"""
+"""Kommandozeile: jarvis [serve|doctor|model|update|version|reindex|summarize|init-config]"""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
 import logging
+import os
 import shutil
 import sys
 import webbrowser
@@ -49,13 +50,29 @@ def cmd_doctor(args) -> None:
     print(f"Version: {version()}")
     print(f"Konfiguration: {config_path()} ({'vorhanden' if config_path().exists() else 'Standardwerte'})")
     print("LLM:")
-    from .llm import OllamaLLM
-    llm = OllamaLLM(cfg.llm)
-    st = asyncio.run(llm.status())
+    from .llm import OllamaLLM, OpenAICompatLLM
+    from .llm_router import LLMRouter
+    router = LLMRouter(cfg.llm, state_path=cfg.memory.dir.parent / "state.json")
+    ollama = OllamaLLM(cfg.llm)
+    st = asyncio.run(ollama.status())
     line(st["online"], f"Ollama unter {cfg.llm.base_url}", "sudo systemctl enable --now ollama")
     if st["online"]:
-        line(st["model_available"], f"Modell {cfg.llm.model}", f"ollama pull {cfg.llm.model}")
         line(st["embed_available"], f"Embedding-Modell {cfg.llm.embed_model}", f"ollama pull {cfg.llm.embed_model}")
+    for name, p in router.profiles.items():
+        mark = " (aktiv)" if name == router.active else ""
+        print(f"  Profil {name}{mark}: {p.backend} · {p.model} · {p.base_url}")
+        if p.backend == "ollama":
+            ps = asyncio.run(OllamaLLM(cfg.llm.model_copy(update={"base_url": p.base_url, "model": p.model})).status())
+            if ps["online"]:
+                line(ps["model_available"], f"    Modell {p.model}", f"ollama pull {p.model}")
+        else:
+            ps = asyncio.run(OpenAICompatLLM(p).status())
+            if p.server:
+                script = os.path.expanduser(p.server.command.split()[0])
+                line(os.path.exists(script) or bool(shutil.which(script)), f"    Startbefehl {script}",
+                     "Pfad in llm.profiles.<name>.server.command prüfen")
+            line(ps["online"], "    Server erreichbar" if ps["online"] else "    Server läuft gerade nicht",
+                 "startet automatisch beim Aktivieren" if p.server else "Server von Hand starten")
     print("Sprache:")
     from .voice.listen import WakeWordFactory, WhisperSTT
     from .voice.tts import PiperTTS
@@ -136,13 +153,13 @@ def cmd_reindex(args) -> None:
 
 
 def cmd_summarize(args) -> None:
-    from .llm import OllamaLLM
+    from .llm_router import LLMRouter
     from .memory import Memory
 
     cfg = load_config()
 
     async def run():
-        llm = OllamaLLM(cfg.llm)
+        llm = LLMRouter(cfg.llm, state_path=cfg.memory.dir.parent / "state.json")
         mem = Memory(cfg.memory, llm)
         days = [args.day] if args.day else mem.days_needing_summary(include_today=True)
         for d in days:
@@ -152,6 +169,40 @@ def cmd_summarize(args) -> None:
         mem.close()
 
     asyncio.run(run())
+
+
+def cmd_model(args) -> None:
+    """Profile anzeigen bzw. umschalten (bei laufendem Server live, sonst für den nächsten Start)."""
+    import httpx
+
+    from .llm_router import LLMRouter
+
+    cfg = load_config()
+    state = cfg.memory.dir.parent / "state.json"
+    router = LLMRouter(cfg.llm, state_path=state)
+    base = f"http://127.0.0.1:{cfg.port}"
+    headers = {"Host": f"localhost:{cfg.port}"}
+    if not args.name:
+        for info in router.describe():
+            star = "▶" if info["active"] else " "
+            extra = " · startet Server selbst" if info["managed"] else ""
+            print(f"{star} {info['name']:<12} {info['backend']:<7} {info['model']}  ({info['base_url']}){extra}")
+        print("\nUmschalten: jarvis model <name>   ·   Profile in ~/.config/jarvis/config.yaml unter llm.profiles")
+        return
+    if args.name not in router.profiles:
+        print(f"Unbekanntes Profil '{args.name}'. Vorhanden: {', '.join(router.profiles)}")
+        sys.exit(1)
+    try:
+        r = httpx.post(f"{base}/api/models/{args.name}/activate", headers=headers, timeout=600)
+        if r.status_code == 200:
+            print(f"✔ Aktiv: {args.name}")
+            return
+        print(f"✘ Umschalten fehlgeschlagen: {r.json().get('detail', r.text)}")
+        sys.exit(1)
+    except httpx.ConnectError:
+        router.active = args.name
+        router._write_state()
+        print(f"Jarvis läuft gerade nicht – '{args.name}' wird beim nächsten Start verwendet.")
 
 
 def cmd_update(args) -> None:
@@ -171,6 +222,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--open", action="store_true", help="Browser öffnen")
     p.add_argument("-v", "--verbose", action="store_true")
     sub.add_parser("doctor", help="Installation prüfen")
+    p = sub.add_parser("model", help="Modell-Profile anzeigen oder umschalten")
+    p.add_argument("name", nargs="?", help="Profilname zum Umschalten")
     sub.add_parser("update", help="Auf den neuesten Stand bringen (git pull, Abhängigkeiten, Neustart)")
     sub.add_parser("version", help="Installierte Version anzeigen")
     sub.add_parser("reindex", help="Gedächtnis-Suchindex aus den Markdown-Dateien neu aufbauen")
@@ -181,9 +234,11 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    for noisy in ("httpx", "httpcore", "quic", "niquests", "urllib3"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     if args.cmd is None:
         args = parser.parse_args(["serve", *(argv or sys.argv[1:])])
-    {"serve": cmd_serve, "doctor": cmd_doctor, "update": cmd_update, "version": cmd_version,
+    {"serve": cmd_serve, "doctor": cmd_doctor, "update": cmd_update, "model": cmd_model, "version": cmd_version,
      "reindex": cmd_reindex, "summarize": cmd_summarize, "init-config": cmd_init_config}[args.cmd](args)
 
 

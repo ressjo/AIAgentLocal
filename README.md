@@ -187,6 +187,51 @@ Oben über dem Orb zeigt eine HUD-Leiste live (alle 2 s, mit Verlaufskurve):
 NVIDIA wird über `nvidia-smi` gelesen, AMD direkt über den `amdgpu`-Treiber (sysfs) – es sind keine
 Zusatzprogramme nötig. Ab 80 % färben sich die Balken orange, ab 95 % rot.
 
+## Modelle & Profile (z. B. Bonsai 2 27B)
+
+Jarvis kann mehrere Sprachmodelle nebeneinander kennen und zwischen ihnen umschalten – per Klick auf die
+**LLM-Anzeige oben** oder mit `jarvis model <name>` (`jarvis model` listet alle Profile). Die Auswahl wird gemerkt.
+
+- `backend: ollama` – Modelle aus Ollama (Qwen & Co.)
+- `backend: openai` – jeder OpenAI-kompatible Server: **llama-server** aus llama.cpp (z. B. der PrismML-Fork für
+  Bonsai), LM Studio, vLLM …
+- Mit `server:` startet Jarvis den Modell-Server beim Aktivieren selbst, wartet bis er bereit ist, und beendet ihn
+  beim Zurückschalten bzw. beim Beenden von Jarvis wieder (Log: `~/.local/state/jarvis-llm.log`).
+- `unload_ollama: true` wirft vorher alle Ollama-Modelle aus dem Grafikspeicher, `embed_on_cpu: true` rechnet die
+  Gedächtnis-Embeddings (bge-m3) auf der CPU – wichtig bei 8 GB VRAM.
+
+Fertiges Beispiel für **Bonsai 2 27B auf einer RX 6650 XT (8 GB, ROCm)**, eingerichtet mit dem
+[Bonsai-demo](https://github.com/PrismML-Eng/Bonsai-demo)-Setup unter `~/bonsai`:
+
+```yaml
+llm:
+  active: bonsai
+  profiles:
+    qwen:
+      label: Qwen 3 8B
+      model: qwen3:8b
+    bonsai:
+      label: Bonsai 27B
+      backend: openai
+      base_url: http://127.0.0.1:8080/v1
+      model: bonsai
+      api_key: "ein-langes-zufaelliges-passwort"
+      num_ctx: 8192
+      embed_on_cpu: true
+      unload_ollama: true
+      server:
+        command: ~/bonsai/scripts/start_llama_server.sh -np 1 --api-key ein-langes-zufaelliges-passwort
+        env:
+          HSA_OVERRIDE_GFX_VERSION: "10.3.0"   # RX 6600/6650/6700 (gfx103x) als unterstütztes gfx1030 ausgeben
+          BONSAI_CTX: "8192"
+          BONSAI_KV4: "1"                     # komprimierter KV-Cache
+          BONSAI_MMPROJ_CPU: "1"              # Bildmodul in den RAM (Jarvis braucht es nicht)
+        startup_timeout: 240
+```
+
+Der `api_key` schützt den llama-server davor, von Webseiten im Browser angesprochen zu werden. `jarvis doctor`
+prüft alle Profile. Token/s erscheinen wie gewohnt in der Telemetrie.
+
 ## Stimme & Jarvis-Effekt
 
 Im Reiter **STIMME** der Oberfläche:

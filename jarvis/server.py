@@ -18,7 +18,8 @@ from fastapi.staticfiles import StaticFiles
 
 from .agent import Agent
 from .config import Config
-from .llm import FakeLLM, OllamaLLM
+from .llm import FakeLLM, LLMError
+from .llm_router import LLMRouter
 from .memory import Memory
 from . import metrics
 from .memory.files import valid_day
@@ -185,7 +186,7 @@ def check_host(host: str | None, port: int) -> bool:
 
 def create_app(cfg: Config) -> FastAPI:
     fake = os.environ.get("JARVIS_FAKE_LLM") == "1"
-    llm = FakeLLM() if fake else OllamaLLM(cfg.llm)
+    llm = FakeLLM() if fake else LLMRouter(cfg.llm, state_path=cfg.memory.dir.parent / "state.json")
     memory = Memory(cfg.memory, llm)
     agent = Agent(cfg, llm, memory)
     reminders = ReminderStore(cfg.memory.dir.parent / "reminders.json")
@@ -203,6 +204,8 @@ def create_app(cfg: Config) -> FastAPI:
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         hub.speaker.start()
+        if isinstance(llm, LLMRouter):
+            background.append(asyncio.create_task(start_model()))
         background.append(asyncio.create_task(summary_loop()))
         background.append(asyncio.create_task(metrics_loop()))
         background.append(asyncio.create_task(reminder_loop()))
@@ -214,6 +217,20 @@ def create_app(cfg: Config) -> FastAPI:
         await hub.speaker.close()
         await llm.close()
         memory.close()
+
+    async def model_progress(text: str) -> None:
+        await hub.broadcast({"type": "model_progress", "text": text})
+
+    async def start_model() -> None:
+        # Beim Start das aktive Profil vorbereiten (z. B. llama-server starten); Chats warten so lange
+        name = llm.active
+        llm.switching = name if llm.server_for(name) else None
+        try:
+            async with agent.lock:
+                await llm.start(model_progress)
+        finally:
+            llm.switching = None
+        await hub.broadcast({"type": "model_active", "name": name})
 
     async def fire_reminder(r, now) -> None:
         late = (now - r.due_dt).total_seconds() > 120
@@ -308,6 +325,33 @@ def create_app(cfg: Config) -> FastAPI:
             "calendar": await calendar_status(cfg),
             "busy": agent.lock.locked(),
         }
+
+    @app.get("/api/models")
+    async def get_models():
+        if not isinstance(llm, LLMRouter):
+            return {"active": "demo", "switching": None,
+                    "profiles": [{"name": "demo", "label": "Demo (Fake-LLM)", "backend": "fake", "model": "fake",
+                                  "base_url": "", "managed": False, "active": True}]}
+        return {"active": llm.active, "switching": llm.switching, "profiles": llm.describe()}
+
+    @app.post("/api/models/{name}/activate")
+    async def activate_model(name: str):
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        if name not in llm.profiles:
+            raise HTTPException(404, "Unbekanntes Profil")
+        await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profiles[name].label})
+        llm.switching = name
+        try:
+            async with agent.lock:  # wartet, bis eine laufende Antwort fertig ist
+                await llm.activate(name, model_progress)
+        except LLMError as e:
+            await hub.broadcast({"type": "model_error", "name": name, "text": str(e)})
+            raise HTTPException(502, str(e)) from e
+        finally:
+            llm.switching = None
+        await hub.broadcast({"type": "model_active", "name": name})
+        return {"ok": True, "active": llm.active}
 
     @app.get("/api/reminders")
     async def get_reminders():

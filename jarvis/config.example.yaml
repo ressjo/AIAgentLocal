@@ -8,13 +8,38 @@ user_name: ""            # wie Jarvis dich nennen soll, z. B. "Joshua"
 persona_extra: ""        # z. B. "Sprich mich mit 'Chef' an."
 
 llm:
-  base_url: http://localhost:11434
+  base_url: http://localhost:11434   # Ollama (auch für die Embeddings des Gedächtnisses)
   # ≥16 GB VRAM: qwen3:14b · 8–12 GB: qwen3:8b · wenig VRAM/CPU: qwen3:4b
   model: qwen3:14b
   embed_model: bge-m3    # mehrsprachige Embeddings für das Gedächtnis
   temperature: 0.6
   num_ctx: 16384         # Kontextfenster des Modells
   think: false           # Qwen3-"Denkmodus" (langsamer, manchmal genauer)
+
+  # Optional: mehrere Modell-Profile. Umschalten per Klick auf die LLM-Anzeige oder `jarvis model <name>`.
+  # Ohne profiles gilt ein Profil "standard" mit den Werten oben.
+  # active: bonsai
+  # profiles:
+  #   qwen:
+  #     backend: ollama
+  #     model: qwen3:8b
+  #   bonsai:                          # Bonsai 2 27B über llama-server (PrismML-Fork), z. B. RX 6650 XT (8 GB)
+  #     label: Bonsai 27B
+  #     backend: openai
+  #     base_url: http://127.0.0.1:8080/v1
+  #     model: bonsai
+  #     api_key: "ein-langes-zufaelliges-passwort"   # gleicher Wert wie --api-key unten
+  #     num_ctx: 8192
+  #     embed_on_cpu: true             # Gedächtnis-Embeddings auf der CPU (VRAM ist knapp)
+  #     unload_ollama: true            # Ollama-Modelle vorher aus dem VRAM entladen
+  #     server:                        # Jarvis startet/stoppt den Server selbst
+  #       command: ~/bonsai/scripts/start_llama_server.sh -np 1 --api-key ein-langes-zufaelliges-passwort
+  #       env:
+  #         HSA_OVERRIDE_GFX_VERSION: "10.3.0"
+  #         BONSAI_CTX: "8192"
+  #         BONSAI_KV4: "1"
+  #         BONSAI_MMPROJ_CPU: "1"
+  #       startup_timeout: 240
 
 memory:
   dir: ~/.local/share/jarvis/memory

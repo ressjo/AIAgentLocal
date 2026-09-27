@@ -188,9 +188,10 @@
     else if (S.transcribing) s = "thinking";
     else if (S.playing) s = "speaking";
     else if (Date.now() < S.errorUntil) s = "error";
+    if (S.modelSwitching && S.connected) s = "thinking";
     orb.setState(s);
     const label = $("state-label");
-    label.textContent = LABELS[s] || s.toUpperCase();
+    label.textContent = S.modelSwitching && S.connected ? "LADE MODELL" : (LABELS[s] || s.toUpperCase());
     label.style.color = { listening: "#4dffb8", executing: "#ffb347", confirm: "#ffb347", error: "#ff5d6c", offline: "#6d93aa", thinking: "#9aa6ff" }[s] || "";
     let sub = S.substate;
     if (S.recording) sub = S.recordingMode === "ptt" ? "Loslassen zum Senden" : "Sprich jetzt …";
@@ -302,6 +303,26 @@
         break;
       case "reminder":
         showReminder(ev);
+        break;
+      case "model_switching":
+        S.modelSwitching = ev.label || ev.name;
+        S.substate = `Wechsle zu ${ev.label || ev.name} …`;
+        setPill("pill-llm", "warn", "lädt …");
+        break;
+      case "model_progress":
+        S.substate = ev.text;
+        break;
+      case "model_active":
+        if (S.modelSwitching) addSystem(`Modell aktiv: ${S.modelSwitching}`);
+        S.modelSwitching = null;
+        S.substate = "";
+        loadStatus();
+        break;
+      case "model_error":
+        S.modelSwitching = null;
+        S.substate = "";
+        addError("Modellwechsel fehlgeschlagen: " + ev.text);
+        loadStatus();
         break;
       case "metrics":
         showMetrics(ev);
@@ -838,6 +859,41 @@
   }, 500);
   setTile("tps", null, { sub: "wartet auf Antwort" });
 
+  // ---------------------------------------------------------------- Modellauswahl
+  const modelMenu = $("model-menu");
+  async function openModelMenu() {
+    let data;
+    try { data = await getJSON("/api/models"); } catch { toast("Modelle nicht ladbar"); return; }
+    modelMenu.innerHTML = '<div class="mm-title">MODELL WÄHLEN</div>';
+    for (const p of data.profiles) {
+      const b = document.createElement("button");
+      b.className = "model-item" + (p.active ? " active" : "");
+      b.disabled = !!data.switching;
+      b.innerHTML = `<div class="mi-head"><span class="mi-name"></span><span class="mi-tag"></span></div><div class="mi-sub"></div>`;
+      b.querySelector(".mi-name").textContent = p.label;
+      b.querySelector(".mi-tag").textContent = p.active ? "AKTIV" : p.managed ? "STARTET SERVER" : p.backend.toUpperCase();
+      b.querySelector(".mi-sub").textContent = `${p.backend} · ${p.model}`;
+      b.onclick = async () => {
+        closeModelMenu();
+        if (p.active) return;
+        const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/activate`, { method: "POST" });
+        if (!r.ok && r.status !== 502) toast("Umschalten fehlgeschlagen");
+      };
+      modelMenu.appendChild(b);
+    }
+    modelMenu.classList.remove("hidden");
+    $("pill-llm").setAttribute("aria-expanded", "true");
+  }
+  function closeModelMenu() {
+    modelMenu.classList.add("hidden");
+    $("pill-llm").setAttribute("aria-expanded", "false");
+  }
+  $("pill-llm").onclick = (e) => {
+    e.stopPropagation();
+    modelMenu.classList.contains("hidden") ? openModelMenu() : closeModelMenu();
+  };
+  document.addEventListener("click", (e) => { if (!modelMenu.contains(e.target)) closeModelMenu(); });
+
   let toastTimer;
   function toast(text) {
     const el = $("toast");
@@ -865,8 +921,10 @@
       const st = await getJSON("/api/status");
       S.status = st;
       const l = st.llm;
-      setPill("pill-llm", !l.online ? "bad" : l.model_available ? "ok" : "warn",
-        !l.online ? "offline" : l.model_available ? l.model : l.model + " fehlt");
+      const name = l.label && l.label !== l.model ? `${l.label} · ${l.model}` : l.model;
+      if (l.switching) { S.modelSwitching = S.modelSwitching || l.switching; refresh(); }
+      setPill("pill-llm", l.switching ? "warn" : !l.online ? "bad" : l.model_available ? "ok" : "warn",
+        l.switching ? "lädt …" : !l.online ? `${l.label || l.model} offline` : l.model_available ? name : l.model + " fehlt");
       const v = st.voice;
       const vCls = v.stt && v.tts ? "ok" : v.stt || v.tts ? "warn" : "bad";
       setPill("pill-voice", vCls, [v.stt ? "STT" : null, v.tts ? "TTS" : "TTS(Browser)", v.wake ? "WAKE" : null].filter(Boolean).join(" · "));
@@ -1007,7 +1065,7 @@
     const st = await loadStatus();
     if (!st) { bootLine("  ✘ Server nicht erreichbar", "bad"); return; }
     const l = st.llm;
-    bootLine(`  ${l.online && l.model_available ? "✔" : "✘"} Sprachmodell ${l.model}${l.online ? (l.model_available ? "" : " (nicht geladen – ollama pull)") : " (Ollama offline)"}`,
+    bootLine(`  ${l.online && l.model_available ? "✔" : "✘"} Sprachmodell ${l.model}${l.online ? (l.model_available ? "" : " (nicht geladen – ollama pull)") : " (Server offline)"}`,
       l.online && l.model_available ? "ok" : "bad");
     bootLine(`  ${st.voice.stt ? "✔" : "✘"} Spracherkennung`, st.voice.stt ? "ok" : "bad");
     bootLine(`  ${st.voice.tts ? "✔ Sprachausgabe (Piper)" : "~ Sprachausgabe über Browser"}`, st.voice.tts ? "ok" : "bad");
