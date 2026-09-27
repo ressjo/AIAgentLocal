@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Startet JARVIS (falls nötig) und öffnet die Oberfläche als eigenes App-Fenster.
+PORT="${JARVIS_PORT:-8765}"
+URL="http://localhost:$PORT"
+
+if ! curl -fs "$URL/api/status" >/dev/null 2>&1; then
+  mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}"
+  nohup "$HOME/.local/bin/jarvis" serve >"${XDG_STATE_HOME:-$HOME/.local/state}/jarvis.log" 2>&1 &
+  for _ in $(seq 1 60); do
+    curl -fs "$URL/api/status" >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+fi
+
+for browser in chromium google-chrome-stable google-chrome brave vivaldi-stable microsoft-edge-stable; do
+  if command -v "$browser" >/dev/null; then
+    exec "$browser" --app="$URL" --class=jarvis
+  fi
+done
+exec xdg-open "$URL"

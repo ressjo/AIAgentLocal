@@ -1,0 +1,45 @@
+[project]
+name = "jarvis-local"
+version = "0.1.0"
+description = "JARVIS – lokaler Sprach-KI-Assistent für Linux mit Ollama, persistentem Gedächtnis und animierter Weboberfläche"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "httpx>=0.27",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "numpy>=1.26",
+    "ddgs>=9.0",
+    "trafilatura>=1.8",
+]
+
+[project.optional-dependencies]
+voice = [
+    "faster-whisper>=1.0",
+    "piper-tts>=1.2",
+    "openwakeword>=0.6",
+    "onnxruntime>=1.17",
+    "webrtcvad-wheels>=2.0.11",
+]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+jarvis = "jarvis.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["jarvis"]
+
+[tool.uv]
+# openwakeword zieht unter Linux tflite-runtime, für das es ab Python 3.12 keine Wheels gibt.
+# Wir nutzen ausschließlich das ONNX-Backend, daher wird tflite-runtime ausgeblendet.
+override-dependencies = ["tflite-runtime; sys_platform == 'never'"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

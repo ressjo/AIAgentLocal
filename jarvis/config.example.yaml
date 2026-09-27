@@ -1,0 +1,43 @@
+# JARVIS-Konfiguration – kopieren nach ~/.config/jarvis/config.yaml (oder: jarvis init-config)
+# Alle Werte sind optional; nicht gesetzte Werte nutzen die Standardwerte.
+
+host: 127.0.0.1          # NUR lokal erreichbar lassen – Jarvis kann Befehle ausführen!
+port: 8765
+assistant_name: Jarvis
+user_name: ""            # wie Jarvis dich nennen soll, z. B. "Joshua"
+persona_extra: ""        # z. B. "Sprich mich mit 'Chef' an."
+
+llm:
+  base_url: http://localhost:11434
+  # ≥16 GB VRAM: qwen3:14b · 8–12 GB: qwen3:8b · wenig VRAM/CPU: qwen3:4b
+  model: qwen3:14b
+  embed_model: bge-m3    # mehrsprachige Embeddings für das Gedächtnis
+  temperature: 0.6
+  num_ctx: 16384         # Kontextfenster des Modells
+  think: false           # Qwen3-"Denkmodus" (langsamer, manchmal genauer)
+
+memory:
+  dir: ~/.local/share/jarvis/memory
+  context_budget_tokens: 8000   # so viel Prompt wird maximal gebaut (< num_ctx!)
+  retrieval_top_k: 6
+  summarize_idle_minutes: 15
+
+voice:
+  enabled: true
+  language: de
+  stt_model: small       # tiny | base | small | medium | large-v3 (größer = genauer, langsamer)
+  stt_device: cpu        # faster-whisper nutzt CUDA; auf AMD-GPUs läuft es auf der CPU
+  stt_compute_type: int8
+  tts_voice: ~/.local/share/jarvis/voices/de_DE-thorsten-high.onnx
+  wakeword_model: hey_jarvis
+  wakeword_threshold: 0.5
+  silence_ms: 900        # so lange Stille beendet die Aufnahme
+
+tools:
+  search_paths:
+    - "~"                # in YAML muss ~ in Anführungszeichen stehen
+  nas_paths: []          # z. B. [/mnt/nas, /mnt/nas-media]
+  privilege_cmd: pkexec  # pkexec (grafischer Passwortdialog) oder sudo (sudo -n, braucht NOPASSWD-Regel)
+  aur_helper: auto       # auto | yay | paru | none
+  shell_timeout: 120
+  searxng_url: null      # z. B. http://localhost:8888 für eine eigene SearXNG-Instanz
