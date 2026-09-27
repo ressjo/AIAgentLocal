@@ -138,16 +138,50 @@ class Conversation:
         return True
 
     def trimmed_history(self, budget: int) -> list[dict]:
-        """Notbremse: falls die Kompaktierung nicht reicht, älteste Teile weglassen."""
-        out, used = [], 0
-        for m in reversed(self.history):
+        """Notbremse: falls die Kompaktierung nicht reicht, älteste Teile weglassen.
+
+        Die aktuelle Runde (letzte Nutzerfrage + alle Tool-Aufrufe danach) bleibt immer erhalten – ohne
+        Nutzerfrage lehnen manche Chat-Vorlagen (Qwen/Bonsai) die Anfrage ab. Ist sie allein zu groß,
+        werden ihre Tool-Ergebnisse gekürzt (die ältesten zuerst)."""
+        hist = self.history
+        last_user = max((i for i, m in enumerate(hist) if m["role"] == "user"), default=0)
+        turn = [dict(m) for m in hist[last_user:]]
+        used = sum(msg_tokens(m) for m in turn)
+        if used > budget:
+            shrink_tool_results(turn, used - budget)
+            used = sum(msg_tokens(m) for m in turn)
+        earlier: list[dict] = []
+        for m in reversed(hist[:last_user]):
             t = msg_tokens(m)
-            if used + t > budget and out:
+            if used + t > budget:
                 break
-            out.append(m)
+            earlier.append(m)
             used += t
-        out.reverse()
+        earlier.reverse()
         # Nie mit einem verwaisten Tool-Ergebnis beginnen
-        while out and out[0]["role"] == "tool":
-            out.pop(0)
-        return [{k: v for k, v in m.items() if k != "ts"} for m in out]
+        while earlier and earlier[0]["role"] == "tool":
+            earlier.pop(0)
+        return [{k: v for k, v in m.items() if k != "ts"} for m in earlier + turn]
+
+
+TOOL_MIN_CHARS = 600
+TRIM_NOTE = "\n… [gekürzt, damit alles ins Kontextfenster passt]"
+
+
+def shrink_tool_results(messages: list[dict], excess_tokens: int) -> int:
+    """Kürzt Tool-Ergebnisse (älteste zuerst) um insgesamt etwa excess_tokens. Liefert die gekürzten Tokens."""
+    freed = 0
+    for m in messages:
+        if freed >= excess_tokens:
+            break
+        if m["role"] != "tool":
+            continue
+        content = m.get("content") or ""
+        if len(content) <= TOOL_MIN_CHARS:
+            continue
+        keep = max(TOOL_MIN_CHARS, len(content) - (excess_tokens - freed) * 3 - len(TRIM_NOTE))
+        if keep >= len(content):
+            continue
+        m["content"] = content[:keep] + TRIM_NOTE
+        freed += est_tokens(content) - est_tokens(m["content"])
+    return freed

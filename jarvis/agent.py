@@ -23,6 +23,7 @@ from .tools.system import _os_name
 
 log = logging.getLogger(__name__)
 
+ANSWER_RESERVE = 1500  # Token, die im Kontextfenster für die Antwort frei bleiben
 MAX_STEPS = 10
 Emit = Callable[[dict], Awaitable[None]]
 Confirm = Callable[[str, str, dict, str], Awaitable[bool]]
@@ -129,13 +130,20 @@ Verhalten:
         if conv.running_summary:
             sections.append("## Früherer Verlauf dieses Gesprächs (zusammengefasst)\n" + conv.running_summary)
         system = "\n\n".join(sections)
-        budget = self.cfg.memory.context_budget_tokens - est_tokens(system) - self.schema_tokens
+        budget = self.context_budget() - est_tokens(system) - self.schema_tokens
         return [{"role": "system", "content": system}, *conv.trimmed_history(max(budget, 1000))]
+
+    def context_budget(self) -> int:
+        """Prompt-Budget: context_budget_tokens, aber nie mehr als das Kontextfenster des aktiven Modells
+        (abzüglich Platz für die Antwort) – z. B. Bonsai mit 8192 Token."""
+        profile = getattr(self.llm, "profile", None)
+        num_ctx = getattr(profile, "num_ctx", None) or self.cfg.llm.num_ctx
+        return max(3000, min(self.cfg.memory.context_budget_tokens, int(num_ctx) - ANSWER_RESERVE))
 
     def history_budget(self) -> int:
         m = self.cfg.memory
         fixed = 900 + m.facts_max_tokens + m.retrieval_max_tokens + 800 + self.schema_tokens
-        return max(1500, m.context_budget_tokens - fixed)
+        return max(1500, self.context_budget() - fixed)
 
     # ---------- Ablauf ----------
     async def run(self, user_text: str, emit: Emit, confirm: Confirm) -> str:
