@@ -13,11 +13,11 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 
+from . import prompts, toolselect
 from .config import Config
 from .llm import ContextOverflow, LLMError, strip_think
 from .memory import Memory, est_tokens
 from .memory.context import TRIM_NOTE, msg_tokens
-from .memory.files import german_date
 from .tools.proc import clip
 from .tools.registry import BLOCKED, CONFIRM, ToolContext, coerce_args, get_tool, load_all_tools, missing_args, tool_schemas
 from .tools.system import _os_name
@@ -25,8 +25,6 @@ from .tools.system import _os_name
 log = logging.getLogger(__name__)
 
 ANSWER_RESERVE = 1500  # Token, die im Kontextfenster für die Antwort frei bleiben
-FINAL_NUDGE = ("(System: Das Schrittlimit für diese Aufgabe ist erreicht. Rufe keine Werkzeuge mehr auf. Fasse in "
-               "2–4 Sätzen zusammen, was du erledigt bzw. herausgefunden hast und was noch fehlt.)")
 Emit = Callable[[dict], Awaitable[None]]
 Confirm = Callable[[str, str, dict, str], Awaitable[bool]]
 
@@ -80,8 +78,11 @@ class Agent:
         self._think: bool | None = None
         self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
         self.tools = load_all_tools()
-        self.schemas = tool_schemas(cfg)
+        self.all_schemas = tool_schemas(cfg)
+        self.groups_of = {name: spec.group for name, spec in self.tools.items()}
+        self.schemas = self.all_schemas
         self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
+        self.all_schema_tokens = self.schema_tokens
         self.lock = asyncio.Lock()
         self.services: dict = {}
 
@@ -89,53 +90,12 @@ class Agent:
     def system_prompt(self) -> str:
         now = datetime.now()
         c = self.cfg
-        user = c.user_name or getpass.getuser()
-        nas = ", ".join(map(str, c.tools.nas_paths)) or "keins konfiguriert"
-        return f"""Du bist {c.assistant_name}, ein hochintelligenter, loyaler KI-Assistent im Stil von J.A.R.V.I.S. aus Iron Man.
-Du läufst vollständig lokal auf dem Linux-PC des Nutzers und kannst ihn über Tools steuern.
-
-Umgebung:
-- Heute ist {german_date(now)}, {now.strftime('%H:%M')} Uhr.
-- System: {_os_name()} auf Rechner '{platform.node()}', Benutzer '{user}', Home {Path.home()}
-- Gemountetes NAS: {nas}
-
-Verhalten:
-- Antworte immer auf Deutsch: knapp, präzise, souverän, mit dezentem trockenem Humor.
-- Deine Antworten werden meist vorgelesen: kurze Sätze, keine Tabellen, keine Emojis, Markdown nur für Code oder Pfade.
-- Handle, statt nur zu erklären: nutze die Tools, um Aufgaben tatsächlich zu erledigen. Rate nicht, wenn ein Tool die Antwort liefern kann.
-- Gefährliche Aktionen werden vom System automatisch zur Bestätigung vorgelegt. Frage daher nicht selbst um Erlaubnis, sondern rufe das Tool direkt auf.
-- Für Root-Rechte stellst du in run_shell einfach 'sudo' voran – der Nutzer gibt sein Passwort dann im Dashboard ein. Für Updates und Pakete die speziellen Tools nutzen.
-- Herunterfahren, Neustart, Standby, Ruhezustand, Bildschirm sperren: immer das Tool power (braucht meist kein Passwort).
-- Meldet ein Tool, dass Root-Rechte nicht erteilt wurden, sag das dem Nutzer und hör auf. Prüfe Rechte nie auf eigene Faust (kein whoami, id, sudo -l, groups) und probiere keine Umwege.
-- Behaupte nie, etwas geöffnet, gestartet, installiert oder ausgeführt zu haben, ohne das passende Tool aufgerufen und ein erfolgreiches Ergebnis erhalten zu haben. Meldet ein Tool einen Fehler, sag das ehrlich.
-- Nach einem Tool-Aufruf fasst du das Ergebnis in ein, zwei Sätzen zusammen, statt die Rohausgabe zu wiederholen.
-- Erfährst du etwas dauerhaft Wichtiges über den Nutzer (Name, Vorlieben, Geräte, Pfade, Projekte), speichere es mit remember.
-- Bei Fragen zu früheren Gesprächen nutze recall. Relevante Erinnerungen stehen unten, sind aber evtl. unvollständig.
-- Bei „Guten Morgen“, „Briefing“ oder „Was steht heute an?“ rufst du daily_briefing auf und fasst es als kurze, freundliche Begrüßung zusammen.
-- „Erinnere mich …“ und „Stell einen Timer …“ erledigst du mit set_reminder; Websites öffnest du mit open_website, Wetterfragen beantwortest du mit weather.
-- Wurde eine Aktion abgelehnt, akzeptiere das und schlage bei Bedarf eine Alternative vor.
-{self._trilium_hint()}{c.persona_extra}""".strip()
-
-    def _trilium_hint(self) -> str:
-        hint = ""
-        if self.cfg.calendar.enabled:
-            hint += ("- Du hast Zugriff auf den Kalender des Nutzers (iPhone): Termine abfragen mit calendar_events, freie "
-                     "Zeit mit calendar_free, neue Termine mit calendar_add (Datum/Uhrzeit anhand des heutigen Datums "
-                     "als YYYY-MM-DD HH:MM angeben), ändern mit calendar_update, löschen mit calendar_delete.\n")
-        if self.cfg.paperless.enabled or self.cfg.trilium.enabled or self.cfg.calendar.enabled:
-            hint += ("- Meldet ein Dienst-Tool (Paperless, Trilium, Kalender) 'nicht erreichbar', Zertifikats- oder "
-                     "Token-Fehler: gib dem Nutzer die Meldung samt Tipp kurz weiter und empfiehl `jarvis doctor`. "
-                     "Starte dafür KEINE eigenen Shell-Diagnosen (systemctl, curl, ping).\n")
-        if self.cfg.paperless.enabled:
-            hint += ("- Die Dokumente des Nutzers (Rechnungen, Verträge, Briefe, Bescheide, Versicherungen …) liegen in "
-                     "Paperless. Fragen dazu: erst paperless_search, dann mit der Dokument-ID paperless_ask (Frage zum "
-                     "Inhalt) – antworte aus den gelieferten Textstellen und nenne Titel und Datum des Dokuments. "
-                     "'Zeig/öffne das Dokument' → paperless_open. Merke dir die ID für Folgefragen.\n")
-        if not self.cfg.trilium.enabled:
-            return hint
-        return hint + ("- Die persönlichen Notizen des Nutzers liegen in Trilium. Fragen zu seinen Notizen, Aufschrieben oder "
-                "Anleitungen beantwortest du mit trilium_search und trilium_read. Bei 'notier/schreib auf/leg eine "
-                "Notiz an' nutzt du trilium_create_note (landet in der Inbox), zum Ergänzen trilium_append.\n")
+        date, time_ = prompts.format_date(c, now)
+        base = prompts.base_prompt(
+            c, name=c.assistant_name, date=date, time=time_, os=_os_name(), host=platform.node(),
+            user=c.user_name or getpass.getuser(), home=Path.home(),
+            nas=", ".join(map(str, c.tools.nas_paths)) or prompts.text(c, "no_nas"))
+        return (base + prompts.hints(c) + c.persona_extra).strip()
 
     def build_messages(self, hits) -> list[dict]:
         conv = self.memory.conversation
@@ -143,12 +103,12 @@ Verhalten:
         sections = [base]
         facts = self.memory.facts_text()
         if facts:
-            sections.append("## Dauerhafte Fakten\n" + facts)
+            sections.append(prompts.section(self.cfg, "facts") + "\n" + facts)
         mem_text = self.memory.format_hits(hits)
         if mem_text:
-            sections.append("## Relevante Erinnerungen aus früheren Gesprächen\n" + mem_text)
+            sections.append(prompts.section(self.cfg, "memories") + "\n" + mem_text)
         if conv.running_summary:
-            sections.append("## Früherer Verlauf dieses Gesprächs (zusammengefasst)\n" + conv.running_summary)
+            sections.append(prompts.section(self.cfg, "summary") + "\n" + conv.running_summary)
         system = "\n\n".join(sections)
         total_budget = self.context_budget()
         budget = total_budget - est_tokens(system) - self.schema_tokens
@@ -183,6 +143,15 @@ Verhalten:
             budget = min(budget, self.cfg.memory.context_budget_tokens)
         return max(2000, int(budget * self._budget_scale))
 
+    def choose_tools(self, used_groups: set[str] | None = None) -> None:
+        """Bei kleinem Kontextfenster nur passende Tool-Gruppen mitschicken (siehe toolselect.py)."""
+        if self.all_schema_tokens <= 0.3 * self.context_budget():
+            self.schemas, self.schema_tokens = self.all_schemas, self.all_schema_tokens
+            return
+        users = [m.get("content", "") for m in self.memory.conversation.history if m.get("role") == "user"][-2:]
+        self.schemas = toolselect.select(self.all_schemas, self.groups_of, users, used_groups or set())
+        self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
+
     def history_budget(self) -> int:
         m = self.cfg.memory
         fixed = 900 + m.facts_max_tokens + m.retrieval_max_tokens + 800 + self.schema_tokens
@@ -211,7 +180,9 @@ Verhalten:
         try:
             seen: dict[str, int] = {}  # gleiche Tool-Aufrufe zählen (Schleifenerkennung)
             finished = False
+            used_groups: set[str] = set()
             for _ in range(max(1, self.cfg.tools.max_steps)):
+                self.choose_tools(used_groups)
                 content, calls = await self._step(hits, emit, msg_id)
                 entry = {"role": "assistant", "content": content}
                 if calls:
@@ -226,13 +197,13 @@ Verhalten:
                 looping = False
                 for call in calls:
                     fn = call.get("function", {})
+                    used_groups.add(self.groups_of.get(fn.get("name", ""), ""))
                     key = fn.get("name", "") + json.dumps(fn.get("arguments"), sort_keys=True, ensure_ascii=False)
                     seen[key] = seen.get(key, 0) + 1
                     if seen[key] >= 3:
                         # Nicht noch einmal ausführen – das Modell dreht sich im Kreis
                         name = fn.get("name", "")
-                        result = ("Dieser Aufruf wurde mit denselben Argumenten bereits ausgeführt – das Ergebnis "
-                                  "steht oben. Nicht wiederholen, sondern mit dem vorhandenen Ergebnis antworten.")
+                        result = prompts.text(self.cfg, "repeat_skipped")
                         note = f"{name}: Wiederholung übersprungen"
                         looping = looping or seen[key] >= 4
                     else:
@@ -245,9 +216,9 @@ Verhalten:
                 # Limit erreicht oder Schleife: ohne Tools zusammenfassen lassen, statt hart abzubrechen
                 content, _ = await self._step(hits, emit, msg_id, final=True)
                 if not content:
-                    content = "Ich habe nach vielen Einzelschritten pausiert."
+                    content = prompts.text(self.cfg, "paused")
                     await emit({"type": "token", "id": msg_id, "text": content})
-                hint = "Sag „mach weiter“, dann setze ich fort."
+                hint = prompts.text(self.cfg, "continue_hint")
                 await emit({"type": "token", "id": msg_id, "text": "\n\n" + hint})
                 content = f"{content}\n\n{hint}"
                 conv.add({"role": "assistant", "content": content})
@@ -320,7 +291,7 @@ Verhalten:
                 messages = self.build_messages(hits)
                 yield {"type": "context", **(self.last_context or {})}
                 if final:
-                    messages.append({"role": "user", "content": FINAL_NUDGE})
+                    messages.append({"role": "user", "content": prompts.text(self.cfg, "final_nudge")})
                 kwargs = {} if self._think is None else {"think": self._think}
                 async for ev in self.llm.chat_stream(messages, None if final else self.schemas, **kwargs):
                     yield ev

@@ -134,6 +134,14 @@ def cmd_doctor(args) -> None:
     else:
         line(ps_["online"], f"{ps_.get('url') or cfg.paperless.url}" + (f" – {ps_['count']} Dokumente (Version {ps_['version']})"
                                                        if ps_["online"] else ""), ps_.get("error", ""))
+    print("Home Assistant:")
+    from .tools.homeassistant import ha_status
+    hs = asyncio.run(ha_status(cfg))
+    if not hs["enabled"]:
+        print("  – nicht konfiguriert (homeassistant.url und homeassistant.token in der Config)")
+    else:
+        line(hs["online"], f"{hs.get('url') or cfg.homeassistant.url}" + (
+            f" – {hs['entities']} Entitäten (Version {hs['version']})" if hs["online"] else ""), hs.get("error", ""))
     print("Kalender:")
     if not cfg.calendar.enabled:
         print("  – nicht konfiguriert (calendar.url, username, password)")

@@ -42,9 +42,15 @@ class ToolSpec:
     risk: str | RiskFn = SAFE
     param_types: dict[str, type] = field(default_factory=dict)
     enabled: Callable[[Any], bool] | None = None
+    group: str = ""  # Modulname, z. B. "sysadmin" – ganze Gruppen lassen sich per tools.disabled abschalten
 
     def is_enabled(self, cfg: Any) -> bool:
-        return self.enabled is None or cfg is None or bool(self.enabled(cfg))
+        if cfg is None:
+            return True
+        disabled = set(getattr(getattr(cfg, "tools", None), "disabled", None) or [])
+        if self.name in disabled or self.group in disabled:
+            return False
+        return self.enabled is None or bool(self.enabled(cfg))
 
     def schema(self) -> dict:
         return {"type": "function",
@@ -100,6 +106,7 @@ def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None,
             risk=risk,
             param_types=types,
             enabled=enabled,
+            group=func.__module__.rsplit(".", 1)[-1],
         )
         REGISTRY[spec.name] = spec
         return func
@@ -146,6 +153,6 @@ def get_tool(name: str) -> ToolSpec | None:
 
 def load_all_tools() -> dict[str, ToolSpec]:
     # Import registriert die Tools per Decorator
-    from . import (apps, briefing, calendar_tools, files, memory_tools, packages, paperless,  # noqa: F401
-                   power, reminder_tools, shell, system, trilium, weather, web)
+    from . import (apps, briefing, calendar_tools, files, homeassistant, memory_tools, packages,  # noqa: F401
+                   paperless, power, reminder_tools, shell, sysadmin, system, trilium, weather, web)
     return REGISTRY

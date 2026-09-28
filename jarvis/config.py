@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "jarvis"
 DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "jarvis"
@@ -92,13 +92,18 @@ class MemoryConfig(BaseModel):
     summarize_idle_minutes: int = 15
 
 
+DEFAULT_VOICES = {"de": "de_DE-thorsten-high", "en": "en_GB-alan-medium"}
+
+
 class VoiceConfig(BaseModel):
     enabled: bool = True
-    language: str = "de"
+    # Sprache der Spracherkennung – leer = wie die globale Einstellung "language"
+    language: str = ""
     stt_model: str = "small"
     stt_device: str = "cpu"
     stt_compute_type: str = "int8"
-    tts_voice: Path = DATA_DIR / "voices" / "de_DE-thorsten-high.onnx"
+    # Piper-Stimme – leer = Standardstimme der gewählten Sprache
+    tts_voice: Path | None = None
     tts_length_scale: float = 0.95
     wakeword_model: str = "hey_jarvis"
     wakeword_threshold: float = 0.5
@@ -113,9 +118,13 @@ class ToolsConfig(BaseModel):
     # "jarvis" (Passwortfeld in der Jarvis-Oberfläche, sudo -A), "pkexec" (Polkit-Dialog des Systems)
     # oder "sudo" (sudo -n, benötigt NOPASSWD-Regel)
     privilege_cmd: str = "jarvis"
+    # "auto" (erkennen), "pacman" (Arch/Manjaro/EndeavourOS) oder "apt" (Debian/Ubuntu/Mint)
+    package_manager: str = "auto"
     # "auto" (yay/paru suchen), "yay", "paru" oder "none"
     aur_helper: str = "auto"
     shell_timeout: int = 120
+    # Tools oder ganze Gruppen abschalten (spart Kontext bei kleinen Modellen), z. B. [sysadmin, web, open_ports]
+    disabled: list[str] = Field(default_factory=list)
     # so viele Modellschritte (Tool-Runden) darf eine Aufgabe höchstens brauchen
     max_steps: int = 25
     update_timeout: int = 3600
@@ -170,6 +179,23 @@ class PaperlessConfig(BaseModel):
         return bool(self.url and self.api_token)
 
 
+class HomeAssistantConfig(BaseModel):
+    # z. B. http://homeassistant.local:8123
+    url: str = ""
+    # Langlebiges Zugriffstoken (Profil → Sicherheit); alternativ $JARVIS_HA_TOKEN
+    token: str = ""
+    timeout: float = 15.0
+    verify_ssl: bool | str = True
+
+    @property
+    def api_token(self) -> str:
+        return self.token or os.environ.get("JARVIS_HA_TOKEN", "")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.url and self.api_token)
+
+
 class CalendarConfig(BaseModel):
     # iCloud: https://caldav.icloud.com – funktioniert mit jedem CalDAV-Server (Nextcloud, Radicale, …)
     url: str = ""
@@ -197,6 +223,8 @@ class WeatherConfig(BaseModel):
 
 
 class Config(BaseModel):
+    # Sprache von Jarvis und der Oberfläche: "de" (Deutsch) oder "en" (English)
+    language: str = "de"
     host: str = "127.0.0.1"
     port: int = 8765
     assistant_name: str = "Jarvis"
@@ -209,10 +237,25 @@ class Config(BaseModel):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     trilium: TriliumConfig = Field(default_factory=TriliumConfig)
     paperless: PaperlessConfig = Field(default_factory=PaperlessConfig)
+    homeassistant: HomeAssistantConfig = Field(default_factory=HomeAssistantConfig)
     weather: WeatherConfig = Field(default_factory=WeatherConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     # Zusätzliche Websites für open_website: Name → URL; "{q}" wird durch die Suche ersetzt
     websites: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("language")
+    @classmethod
+    def _lang(cls, v: str) -> str:
+        v = (v or "de").strip().lower()[:2]
+        return v if v in ("de", "en") else "de"
+
+    @model_validator(mode="after")
+    def _language_defaults(self) -> "Config":
+        if not self.voice.language:
+            self.voice.language = self.language
+        if self.voice.tts_voice is None:
+            self.voice.tts_voice = DATA_DIR / "voices" / f"{DEFAULT_VOICES[self.language]}.onnx"
+        return self
 
     def expand_paths(self) -> "Config":
         self.memory.dir = self.memory.dir.expanduser()

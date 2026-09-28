@@ -62,12 +62,14 @@ class AskpassBroker:
     """Vergibt Einmal-Tokens pro privilegiertem Befehl und vermittelt die Passworteingabe an die Oberfläche."""
 
     def __init__(self, port: int, notify: Notify | None = None, helper: Path | None = None,
-                 has_ui: Callable[[], bool] | None = None, say: Callable[[str], None] | None = None):
+                 has_ui: Callable[[], bool] | None = None, say: Callable[[str], None] | None = None,
+                 say_text: str = "Dafür brauche ich dein Passwort. Bitte gib es im Dashboard ein."):
         self.url = f"http://127.0.0.1:{port}/api/askpass"
         self.notify = notify
         self.helper = helper
         self.has_ui = has_ui or (lambda: True)
         self.say = say
+        self.say_text = say_text
         self.tokens: dict[str, dict] = {}
         self.pending: dict[str, asyncio.Future] = {}
 
@@ -106,7 +108,7 @@ class AskpassBroker:
         await self.notify({"type": "password_request", "id": req_id, "command": info["command"], "retry": retry,
                            "prompt": "Falsches Passwort – bitte erneut eingeben" if retry else "Root-Passwort (sudo)"})
         if self.say and not retry:
-            self.say("Dafür brauche ich dein Passwort. Bitte gib es im Dashboard ein.")
+            self.say(self.say_text)
         try:
             return await asyncio.wait_for(fut, timeout=WAIT_SECONDS)
         except asyncio.TimeoutError:

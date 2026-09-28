@@ -54,7 +54,10 @@ async def _run(ctx: ToolContext, cmd: str | list[str], timeout: float, stream: b
     if isinstance(cmd, str):
         proc = await asyncio.create_subprocess_shell(cmd, executable="/bin/bash", **kwargs)
     else:
-        proc = await asyncio.create_subprocess_exec(*cmd, **kwargs)
+        try:
+            proc = await asyncio.create_subprocess_exec(*cmd, **kwargs)
+        except FileNotFoundError:
+            return 127, f"Programm '{cmd[0]}' ist nicht installiert."
 
     chunks: list[str] = []
 

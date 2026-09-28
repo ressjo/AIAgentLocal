@@ -1,4 +1,4 @@
-"""Deutsche Piper-Stimmen, die sich aus der Oberfläche installieren lassen (rhasspy/piper-voices)."""
+"""Piper-Stimmen (Deutsch/Englisch), die sich aus der Oberfläche installieren lassen (rhasspy/piper-voices)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE"
+BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,14 @@ class VoiceInfo:
     speaker: str = ""  # bei Mehrsprecher-Modellen: gewünschter Sprecher
 
     @property
+    def locale(self) -> str:
+        return self.name.split("-")[0]           # z. B. de_DE, en_GB
+
+    @property
+    def language(self) -> str:
+        return self.locale.split("_")[0]         # de, en
+
+    @property
     def speaker_dir(self) -> str:
         return self.name.split("-")[1]
 
@@ -30,7 +38,7 @@ class VoiceInfo:
         return self.name.split("-")[2]
 
     def urls(self) -> tuple[str, str]:
-        base = f"{BASE_URL}/{self.speaker_dir}/{self.quality}/{self.name}.onnx"
+        base = f"{BASE_URL}/{self.language}/{self.locale}/{self.speaker_dir}/{self.quality}/{self.name}.onnx"
         return base, base + ".json"
 
 
@@ -43,13 +51,21 @@ CATALOG: list[VoiceInfo] = [
     VoiceInfo("de_DE-karlsson-low", "Karlsson", "Markante Männerstimme", True),
     VoiceInfo("de_DE-kerstin-low", "Kerstin", "Weibliche Stimme", False),
     VoiceInfo("de_DE-ramona-low", "Ramona", "Weibliche Stimme", False),
+    VoiceInfo("en_GB-alan-medium", "Alan (British)", "Calm British male voice – the butler default", True),
+    VoiceInfo("en_GB-northern_english_male-medium", "Northern English", "Warm, deeper British male voice", True),
+    VoiceInfo("en_US-ryan-high", "Ryan (US)", "Clear American male voice – best quality", True),
+    VoiceInfo("en_US-joe-medium", "Joe (US)", "Relaxed American male voice", True),
+    VoiceInfo("en_GB-jenny_dioco-medium", "Jenny (British)", "British female voice", False),
+    VoiceInfo("en_US-amy-medium", "Amy (US)", "American female voice", False),
 ]
 BY_NAME = {v.name: v for v in CATALOG}
 
 
-def voice_list(voices_dir: Path, current: str) -> list[dict]:
+def voice_list(voices_dir: Path, current: str, language: str = "") -> list[dict]:
+    """Stimmen der gewählten Sprache (plus bereits installierte anderer Sprachen)."""
     installed = {p.stem for p in voices_dir.glob("*.onnx")} if voices_dir.exists() else set()
-    out = [{**asdict(v), "installed": v.name in installed, "current": v.name == current} for v in CATALOG]
+    out = [{**asdict(v), "installed": v.name in installed, "current": v.name == current} for v in CATALOG
+           if not language or v.language == language or v.name in installed]
     # Manuell abgelegte Stimmen ebenfalls anzeigen
     for name in sorted(installed - set(BY_NAME)):
         out.append({"name": name, "label": name, "description": "Eigene Stimme", "male": True, "speaker": "",

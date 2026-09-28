@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import askpass
+from . import askpass, prompts
 from .agent import Agent
 from .config import Config
 from .llm import FakeLLM, LLMError
@@ -35,8 +35,8 @@ from .voice.tts import PiperTTS, Speaker
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).parent / "web"
 
-YES = re.compile(r"\b(ja|jawohl|jep|jo|okay|ok|klar|mach(\s+es|'s)?|los|bestätig\w*|ausführen|genehmigt|positiv|yes)\b", re.I)
-NO = re.compile(r"\b(nein|nee|nö|stopp?|abbrechen|abbruch|nicht|lass\s+es|negativ|no)\b", re.I)
+YES = re.compile(r"\b(ja|jawohl|jep|jo|okay|ok|klar|mach(\s+es|'s)?|los|bestätig\w*|ausführen|genehmigt|positiv|yes|yeah|yep|sure|go\s+ahead|do\s+it|confirm\w*|proceed)\b", re.I)
+NO = re.compile(r"\b(nein|nee|nö|stopp?|abbrechen|abbruch|nicht|lass\s+es|negativ|no|nope|cancel|don'?t|abort)\b", re.I)
 
 
 def parse_yes_no(text: str) -> bool | None:
@@ -48,24 +48,16 @@ def parse_yes_no(text: str) -> bool | None:
     return None
 
 
-def describe_call(name: str, args: dict) -> str:
-    if name == "run_shell":
-        return f"den Befehl {args.get('command', '')}"
-    if name == "install_package":
-        return f"die Installation von {args.get('names', '')}"
-    if name == "remove_package":
-        return f"das Entfernen von {args.get('names', '')}"
-    if name == "system_update":
-        return "ein vollständiges Systemupdate"
-    if name == "calendar_update":
-        return f"das Ändern des Termins {args.get('query', '')}"
-    if name == "calendar_delete":
-        return f"das Löschen des Termins {args.get('query', '')}"
-    if name == "trilium_update_note":
-        return f"das Überschreiben der Trilium-Notiz {args.get('note', '')}"
-    if name == "write_file":
-        return f"das Schreiben der Datei {args.get('path', '')}"
-    return f"die Aktion {name}"
+CALL_TEXTS = {"run_shell": ("call_shell", "command"), "install_package": ("call_install", "names"),
+              "remove_package": ("call_remove", "names"), "system_update": ("call_update", ""),
+              "calendar_update": ("call_cal_update", "query"), "calendar_delete": ("call_cal_delete", "query"),
+              "trilium_update_note": ("call_trilium", "note"), "write_file": ("call_write", "path")}
+
+
+def describe_call(name: str, args: dict, cfg=None) -> str:
+    key, field = CALL_TEXTS.get(name, ("call_other", ""))
+    value = str(args.get(field, "")) if field else name
+    return prompts.spoken(cfg, key, v=value)
 
 
 class Client:
@@ -119,8 +111,8 @@ class Hub:
         fut = asyncio.get_running_loop().create_future()
         self.pending[call_id] = fut
         await self.broadcast({"type": "confirm_request", "id": call_id, "name": name, "args": args,
-                              "reason": reason, "summary": describe_call(name, args)})
-        self.speaker.say(f"Soll ich {describe_call(name, args)} ausführen?")
+                              "reason": reason, "summary": describe_call(name, args, self.cfg)})
+        self.speaker.say(prompts.spoken(self.cfg, "confirm", what=describe_call(name, args, self.cfg)))
         try:
             return await asyncio.wait_for(fut, timeout=180)
         except asyncio.TimeoutError:
@@ -146,7 +138,7 @@ class Hub:
                     self.resolve(cid, decision)
                 return
             if source == "voice":
-                self.speaker.say("Bitte mit Ja oder Nein antworten.")
+                self.speaker.say(prompts.spoken(self.cfg, "yes_no"))
                 return
             # Neue getippte Anfrage statt Antwort → offene Aktion ablehnen
             for cid in list(self.pending):
@@ -212,7 +204,8 @@ def create_app(cfg: Config) -> FastAPI:
         except OSError as e:
             log.warning("Askpass-Helfer konnte nicht angelegt werden: %s", e)
     broker = askpass.AskpassBroker(cfg.port, notify=hub.broadcast, helper=helper,
-                                   has_ui=lambda: bool(hub.clients), say=hub.speaker.say)
+                                   has_ui=lambda: bool(hub.clients), say=hub.speaker.say,
+                                   say_text=prompts.spoken(cfg, "password"))
     askpass.BROKER = broker
     hub.askpass = broker
     background: list[asyncio.Task] = []
@@ -250,9 +243,9 @@ def create_app(cfg: Config) -> FastAPI:
 
     async def fire_reminder(r, now) -> None:
         late = (now - r.due_dt).total_seconds() > 120
-        kind = "Timer" if r.kind == "timer" else "Erinnerung"
-        spoken = (f"Verpasste {kind} von {r.due_dt.strftime('%H:%M')} Uhr: {r.text}" if late
-                  else ("Der Timer ist abgelaufen: " if r.kind == "timer" else "Erinnerung: ") + r.text)
+        kind = prompts.spoken(cfg, "kind_timer" if r.kind == "timer" else "kind_reminder")
+        spoken = (prompts.spoken(cfg, "missed", kind=kind, time=r.due_dt.strftime("%H:%M"), text=r.text) if late
+                  else prompts.spoken(cfg, "timer" if r.kind == "timer" else "reminder", text=r.text))
         reminders.mark_done(r.id)
         memory.journal.append("Erinnerung", spoken)
         event = {"type": "reminder", "id": r.id, "text": r.text, "kind": r.kind,
@@ -487,7 +480,7 @@ def create_app(cfg: Config) -> FastAPI:
             return {"available": False, "voices": []}
         tts.available()
         return {"available": True, "current": tts.current, "rate": tts.rate,
-                "voices": catalog.voice_list(tts.voices_dir, tts.current)}
+                "voices": catalog.voice_list(tts.voices_dir, tts.current, cfg.language)}
 
     @app.post("/api/voices/{name}/install")
     async def install_voice(name: str):
