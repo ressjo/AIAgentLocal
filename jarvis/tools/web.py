@@ -1,4 +1,4 @@
-"""Websuche (DuckDuckGo via ddgs oder eigene SearXNG-Instanz) und Abruf von Webseiten."""
+"""Websuche (Brave Search API, eigene SearXNG-Instanz oder Suchseiten via ddgs) und Abruf von Webseiten."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 import shutil
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 from urllib.parse import quote_plus
 
@@ -106,6 +107,39 @@ async def _searxng(url: str, query: str, n: int) -> list[dict]:
             for x in r.json().get("results", [])[:n]]
 
 
+BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
+TAG_RE = re.compile(r"<[^>]+>")
+
+
+async def _brave(key: str, query: str, n: int, language: str = "de") -> list[dict]:
+    """Offizielle Brave Search API – kein Auslesen von Suchseiten, daher kein Bot-Blockieren."""
+    params: dict[str, str | int] = {"q": query, "count": n}
+    params.update({"country": "DE", "search_lang": "de"} if language == "de" else {"search_lang": "en"})
+    headers = {"X-Subscription-Token": key, "Accept": "application/json"}
+    async with httpx.AsyncClient(timeout=20, transport=TRANSPORT, headers=headers) as client:
+        r = await client.get(BRAVE_URL, params=params)
+    if r.status_code in (401, 403) or (r.status_code == 422 and "TOKEN" in r.text.upper()):
+        raise RuntimeError(f"Brave-API-Schlüssel ungültig oder ohne Berechtigung (HTTP {r.status_code})")
+    if r.status_code == 429:
+        raise RuntimeError("Brave-API: Kontingent oder Rate-Limit erreicht (HTTP 429) – später erneut versuchen")
+    r.raise_for_status()
+    return [{"title": TAG_RE.sub("", x.get("title", "")), "href": x.get("url", ""),
+             "body": TAG_RE.sub("", x.get("description", ""))}
+            for x in (r.json().get("web") or {}).get("results", [])[:n]]
+
+
+async def search_status(cfg) -> dict:
+    """Für jarvis doctor: welcher Suchweg aktiv ist und ob die Brave-API antwortet (eine Testanfrage)."""
+    tools = cfg.tools
+    if not tools.brave_key:
+        return {"mode": "searxng" if tools.searxng_url else "scrape", "online": None}
+    try:
+        await _brave(tools.brave_key, "jarvis", 1, cfg.language)
+        return {"mode": "brave", "online": True}
+    except Exception as e:  # noqa: BLE001
+        return {"mode": "brave", "online": False, "error": str(e)}
+
+
 def _ddgs(query: str, n: int) -> list[dict]:
     from ddgs import DDGS
     return DDGS().text(query, region="de-de", max_results=n) or []
@@ -118,23 +152,30 @@ async def web_search(
     max_results: Annotated[int, "Anzahl Treffer (Standard 5)"] = 5,
 ) -> str:
     n = max(1, min(max_results, 10))
-    note = ""
-    results: list[dict] = []
-    if ctx.cfg.tools.searxng_url:
+    tools = ctx.cfg.tools
+    # Reihenfolge: offizielle Brave-API → eigene SearXNG-Instanz → Suchseiten auslesen (ddgs). Mit Brave-Schlüssel
+    # wird nur mit search_fallback: true auf das Auslesen ausgewichen (Bot-Sperren vermeiden).
+    sources: list[tuple[str, Callable[[], Awaitable[list[dict]]]]] = []
+    if tools.brave_key:
+        sources.append(("Brave", lambda: _brave(tools.brave_key, query, n, ctx.cfg.language)))
+    if tools.searxng_url:
+        sources.append(("SearXNG", lambda: _searxng(tools.searxng_url, query, n)))
+    if not tools.brave_key or tools.search_fallback:
+        sources.append(("DuckDuckGo", lambda: asyncio.to_thread(_ddgs, query, n)))
+    errors: list[str] = []
+    for name, search in sources:
         try:
-            results = await _searxng(ctx.cfg.tools.searxng_url, query, n)
-        except Exception as e:  # noqa: BLE001 – dann DuckDuckGo als Rückfall
-            log.warning("SearXNG fehlgeschlagen (%s) – nutze DuckDuckGo", e)
-            note = f"(Hinweis: {e}; Ergebnisse stattdessen von DuckDuckGo.)\n\n"
-    if not results:
-        try:
-            results = await asyncio.to_thread(_ddgs, query, n)
-        except Exception as e:  # noqa: BLE001
-            return f"{note}Websuche fehlgeschlagen: {e}"
-    if not results:
-        return note + "Keine Suchergebnisse."
-    return note + "\n\n".join(f"{i}. {r.get('title', '')}\n{r.get('href', '')}\n{r.get('body', '')}"
-                              for i, r in enumerate(results, 1))
+            results = await search()
+        except Exception as e:  # noqa: BLE001 – nächste Quelle versuchen
+            log.warning("Websuche über %s fehlgeschlagen: %s", name, e)
+            errors.append(str(e))
+            continue
+        note = "".join(f"(Hinweis: {e}; Ergebnisse stattdessen von {name}.)\n\n" for e in errors)
+        if not results:
+            return note + "Keine Suchergebnisse."
+        return note + "\n\n".join(f"{i}. {r.get('title', '')}\n{r.get('href', '')}\n{r.get('body', '')}"
+                                  for i, r in enumerate(results, 1))
+    return "Websuche fehlgeschlagen: " + "; ".join(errors)
 
 
 @tool("Ruft eine Webseite ab und gibt den lesbaren Haupttext zurück.")

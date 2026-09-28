@@ -237,3 +237,43 @@ def test_searxng_success(cfg, monkeypatch):
     monkeypatch.setattr(web, "TRANSPORT", httpx.MockTransport(lambda r: httpx.Response(200, json=payload)))
     monkeypatch.setattr(web, "_ddgs", lambda q, n: pytest.fail("DuckDuckGo darf nicht genutzt werden"))
     assert run(web.web_search(ctx(cfg), "x")) == "1. T\nhttps://t.de\nC"
+
+
+def test_brave_api_is_used_with_key(cfg, monkeypatch):
+    cfg.tools.brave_api_key = "secret"
+    seen = []
+
+    def handler(r):
+        seen.append(r)
+        return httpx.Response(200, json={"web": {"results": [
+            {"title": "<strong>Ryzen</strong> AI", "url": "https://amd.com", "description": "Neu <b>2026</b>"}]}})
+
+    monkeypatch.setattr(web, "TRANSPORT", httpx.MockTransport(handler))
+    monkeypatch.setattr(web, "_ddgs", lambda q, n: pytest.fail("Suchseiten dürfen nicht ausgelesen werden"))
+    assert run(web.web_search(ctx(cfg), "Ryzen AI", 3)) == "1. Ryzen AI\nhttps://amd.com\nNeu 2026"
+    r = seen[0]
+    assert str(r.url).startswith(web.BRAVE_URL) and r.headers["X-Subscription-Token"] == "secret"
+    assert r.url.params["q"] == "Ryzen AI" and r.url.params["count"] == "3" and r.url.params["country"] == "DE"
+    cfg.language = "en"
+    run(web.web_search(ctx(cfg), "x"))
+    assert seen[1].url.params["search_lang"] == "en" and "country" not in seen[1].url.params
+
+
+@pytest.mark.parametrize("status,body,text", [(429, "", "Rate-Limit"), (401, "", "ungültig"),
+                                              (422, '{"error": {"code": "SUBSCRIPTION_TOKEN_INVALID"}}', "ungültig")])
+def test_brave_errors_do_not_scrape(cfg, monkeypatch, status, body, text):
+    cfg.tools.brave_api_key = "secret"
+    monkeypatch.setattr(web, "TRANSPORT", httpx.MockTransport(lambda r: httpx.Response(status, text=body)))
+    monkeypatch.setattr(web, "_ddgs", lambda q, n: pytest.fail("Suchseiten dürfen nicht ausgelesen werden"))
+    out = run(web.web_search(ctx(cfg), "x"))
+    assert out.startswith("Websuche fehlgeschlagen") and text in out
+
+
+def test_brave_fallback_when_enabled(cfg, monkeypatch):
+    monkeypatch.setenv("JARVIS_BRAVE_API_KEY", "from-env")
+    cfg.tools.search_fallback = True
+    assert cfg.tools.brave_key == "from-env"
+    monkeypatch.setattr(web, "TRANSPORT", httpx.MockTransport(lambda r: httpx.Response(429)))
+    monkeypatch.setattr(web, "_ddgs", lambda q, n: [{"title": "T", "href": "https://t.de", "body": "C"}])
+    out = run(web.web_search(ctx(cfg), "x"))
+    assert "HTTP 429" in out and "DuckDuckGo" in out and out.endswith("1. T\nhttps://t.de\nC")

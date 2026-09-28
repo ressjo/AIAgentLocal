@@ -130,6 +130,14 @@ class ToolsConfig(BaseModel):
     update_timeout: int = 3600
     max_output_chars: int = 6000
     searxng_url: str | None = None
+    # Brave Search API (offizielle Schnittstelle, kein Auslesen von Suchseiten); alternativ $JARVIS_BRAVE_API_KEY
+    brave_api_key: str = ""
+    # mit Brave-Schlüssel bei Fehlern trotzdem auf das Auslesen der Suchseiten (ddgs) ausweichen?
+    search_fallback: bool = False
+
+    @property
+    def brave_key(self) -> str:
+        return self.brave_api_key or os.environ.get("JARVIS_BRAVE_API_KEY", "")
 
     @field_validator("search_paths", "nas_paths", mode="before")
     @classmethod

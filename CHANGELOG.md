@@ -49,4 +49,6 @@ First public release.
 - **Bonsai 2 27B** is set up automatically when chosen in the installer or with `jarvis model add bonsai`
   (Bonsai-demo checkout, llama.cpp binaries, model, GPU-specific server profile). On NVIDIA the CUDA runtime
   libraries are fetched automatically when the system has none.
+- Web search via the official **Brave Search API** (key asked for by the installer) – no scraping of result
+  pages and no bot blocking; SearXNG and ddgs remain as alternatives.
 - `jarvis doctor`, `jarvis update`.

@@ -31,7 +31,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **System** | Full system update (Arch: `pacman -Syu` + AUR via yay/paru, Debian/Ubuntu: `apt`), list/search/install/remove packages, system info, shutdown/reboot/suspend/lock |
 | **System & network** | Top processes and killing them, systemd services (status, start/stop/restart, logs), IP/gateway/DNS/Wi-Fi, ping, open ports, port checks, disk usage and clean-up |
 | **Files** | Find files by name (plocate/fd) or content (ripgrep), list folders, read/write text files, open files and URLs – also on a mounted **NAS** |
-| **Apps & web** | Start installed applications, open websites (with your own shortcuts), web search (DuckDuckGo or your own SearXNG), read web pages |
+| **Apps & web** | Start installed applications, open websites (with your own shortcuts), web search (official **Brave Search API**, your own SearXNG, or scraping via ddgs), read web pages |
 | **Shell** | Any bash command – read-only ones run directly, changing ones only after confirmation, destructive ones never |
 | **Everyday** | Weather (Open-Meteo), reminders and timers, morning briefing |
 | **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
@@ -241,6 +241,21 @@ All integrations are optional – their tools are only offered to the model once
 `jarvis doctor` checks each one. HTTPS with a self-signed certificate: add `verify_ssl: false` (or the path to
 your CA file). Home-network services are always contacted directly, never through a system proxy.
 
+### Web search
+
+Jarvis searches in this order:
+
+1. **Brave Search API** (recommended) – the official API, so there is no risk of being blocked as a bot. Get a key
+   at [api-dashboard.search.brave.com](https://api-dashboard.search.brave.com) (the installer asks for it) and set
+   `tools.brave_api_key` or `$JARVIS_BRAVE_API_KEY`. If the API fails (quota used up, invalid key) Jarvis says so
+   instead of silently scraping – unless you set `tools.search_fallback: true`.
+2. **Your own SearXNG** instance (`tools.searxng_url`).
+3. Without either: the [ddgs](https://pypi.org/project/ddgs/) library reads the normal result pages of several
+   search engines (Wikipedia, DuckDuckGo, Bing, Brave, Google, …). Fine for occasional use, but engines may throttle
+   your IP or show you captchas, and it is against their terms of service.
+
+`jarvis doctor` shows which one is active and tests the Brave key.
+
 ### Home Assistant
 
 1. Home Assistant → your profile → **Security** → **Long-lived access tokens** → create token.
@@ -407,7 +422,9 @@ jarvis init-config            # create the example configuration
 | No password field appears | The dashboard must be open; `jarvis doctor` checks the askpass helper |
 | A file/app doesn't open | `jarvis doctor` → "Desktop": graphical session and default apps; set one with `xdg-mime default org.kde.kate.desktop text/plain`, or say "open X with Kate" |
 | Integration "unreachable" | The message names the address, reason and a tip (certificate → `verify_ssl: false`, wrong port, http vs https, …); check with `jarvis doctor` |
-| Web search: SearXNG `403 Forbidden` | Public SearXNG instances block the JSON API – leave `tools.searxng_url` empty (DuckDuckGo) or use your own instance |
+| Web search: SearXNG `403 Forbidden` | Public SearXNG instances block the JSON API – leave `tools.searxng_url` empty or use your own instance |
+| Web search: "Brave … HTTP 429" | Brave API quota or rate limit reached – wait, check your plan, or allow `tools.search_fallback: true` |
+| Web search: "Brave API key invalid" | Check `tools.brave_api_key` / `$JARVIS_BRAVE_API_KEY`; `jarvis doctor` tests the key |
 | File search misses new files | `sudo updatedb` |
 | Answers get cut off / "context too small" | Increase the model's context window; watch the CONTEXT tile |
 

@@ -173,6 +173,17 @@ def cmd_doctor(args) -> None:
     else:
         line(hs["online"], f"{hs.get('url') or cfg.homeassistant.url}" + (
             f" – {hs['entities']} {T('Entitäten', 'entities')} (Version {hs['version']})" if hs["online"] else ""), hs.get("error", ""))
+    print(T("Websuche:", "Web search:"))
+    from .tools.web import search_status
+    ws = asyncio.run(search_status(cfg))
+    if ws["mode"] == "brave":
+        fallback = T(" (Rückfall: Suchseiten auslesen)", " (fallback: scraping)") if cfg.tools.search_fallback else ""
+        line(ws["online"], "Brave Search API" + fallback, ws.get("error", ""))
+    elif ws["mode"] == "searxng":
+        print(f"  ℹ SearXNG {cfg.tools.searxng_url} – " + T("Rückfall: Suchseiten auslesen", "fallback: scraping result pages"))
+    else:
+        print("  ℹ " + T("Suchseiten werden ausgelesen (ddgs) – ohne Bot-Sperr-Risiko: tools.brave_api_key setzen",
+                         "result pages are scraped (ddgs) – to avoid bot blocking set tools.brave_api_key"))
     print(T("Kalender:", "Calendar:"))
     if not cfg.calendar.enabled:
         print(T("  – nicht konfiguriert", "  – not configured") + " (calendar.url, username, password)")
