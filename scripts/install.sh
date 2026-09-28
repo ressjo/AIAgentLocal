@@ -1,119 +1,308 @@
 #!/usr/bin/env bash
-# JARVIS – Installation für Arch Linux / Manjaro / EndeavourOS (AMD-GPU)
+# Orbwise – installer for Arch Linux / Manjaro / EndeavourOS and Debian / Ubuntu / Linux Mint
 #
-#   ./scripts/install.sh                  # alles mit Standardwerten
-#   ./scripts/install.sh --model qwen3:8b # Modell selbst wählen
-#   ./scripts/install.sh --vulkan         # Ollama mit Vulkan statt ROCm (falls ROCm die GPU nicht unterstützt)
+#   ./scripts/install.sh                   # asks for language, GPU and model (with recommendations)
+#   ./scripts/install.sh --lang en         # English assistant, voice and UI (default: de)
+#   ./scripts/install.sh --model qwen3:8b  # choose the Ollama model yourself
+#   ./scripts/install.sh --gpu vulkan      # force the Ollama backend: auto | cuda | rocm | vulkan | cpu (Arch)
+#   ./scripts/install.sh --yes             # no questions, use the detected/recommended defaults
 #   ./scripts/install.sh --no-autostart
+# Change or add models later with:  orbwise model add
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DATA="${XDG_DATA_HOME:-$HOME/.local/share}/jarvis"
-CONF="${XDG_CONFIG_HOME:-$HOME/.config}/jarvis"
+DATA="${XDG_DATA_HOME:-$HOME/.local/share}/orbwise"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/orbwise"
 MODEL=""
-BACKEND="rocm"
+GPU="auto"
+LANG_CHOICE=""
 AUTOSTART=1
-VOICE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high"
+ASK=1
+REPO="${ORBWISE_REPO:-https://github.com/ressjo/orbwise.git}"
+BRANCH="${ORBWISE_BRANCH:-main}"
+PIPER="https://huggingface.co/rhasspy/piper-voices/resolve/main"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --model) MODEL="$2"; shift 2 ;;
-    --vulkan) BACKEND="vulkan"; shift ;;
-    --cpu) BACKEND="cpu"; shift ;;
+    --lang) LANG_CHOICE="$2"; shift 2 ;;
+    --gpu) GPU="$2"; shift 2 ;;
+    --vulkan) GPU="vulkan"; shift ;;   # kept for compatibility
+    --cpu) GPU="cpu"; shift ;;
     --no-autostart) AUTOSTART=0; shift ;;
-    *) echo "Unbekannte Option: $1"; exit 1 ;;
+    -y|--yes) ASK=0; shift ;;
+    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
-
 say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
+[[ -t 0 ]] || ASK=0
 
-command -v pacman >/dev/null || { echo "Dieses Skript ist für Arch-basierte Systeme (pacman)."; exit 1; }
-
-# ---------------------------------------------------------------- Systempakete
-say "Installiere Systempakete"
-case "$BACKEND" in
-  rocm) OLLAMA_PKG="ollama-rocm" ;;
-  vulkan) OLLAMA_PKG="ollama-vulkan" ;;
-  cpu) OLLAMA_PKG="ollama" ;;
-esac
-if ! pacman -Si "$OLLAMA_PKG" >/dev/null 2>&1; then
-  echo "Paket $OLLAMA_PKG nicht in den Repos gefunden – nutze 'ollama'."
-  OLLAMA_PKG="ollama"
+# ---------------------------------------------------------------- Language
+if [[ -z "$LANG_CHOICE" && $ASK == 1 ]]; then
+  echo "Language / Sprache:"
+  echo "  1) Deutsch"
+  echo "  2) English"
+  read -r -p "[1]: " answer
+  [[ "$answer" == "2" ]] && LANG_CHOICE="en"
 fi
-sudo pacman -S --needed --noconfirm python uv fd ripgrep plocate xdg-utils polkit pacman-contrib \
-  gtk3 curl "$OLLAMA_PKG"
+[[ "$LANG_CHOICE" == "en" ]] || LANG_CHOICE="de"
+export ORBWISE_LANG="$LANG_CHOICE"
+t() { if [[ "$LANG_CHOICE" == "en" ]]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
+ask_yes() {  # ask_yes "Frage" "Question" [default y|n]
+  local def="${3:-y}" answer
+  (( ASK )) || { [[ "$def" == "y" ]]; return; }
+  read -r -p "$(t "$1" "$2") [$( [[ $def == y ]] && t 'J/n' 'Y/n' || t 'j/N' 'y/N')] " answer
+  answer="${answer,,}"
+  [[ -z "$answer" ]] && answer="$def"
+  [[ "$answer" =~ ^(j|ja|y|yes)$ ]]
+}
 
-say "Starte Ollama-Dienst und Dateiindex"
-sudo systemctl enable --now ollama.service
-sudo systemctl enable --now plocate-updatedb.timer || true
+if command -v pacman >/dev/null; then DISTRO="arch"
+elif command -v apt-get >/dev/null; then DISTRO="debian"
+else echo "Unsupported distribution – Orbwise supports Arch-based (pacman) and Debian/Ubuntu-based (apt) systems."; exit 1
+fi
+
+# ---------------------------------------------------------------- Fixed location via git
+# Started from a ZIP download? A git checkout makes updates a one-liner ("orbwise update").
+if [[ ! -d "$ROOT/.git" && -t 0 ]]; then
+  echo "This folder is a ZIP download. Updates are easier with a git checkout in ~/orbwise."
+  read -r -p "Install to ~/orbwise instead (recommended)? [Y/n] " answer
+  if [[ ! "$answer" =~ ^[nN] ]]; then
+    if ! command -v git >/dev/null; then
+      if [[ $DISTRO == arch ]]; then sudo pacman -S --needed --noconfirm git; else sudo apt-get install -y git; fi
+    fi
+    ORBWISE_REPO="$REPO" ORBWISE_BRANCH="$BRANCH" exec bash "$ROOT/scripts/bootstrap.sh" "$@"
+  fi
+fi
+
+# ---------------------------------------------------------------- GPU
+PCI="$(lspci 2>/dev/null | grep -iE 'vga|3d controller|display' || true)"
+if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1 || grep -qi nvidia <<<"$PCI"; then DETECTED="cuda"
+elif ls /sys/class/drm/card*/device/mem_info_vram_total >/dev/null 2>&1 || grep -qiE 'amd|ati' <<<"$PCI"; then DETECTED="rocm"
+else DETECTED="cpu"; fi
+if [[ "$GPU" == "auto" ]]; then
+  GPU="$DETECTED"
+  if (( ASK )); then
+    [[ -n "$PCI" ]] && printf '%s\n' "$(t 'Gefundene Grafikkarte(n):' 'Detected graphics card(s):')" "$PCI"
+    echo "$(t 'Welche Grafikkarte soll das Sprachmodell nutzen?' 'Which graphics card should run the language model?')"
+    echo "  1) NVIDIA (CUDA)"
+    echo "  2) AMD (ROCm)"
+    echo "  3) $(t 'Keine / nur CPU (langsam)' 'None / CPU only (slow)')"
+    default=$([[ $DETECTED == cuda ]] && echo 1 || { [[ $DETECTED == rocm ]] && echo 2 || echo 3; })
+    read -r -p "$(t 'Auswahl' 'Choice') [$default]: " answer
+    case "${answer:-$default}" in 1) GPU="cuda" ;; 2) GPU="rocm" ;; *) GPU="cpu" ;; esac
+    if [[ $GPU == rocm && $DISTRO == arch ]] && ! ask_yes \
+        "ROCm verwenden? (Nein = Vulkan, für Karten ohne ROCm-Unterstützung)" \
+        "Use ROCm? (No = Vulkan, for cards without ROCm support)" y; then
+      GPU="vulkan"
+    fi
+  fi
+fi
+echo "GPU backend: $GPU"
+if [[ $GPU == cuda ]] && ! command -v nvidia-smi >/dev/null; then
+  echo "$(t '⚠ Kein NVIDIA-Treiber gefunden (nvidia-smi fehlt). Installieren mit:' '⚠ No NVIDIA driver found (nvidia-smi missing). Install it with:')"
+  if [[ $DISTRO == arch ]]; then echo "    sudo pacman -S nvidia-open nvidia-utils   # $(t 'danach neu starten' 'then reboot')"
+  else echo "    sudo ubuntu-drivers install   # $(t 'danach neu starten' 'then reboot')"; fi
+  ask_yes "Trotzdem fortfahren (Modelle laufen bis dahin auf der CPU)?" \
+          "Continue anyway (models run on the CPU until then)?" y || exit 1
+fi
+# RDNA2/RDNA3-Karten ohne offiziellen ROCm-Support laufen mit einem Override (z. B. RX 6600/6650/6700, RX 7600)
+HSA=""
+if [[ $GPU == rocm ]]; then
+  if grep -qiE 'navi 2[234]' <<<"$PCI"; then HSA="10.3.0"; elif grep -qiE 'navi 3[23]' <<<"$PCI"; then HSA="11.0.0"; fi
+fi
+
+# ---------------------------------------------------------------- System packages
+say "Installing system packages"
+if [[ $DISTRO == arch ]]; then
+  case "$GPU" in
+    cuda) OLLAMA_PKG="ollama-cuda" ;;
+    rocm) OLLAMA_PKG="ollama-rocm" ;;
+    vulkan) OLLAMA_PKG="ollama-vulkan" ;;
+    *) OLLAMA_PKG="ollama" ;;
+  esac
+  if ! pacman -Si "$OLLAMA_PKG" >/dev/null 2>&1; then
+    echo "Package $OLLAMA_PKG not found in the repos – using 'ollama'."
+    OLLAMA_PKG="ollama"
+  fi
+  sudo pacman -S --needed --noconfirm python uv git fd ripgrep plocate xdg-utils polkit pacman-contrib libnotify \
+    gtk3 curl iproute2 iputils "$OLLAMA_PKG"
+  sudo systemctl enable --now ollama.service
+  sudo systemctl enable --now plocate-updatedb.timer || true
+else
+  sudo apt-get update
+  sudo apt-get install -y python3 python3-venv git curl ca-certificates fd-find ripgrep plocate xdg-utils \
+    libnotify-bin libgtk-3-bin iproute2 iputils-ping zstd
+  # uv (Python package manager) – official installer, installs to ~/.local/bin
+  if ! command -v uv >/dev/null; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
+  # Ollama – official installer (sets up CUDA/ROCm support and the systemd service)
+  if ! command -v ollama >/dev/null; then
+    curl -fsSL https://ollama.com/install.sh | sh
+  fi
+  sudo systemctl enable --now ollama.service || true
+fi
 sudo updatedb || true
 
-# ---------------------------------------------------------------- Python-Umgebung
-say "Richte Python-Umgebung ein (uv)"
-cd "$ROOT"
-uv sync --extra voice
-
-# ---------------------------------------------------------------- Modellwahl nach VRAM
-if [[ -z "$MODEL" ]]; then
-  VRAM=0
-  for f in /sys/class/drm/card*/device/mem_info_vram_total; do
-    [[ -r "$f" ]] || continue
-    v=$(cat "$f"); (( v > VRAM )) && VRAM=$v
-  done
-  GB=$(( VRAM / 1024 / 1024 / 1024 ))
-  if (( GB >= 15 )); then MODEL="qwen3:14b"
-  elif (( GB >= 7 )); then MODEL="qwen3:8b"
-  else MODEL="qwen3:4b"; fi
-  echo "Erkannter Grafikspeicher: ${GB} GB → Modell $MODEL"
+if [[ -n "$HSA" ]] && ask_yes "Deine AMD-Karte braucht für ROCm meist HSA_OVERRIDE_GFX_VERSION=$HSA. Für Ollama einrichten?" \
+                              "Your AMD card usually needs HSA_OVERRIDE_GFX_VERSION=$HSA for ROCm. Set it up for Ollama?" y; then
+  sudo mkdir -p /etc/systemd/system/ollama.service.d
+  printf '[Service]\nEnvironment="HSA_OVERRIDE_GFX_VERSION=%s"\n' "$HSA" | \
+    sudo tee /etc/systemd/system/ollama.service.d/orbwise-rocm.conf >/dev/null
+  sudo rm -f /etc/systemd/system/ollama.service.d/jarvis-rocm.conf   # name before the project was renamed
+  sudo systemctl daemon-reload && sudo systemctl restart ollama.service || true
 fi
 
-say "Lade Sprachmodelle in Ollama (das dauert beim ersten Mal)"
-for i in {1..20}; do ollama list >/dev/null 2>&1 && break; sleep 1; done
-ollama pull "$MODEL"
-ollama pull bge-m3
+# ---------------------------------------------------------------- Python environment
+say "Setting up the Python environment (uv)"
+cd "$ROOT"
+uv sync --extra voice
+# the project used to be called "Jarvis": move ~/.config/jarvis and ~/.local/share/jarvis over first
+uv run python -c "from orbwise.migrate import migrate; [print('  ' + line) for line in migrate()]"
 
-# ---------------------------------------------------------------- Sprache
-say "Lade deutsche Piper-Stimme (Thorsten)"
+# ---------------------------------------------------------------- Model choice by VRAM
+if [[ -z "$MODEL" ]]; then
+  GB=0
+  if [[ "$GPU" == "cuda" ]]; then
+    MIB=$( { nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null || true; } | sort -n | tail -1)
+    GB=$(( ${MIB:-0} / 1024 ))
+  else
+    for f in /sys/class/drm/card*/device/mem_info_vram_total; do
+      [[ -r "$f" ]] || continue
+      v=$(( $(cat "$f") / 1024 / 1024 / 1024 )); (( v > GB )) && GB=$v
+    done
+  fi
+  [[ $GPU == cpu ]] && GB=0
+  echo "$(t 'Grafikspeicher' 'Video memory'): ${GB} GB"
+fi
+
+say "$(t 'Sprachmodell wählen und laden (dauert beim ersten Mal)' 'Choosing and pulling the language model (takes a while the first time)')"
+for _ in {1..30}; do ollama list >/dev/null 2>&1 && break; sleep 1; done
+CHOICE_FILE="$(mktemp)"
+OLLAMA_MODEL=""   # Ollama-Chatmodell (leer, wenn nur Bonsai gewählt wurde)
+BONSAI=0
+choose_model() {  # Menü geht ins Terminal, die Wahl in $CHOICE_FILE
+  if (( ASK )); then uv run orbwise model choose --vram "$GB" --out "$CHOICE_FILE"
+  else uv run orbwise model choose --vram "$GB" --out "$CHOICE_FILE" </dev/null; fi
+}
+while true; do
+  if [[ -z "$MODEL" ]]; then choose_model; MODEL="$(cat "$CHOICE_FILE")"; fi
+  echo "→ $MODEL"
+  if [[ "$MODEL" == "bonsai" ]]; then
+    # Bonsai 2 27B: eigener llama-server (PrismML-Fork) – Repo, Binaries und Modell nach ~/bonsai, Profil aktiv
+    if uv run orbwise model add bonsai --yes; then
+      BONSAI=1
+      if (( ASK )) && ask_yes "Zusätzlich ein Ollama-Modell als schnelle Alternative installieren?" \
+                              "Also install an Ollama model as a fast alternative?" n; then
+        MODEL=""; continue
+      fi
+      break
+    fi
+  elif ollama pull "$MODEL"; then
+    OLLAMA_MODEL="$MODEL"
+    break
+  fi
+  echo "$(t "✘ '$MODEL' konnte nicht eingerichtet werden." "✘ Could not set up '$MODEL'.")"
+  if (( ASK )); then MODEL=""; else exit 1; fi
+done
+rm -f "$CHOICE_FILE"
+ollama pull bge-m3   # Embeddings fürs Gedächtnis (auch bei Bonsai)
+
+# ---------------------------------------------------------------- Voice
+if [[ "$LANG_CHOICE" == "en" ]]; then VOICE="en_GB-alan-medium"; VOICE_PATH="en/en_GB/alan/medium"
+else VOICE="de_DE-thorsten-high"; VOICE_PATH="de/de_DE/thorsten/high"; fi
+say "Downloading Piper voice ($VOICE)"
 mkdir -p "$DATA/voices"
 for ext in onnx onnx.json; do
-  [[ -f "$DATA/voices/de_DE-thorsten-high.$ext" ]] || \
-    curl -fL --progress-bar -o "$DATA/voices/de_DE-thorsten-high.$ext" "$VOICE_URL/de_DE-thorsten-high.$ext"
+  [[ -f "$DATA/voices/$VOICE.$ext" ]] || \
+    curl -fL --progress-bar -o "$DATA/voices/$VOICE.$ext" "$PIPER/$VOICE_PATH/$VOICE.$ext"
 done
 
-say "Lade Wake-Word-Modell „Hey Jarvis“ und Whisper"
+say "Downloading the wake word model “Hey Jarvis” and Whisper"
 uv run python -c "import openwakeword.utils as u; u.download_models(['hey_jarvis'])"
 uv run python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')"
 
-# ---------------------------------------------------------------- Konfiguration
-say "Konfiguration"
+# ---------------------------------------------------------------- Configuration
+say "Configuration"
+BRAVE_KEY=""
+if (( ASK )); then
+  echo "$(t 'Websuche: Mit einem (kostenlosen) Brave-Search-API-Schlüssel sucht Orbwise über die offizielle API statt
+Suchseiten auszulesen – kein Risiko, als Bot gesperrt zu werden. Schlüssel: https://api-dashboard.search.brave.com' \
+            'Web search: with a (free) Brave Search API key Orbwise uses the official API instead of scraping result
+pages – no risk of being blocked as a bot. Get a key: https://api-dashboard.search.brave.com')"
+  read -r -p "$(t 'Brave-API-Schlüssel (Enter = überspringen): ' 'Brave API key (Enter = skip): ')" BRAVE_KEY
+  if [[ -n "$BRAVE_KEY" && ! "$BRAVE_KEY" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "$(t '✘ Ungültiger Schlüssel – übersprungen (später in tools.brave_api_key eintragen).' \
+              '✘ Invalid key – skipped (add it later as tools.brave_api_key).')"
+    BRAVE_KEY=""
+  fi
+fi
 if [[ ! -f "$CONF/config.yaml" ]]; then
-  uv run jarvis init-config
-  sed -i "s|^  model: .*|  model: $MODEL|" "$CONF/config.yaml"
-  echo "→ Bitte NAS-Pfade in $CONF/config.yaml unter tools.nas_paths eintragen."
+  uv run orbwise init-config
+  [[ -n "$OLLAMA_MODEL" ]] && sed -i "s|^  model: .*|  model: $OLLAMA_MODEL|" "$CONF/config.yaml"
+  sed -i "s|^language: [a-z]*|language: $LANG_CHOICE|" "$CONF/config.yaml"
+  [[ -n "$BRAVE_KEY" ]] && sed -i "s|^  brave_api_key: \"\"|  brave_api_key: \"$BRAVE_KEY\"|" "$CONF/config.yaml"
+  echo "→ Add your NAS paths etc. in $CONF/config.yaml (tools.nas_paths)."
 else
-  echo "$CONF/config.yaml existiert bereits – unverändert gelassen."
+  echo "$CONF/config.yaml already exists – left unchanged."
+  [[ -n "$BRAVE_KEY" ]] && echo "$(t "→ Brave-Schlüssel bitte selbst eintragen: tools.brave_api_key: \"$BRAVE_KEY\"" \
+                                        "→ Please add the Brave key yourself: tools.brave_api_key: \"$BRAVE_KEY\"")"
 fi
 
-# ---------------------------------------------------------------- Starter
-say "Richte Starter ein"
+# ---------------------------------------------------------------- Launcher
+say "Setting up the launcher"
 mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
-ln -sf "$ROOT/.venv/bin/jarvis" "$HOME/.local/bin/jarvis"
-install -m 755 "$ROOT/scripts/jarvis-open" "$HOME/.local/bin/jarvis-open"
-sed "s|@HOME@|$HOME|g" "$ROOT/scripts/jarvis.desktop" > "$HOME/.local/share/applications/jarvis.desktop"
+rm -f "$HOME/.local/bin/orbwise"
+# the project used to be called "Jarvis": keep the old command names as forwarders
+for old in jarvis jarvis-open; do
+  if [[ -e "$HOME/.local/bin/$old" ]]; then
+    printf '#!/usr/bin/env bash\n# Former command name – the project is now called Orbwise.\nORBWISE_VIA_ALIAS=1 exec "$HOME/.local/bin/%s" "$@"\n' \
+      "${old/jarvis/orbwise}" > "$HOME/.local/bin/$old"
+    chmod 755 "$HOME/.local/bin/$old"
+  fi
+done
+rm -f "$HOME/.local/share/applications/jarvis.desktop" "$HOME/.config/autostart/jarvis.desktop"
+sed -e "s|@ORBWISE_HOME@|$ROOT|g" -e "s|@ORBWISE_BRANCH@|$BRANCH|g" -e "s|@ORBWISE_REPO@|$REPO|g" \
+  "$ROOT/scripts/orbwise-launcher" > "$HOME/.local/bin/orbwise"
+chmod 755 "$HOME/.local/bin/orbwise"
+
+# Put ~/.local/bin on the PATH (once)
+for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+  [[ -f "$rc" || "$rc" == "$HOME/.bashrc" ]] || continue
+  if ! grep -q -E "# (orbwise|jarvis)-path" "$rc" 2>/dev/null; then
+    printf '\nexport PATH="$HOME/.local/bin:$PATH"  # orbwise-path\n' >> "$rc"
+  fi
+done
+install -m 755 "$ROOT/scripts/orbwise-open" "$HOME/.local/bin/orbwise-open"
+sed "s|@HOME@|$HOME|g" "$ROOT/scripts/orbwise.desktop" > "$HOME/.local/share/applications/orbwise.desktop"
 
 if (( AUTOSTART )); then
-  # Autostart innerhalb der Desktop-Sitzung, damit pkexec den grafischen Passwortdialog zeigen kann
+  # Autostart inside the desktop session (needed to open files/apps on your desktop)
   mkdir -p "$HOME/.config/autostart"
-  sed "s|@HOME@|$HOME|g" "$ROOT/scripts/jarvis-autostart.desktop" > "$HOME/.config/autostart/jarvis.desktop"
-  echo "Autostart eingerichtet (~/.config/autostart/jarvis.desktop)."
+  sed "s|@HOME@|$HOME|g" "$ROOT/scripts/orbwise-autostart.desktop" > "$HOME/.config/autostart/orbwise.desktop"
+  echo "Autostart configured (~/.config/autostart/orbwise.desktop)."
 fi
 
-say "Fertig!"
+say "Done!"
 cat <<EOF
-Starten:   jarvis serve --open      (oder im Anwendungsmenü „JARVIS“)
-Prüfen:    jarvis doctor
-Oberfläche: http://localhost:8765
+Installed in: $ROOT
+Start:    orbwise serve --open      (or "Orbwise" in the application menu)
+Check:    orbwise doctor
+Update:   orbwise update
+(Open a new terminal or run "source ~/.bashrc" if "orbwise" is not found yet.)
+Web UI:   http://localhost:8765
+Models:   orbwise model add        (download and switch to another model – also in the web UI: LLM menu)
+EOF
+if (( BONSAI )); then
+  echo "Bonsai:   set up in ~/bonsai – Orbwise starts its llama-server automatically (log: ~/.local/state/orbwise-llm.log)"
+fi
+if [[ -n "$BRAVE_KEY" ]]; then echo "Search:   Brave Search API"
+else echo "Search:   scraping result pages – for the official API without bot blocking set tools.brave_api_key"; fi
+cat <<EOF
 
-Tipp für AMD: Wird deine GPU von ROCm nicht erkannt (ollama ps zeigt 100% CPU), siehe README
-→ Abschnitt „AMD-GPU“ (HSA_OVERRIDE_GFX_VERSION oder --vulkan).
+NVIDIA: speech recognition can run on the GPU – set voice.stt_device: cuda and voice.stt_compute_type: float16.
+AMD: if ROCm does not pick up your card (ollama ps shows 100% CPU), see the README section "AMD GPUs".
 EOF

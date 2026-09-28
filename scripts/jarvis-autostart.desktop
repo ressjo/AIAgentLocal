@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=JARVIS (Hintergrunddienst)
-Comment=Startet den JARVIS-Server beim Anmelden
-Exec=sh -c 'mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}" && exec @HOME@/.local/bin/jarvis serve >"${XDG_STATE_HOME:-$HOME/.local/state}/jarvis.log" 2>&1'
-Terminal=false
-NoDisplay=true
-X-GNOME-Autostart-enabled=true

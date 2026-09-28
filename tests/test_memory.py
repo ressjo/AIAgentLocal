@@ -2,7 +2,7 @@ from datetime import datetime
 
 from conftest import run
 
-from jarvis.memory.context import Conversation, est_tokens
+from orbwise.memory.context import Conversation, est_tokens
 
 
 def test_journal_file_per_day(memory):
@@ -36,7 +36,7 @@ def test_retrieval_finds_old_conversation(memory):
 
 def test_rebuild_index(memory):
     run(memory.log_exchange("Suche meine Steuererklärung", "Gefunden in ~/Dokumente.", ["find_files → 1 Treffer"]))
-    run(memory.remember("Der Nutzer heißt Joshua."))
+    run(memory.remember("Der Nutzer heißt Alex."))
     n = run(memory.rebuild_index())
     assert n >= 2
     assert run(memory.retrieve("Steuererklärung"))
@@ -81,3 +81,32 @@ def test_trimmed_history_never_starts_with_tool(tmp_path):
     assert msgs and msgs[0]["role"] != "tool"
     assert all("ts" not in m for m in msgs)
     assert est_tokens("abc") >= 1
+
+
+def test_trimmed_history_always_keeps_current_question():
+    from orbwise.memory.context import Conversation
+    conv = Conversation()
+    conv.add({"role": "user", "content": "alte Frage"})
+    conv.add({"role": "assistant", "content": "alte Antwort"})
+    conv.add({"role": "user", "content": "Suche im Web nach Bonsai"})
+    for i in range(4):
+        conv.add({"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "fetch_url", "arguments": {}}}]})
+        conv.add({"role": "tool", "content": f"Seite {i} " + "x" * 6000, "tool_name": "fetch_url"})
+    out = conv.trimmed_history(3000)
+    assert out[0] == {"role": "user", "content": "Suche im Web nach Bonsai"}
+    assert [m["role"] for m in out].count("tool") == 4          # nichts verwaist, nur gekürzt
+    assert sum(len(m.get("content") or "") for m in out) < 3000 * 3 + 2000
+    assert "gekürzt" in out[1 + 1]["content"]                   # ältestes Ergebnis zuerst gekürzt
+    assert conv.history[4]["content"].startswith("Seite 0 xxx") and len(conv.history[4]["content"]) > 6000  # Original bleibt
+
+
+def test_budget_respects_model_context(cfg, memory):
+    from orbwise.agent import Agent
+    from orbwise.config import ProfileConfig
+
+    class Small:
+        profile = ProfileConfig(backend="openai", base_url="http://x/v1", model="bonsai", num_ctx=8192)
+
+    assert Agent(cfg, Small(), memory).context_budget() == 8192 - 1500
+    cfg.memory.context_budget_tokens = 5000
+    assert Agent(cfg, Small(), memory).context_budget() == 5000

@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Check that the tag matches pyproject.toml
+        run: |
+          version=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME != version $version"; exit 1; }
+      - name: Test
+        run: |
+          uv sync --extra dev --extra voice
+          uv run pytest -q
+      - name: Build wheel and source archive
+        run: uv build
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="[$version]" 'index($0, "## ") == 1 { p = index($0, v) > 0; next } p' CHANGELOG.md > notes.md
+          test -s notes.md || echo "See CHANGELOG.md" > notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Orbwise ${{ github.ref_name }}
+          body_path: notes.md
+          files: dist/*

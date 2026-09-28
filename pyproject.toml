@@ -1,10 +1,27 @@
 [project]
-name = "jarvis-local"
+name = "orbwise"
 version = "0.1.0"
-description = "JARVIS – lokaler Sprach-KI-Assistent für Linux mit Ollama, persistentem Gedächtnis und animierter Weboberfläche"
+description = "Orbwise – a local, voice-controlled AI assistant for Linux: Ollama/llama.cpp, persistent memory, tool use and an animated web UI"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+authors = [{ name = "ressjo and contributors" }]
+keywords = ["assistant", "voice-assistant", "llm", "ollama", "llama.cpp", "voice", "agent", "linux", "home-assistant"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Natural Language :: German",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Home Automation",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
@@ -14,6 +31,7 @@ dependencies = [
     "numpy>=1.26",
     "ddgs>=9.0",
     "trafilatura>=1.8",
+    "caldav>=3.3.1",
 ]
 
 [project.optional-dependencies]
@@ -24,22 +42,39 @@ voice = [
     "onnxruntime>=1.17",
     "webrtcvad-wheels>=2.0.11",
 ]
-dev = ["pytest>=8.0"]
+dev = [
+    "pytest>=8.0",
+    "radicale>=3.8.1",
+    "ruff>=0.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/ressjo/orbwise"
+Issues = "https://github.com/ressjo/orbwise/issues"
+Changelog = "https://github.com/ressjo/orbwise/blob/main/CHANGELOG.md"
 
 [project.scripts]
-jarvis = "jarvis.cli:main"
+orbwise = "orbwise.cli:main"
+jarvis = "orbwise.cli:main"  # alter Befehlsname (vor der Umbenennung) – entfällt in 0.2
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["jarvis"]
+packages = ["orbwise"]
 
 [tool.uv]
 # openwakeword zieht unter Linux tflite-runtime, für das es ab Python 3.12 keine Wheels gibt.
 # Wir nutzen ausschließlich das ONNX-Backend, daher wird tflite-runtime ausgeblendet.
 override-dependencies = ["tflite-runtime; sys_platform == 'never'"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
