@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from . import askpass, metrics, prompts
 from .agent import Agent
 from .config import Config
+from .lang import set_lang
 from .llm import FakeLLM, LLMError
 from .llm_router import LLMRouter
 from .memory import Memory
@@ -184,6 +185,7 @@ def check_host(host: str | None, port: int) -> bool:
 
 
 def create_app(cfg: Config) -> FastAPI:
+    set_lang(cfg.language)  # Meldungen außerhalb der Prompts (z. B. Modell-Server-Fehler)
     fake = os.environ.get("JARVIS_FAKE_LLM") == "1"
     llm = FakeLLM(language=cfg.language) if fake else LLMRouter(cfg.llm, state_path=cfg.memory.dir.parent / "state.json")
     memory = Memory(cfg.memory, llm)

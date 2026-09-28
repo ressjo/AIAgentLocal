@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -15,6 +16,7 @@ from pathlib import Path
 import httpx
 
 from .config import LLMConfig, ProfileConfig, ServerConfig
+from .lang import T
 from .llm import ContextOverflow, LLMError, OllamaLLM, OpenAICompatLLM
 
 log = logging.getLogger(__name__)
@@ -86,7 +88,7 @@ class ManagedServer:
                 return True
             if self.proc is not None and self.proc.poll() is not None:
                 raise LLMError(f"Modell-Server ist beim Start beendet worden (Exit-Code {self.proc.returncode}).\n"
-                               + tail_log())
+                               + tail_log() + library_hint(self.cfg.command))
             await asyncio.sleep(1)
             waited += 1
             if progress and int(waited) % 10 == 0:
@@ -112,6 +114,21 @@ class ManagedServer:
             except (ProcessLookupError, PermissionError):
                 pass
         self.proc = None
+
+
+def library_hint(command: str) -> str:
+    """Fehlt dem Server eine Bibliothek (typisch: CUDA-Laufzeit libcudart.so.12), sagen, wie man es repariert."""
+    try:
+        text = _log_path().read_text(errors="replace")[-20000:].rsplit("===== Starte:", 1)[-1]  # nur letzter Start
+    except OSError:
+        return ""
+    m = re.search(r"error while loading shared libraries: ([^:\s]+)", text)
+    if not m:
+        return ""
+    fix = "jarvis model add bonsai" if "bonsai" in command else T(
+        "das CUDA-/ROCm-Laufzeitpaket der Distribution installieren", "install your distribution's CUDA/ROCm runtime")
+    return T(f"\n→ Es fehlt die Bibliothek {m.group(1)}. Reparatur: {fix}",
+             f"\n→ The library {m.group(1)} is missing. Fix: {fix}")
 
 
 def tail_log(lines: int = 15) -> str:

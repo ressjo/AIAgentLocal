@@ -1,4 +1,5 @@
 import subprocess
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -86,3 +87,98 @@ def test_preset_and_web_pull_refuses_bonsai(cfg, monkeypatch):
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         r = client.post("/api/models/pull", json={"tag": "bonsai"})
         assert r.status_code == 400 and "jarvis model add bonsai" in r.json()["detail"]
+
+
+LDD_MISSING = """\tlinux-vdso.so.1 (0x00007ffc)
+\tlibcudart.so.12 => not found
+\tlibcublas.so.12 => not found
+\tlibc.so.6 => /usr/lib/libc.so.6 (0x00007f)
+"""
+
+
+def cuda_checkout(tmp_path):
+    d = tmp_path / "bonsai"
+    (d / "bin" / "cuda").mkdir(parents=True)
+    (d / bonsai.CUDA_SERVER).write_text("")
+    return d
+
+
+def fake_cuda_run(d, libs_after_install=True, calls=None):
+    calls = [] if calls is None else calls
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if cmd[0] == "nvidia-smi":
+            return subprocess.CompletedProcess(cmd, 0, stdout="| NVIDIA-SMI 570.1  Driver Version: 570.1  CUDA Version: 12.8 |")
+        if cmd[0] == "ldd":
+            path = kw["env"].get("LD_LIBRARY_PATH", "")
+            ok = "cuda_runtime/lib" in path and "cublas/lib" in path
+            return subprocess.CompletedProcess(cmd, 0, stdout="\tlibc.so.6 => /usr/lib/libc.so.6\n" if ok else LDD_MISSING)
+        if "--target" in cmd and libs_after_install:
+            target = Path(cmd[cmd.index("--target") + 1])
+            for sub, lib in (("cuda_runtime", "libcudart.so.12"), ("cublas", "libcublas.so.12")):
+                (target / "nvidia" / sub / "lib").mkdir(parents=True, exist_ok=True)
+                (target / "nvidia" / sub / "lib" / lib).write_text("")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    return run, calls
+
+
+def test_cuda_runtime_is_downloaded_when_missing(tmp_path):
+    d = cuda_checkout(tmp_path)
+    run, calls = fake_cuda_run(d)
+    msgs = []
+    path = bonsai.ensure_cuda_libs(d, run=run, out=msgs.append)
+    pip = next(c for c in calls if "--target" in c)
+    assert pip[-2:] == ["nvidia-cuda-runtime-cu12<12.9", "nvidia-cublas-cu12<12.9"] and str(d / "cuda-libs") in pip
+    assert "nvidia/cuda_runtime/lib" in path and "nvidia/cublas/lib" in path and "✔" in msgs[-1]
+    # zweiter Lauf: Bibliotheken schon da → kein erneuter Download
+    run2, calls2 = fake_cuda_run(d)
+    assert bonsai.ensure_cuda_libs(d, run=run2, out=msgs.append) == path
+    assert not any("--target" in c for c in calls2)
+    assert "LD_LIBRARY_PATH" in bonsai.make_profile(NVIDIA_16GB, d, lib_path=path)["server"]["env"]
+
+
+def test_cuda_runtime_not_needed_or_failing(tmp_path):
+    assert bonsai.ensure_cuda_libs(tmp_path, run=None, out=print) == ""  # kein CUDA-Build (z. B. AMD)
+    d = cuda_checkout(tmp_path)
+    ok = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout="\tlibc.so.6 => /usr/lib/libc.so.6\n")  # noqa: E731
+    assert bonsai.ensure_cuda_libs(d, run=ok, out=print) == ""  # System-CUDA vorhanden
+    run, _ = fake_cuda_run(d, libs_after_install=False)
+    msgs = []
+    assert bonsai.ensure_cuda_libs(d, run=run, out=msgs.append) is None and "libcudart.so.12" in msgs[-1]
+    assert bonsai.cuda_packages(["libcudart.so.13"]) == ["nvidia-cuda-runtime==13.*", "nvidia-cublas==13.*"]
+    assert bonsai.cuda_packages(["libfoo.so.1"]) == []
+    assert bonsai.cuda_packages(["libcudart.so.13"], (13, 0)) == ["nvidia-cuda-runtime>=13,<13.1", "nvidia-cublas>=13,<13.1"]
+
+
+def test_reinstall_keeps_api_key_and_adds_lib_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(bonsai.shutil, "which", lambda n: "/usr/bin/" + n)
+    state = tmp_path / "state.json"
+    d = tmp_path / "bonsai"
+    run, _ = fake_run(d)
+    bonsai.install(state, gpu=NVIDIA_16GB, directory=d, run=run, out=lambda *_: None)
+    key = mdl.added_profiles(state)["bonsai"]["api_key"]
+    (d / "bin" / "cuda").mkdir(parents=True)
+    (d / bonsai.CUDA_SERVER).write_text("")
+    cuda_run, _ = fake_cuda_run(d)
+
+    def both(cmd, **kw):
+        return cuda_run(cmd, **kw) if cmd[0] in ("ldd", "nvidia-smi") or "--target" in cmd else run(cmd, **kw)
+
+    bonsai.install(state, gpu=NVIDIA_16GB, directory=d, run=both, out=lambda *_: None)
+    p = mdl.added_profiles(state)["bonsai"]
+    assert p["api_key"] == key and key in p["server"]["command"] and "cublas" in p["server"]["env"]["LD_LIBRARY_PATH"]
+
+
+def test_router_error_names_missing_library(tmp_path, monkeypatch):
+    from jarvis import llm_router
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    log = tmp_path / "jarvis-llm.log"
+    log.write_text("\n===== Starte: old\nerror while loading shared libraries: libold.so.1: x\n"
+                   "\n===== Starte: ~/bonsai/scripts/start_llama_server.sh\n"
+                   "llama-server: error while loading shared libraries: libcudart.so.12: cannot open shared object file\n")
+    hint = llm_router.library_hint("~/bonsai/scripts/start_llama_server.sh -np 1")
+    assert "libcudart.so.12" in hint and "jarvis model add bonsai" in hint and "libold" not in hint
+    log.write_text("\n===== Starte: x\nall good\n")
+    assert llm_router.library_hint("x") == ""

@@ -11,6 +11,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
+from . import bonsai
 from .config import config_path, load_config
 from .lang import T, set_lang
 
@@ -74,6 +75,12 @@ def cmd_doctor(args) -> None:
                 script = os.path.expanduser(p.server.command.split()[0])
                 line(os.path.exists(script) or bool(shutil.which(script)), f"    {T('Startbefehl', 'Start command')} {script}",
                      T("Pfad in llm.profiles.<name>.server.command prüfen", "check the path in llm.profiles.<name>.server.command"))
+                binary = Path(script).parent.parent / bonsai.CUDA_SERVER  # Bonsai-demo-Checkout mit CUDA-Build?
+                if binary.exists():
+                    missing = bonsai.missing_libs(binary, p.server.env.get("LD_LIBRARY_PATH", ""))
+                    line(not missing, f"    {T('Bibliotheken für', 'Libraries for')} {bonsai.CUDA_SERVER}"
+                         + (f" – {T('fehlt', 'missing')}: {', '.join(missing)}" if missing else ""),
+                         "jarvis model add bonsai")
             line(ps["online"], T("    Server erreichbar", "    Server reachable") if ps["online"]
                  else T("    Server läuft gerade nicht", "    Server is not running"),
                  T("startet automatisch beim Aktivieren", "starts automatically when activated") if p.server

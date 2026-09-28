@@ -177,7 +177,10 @@ automatically: pick it in the installer or run `jarvis model add bonsai`. Jarvis
 [Bonsai-demo](https://github.com/PrismML-Eng/Bonsai-demo) to `~/bonsai` (or `$JARVIS_BONSAI_DIR`), runs its
 `setup.sh` (llama.cpp binaries for CUDA/ROCm + model download) and creates an activated profile with settings for
 your GPU – context size by VRAM, compressed KV cache and CPU embeddings on 8 GB cards, the ROCm override for
-RX 6600/6700/7600 – and a random `api_key`. Running it again updates the checkout. In the web UI Bonsai is listed
+RX 6600/6700/7600 – and a random `api_key`. On NVIDIA cards without a system CUDA toolkit the prebuilt
+llama-server lacks `libcudart`/`libcublas`; Jarvis then downloads NVIDIA's runtime packages from PyPI into
+`~/bonsai/cuda-libs` (no root, matched to your driver) and sets `LD_LIBRARY_PATH` in the profile. Running it again
+updates the checkout and repairs an existing setup (the `api_key` is kept); `jarvis doctor` shows missing libraries. In the web UI Bonsai is listed
 under **+ ADD MODEL** with a pointer to the terminal command, because the setup is interactive.
 
 The same profile written by hand, e.g. **Bonsai 2 27B on an RX 6650 XT (8 GB, ROCm)**:

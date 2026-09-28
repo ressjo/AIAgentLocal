@@ -12,6 +12,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -20,6 +21,9 @@ from .lang import T
 REPO = "https://github.com/PrismML-Eng/Bonsai-demo.git"
 START_SCRIPT = "scripts/start_llama_server.sh"
 PROFILE_NAME = "bonsai"
+CUDA_SERVER = "bin/cuda/llama-server"
+CUDA_LIBS = "cuda-libs"
+_NOT_FOUND = re.compile(r"^\s*(\S+)\s+=>\s+not found", re.M)
 
 
 def bonsai_dir() -> Path:
@@ -41,7 +45,7 @@ def hsa_override(gpu_name: str) -> str:
     return ""
 
 
-def make_profile(gpu: dict, directory: Path, api_key: str | None = None) -> dict:
+def make_profile(gpu: dict, directory: Path, api_key: str | None = None, lib_path: str = "") -> dict:
     """Profil passend zur Grafikkarte: wenig VRAM → komprimierter KV-Cache, Bildmodul in den RAM, kleiner Kontext."""
     vram = float(gpu.get("vram_gb") or 0)
     key = api_key or secrets.token_hex(20)
@@ -54,6 +58,8 @@ def make_profile(gpu: dict, directory: Path, api_key: str | None = None) -> dict
         env.update({"BONSAI_CTX": "32768", "BONSAI_MMPROJ_CPU": "1"})
     else:
         env["BONSAI_CTX"] = "65536"
+    if lib_path:  # CUDA-Laufzeit aus ~/bonsai/cuda-libs (siehe ensure_cuda_libs)
+        env["LD_LIBRARY_PATH"] = lib_path
     tight = vram <= 13
     home = str(Path.home())
     script = str(directory / START_SCRIPT)
@@ -102,11 +108,98 @@ def setup(directory: Path | None = None, run: Runner = subprocess.run, out=print
     return True
 
 
+# ---------------------------------------------------------------- CUDA-Laufzeit (NVIDIA)
+# Die fertigen CUDA-Builds von llama.cpp bringen libcudart/libcublas nicht mit, sondern erwarten das
+# CUDA-Toolkit auf dem System. Mit nur dem NVIDIA-Treiber fehlen sie → offizielle NVIDIA-Pakete von PyPI
+# nach ~/bonsai/cuda-libs laden (kein root, jede Distribution) und per LD_LIBRARY_PATH einbinden.
+
+def missing_libs(binary: Path, lib_path: str = "", run: Runner = subprocess.run) -> list[str]:
+    """Bibliotheken, die der Loader für `binary` nicht findet (leer = alles da oder ldd fehlt)."""
+    env = dict(os.environ)
+    if lib_path:
+        env["LD_LIBRARY_PATH"] = lib_path + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
+    try:
+        result = run(["ldd", str(binary)], capture_output=True, text=True, env=env)
+    except OSError:
+        return []
+    return sorted(set(_NOT_FOUND.findall(result.stdout or "")))
+
+
+def driver_cuda_version(run: Runner = subprocess.run) -> tuple[int, int] | None:
+    """Höchste CUDA-Version, die der installierte Treiber kann (nvidia-smi: 'CUDA Version: 12.8')."""
+    try:
+        text = run(["nvidia-smi"], capture_output=True, text=True).stdout or ""
+    except OSError:
+        return None
+    m = re.search(r"CUDA Version:\s*(\d+)\.(\d+)", text)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def cuda_packages(missing: list[str], driver: tuple[int, int] | None = None) -> list[str]:
+    """PyPI-Pakete passend zur CUDA-Hauptversion der fehlenden Bibliotheken (libcudart.so.12 → cu12) –
+    nicht neuer als der Treiber kann, sonst meldet CUDA „driver version is insufficient“."""
+    majors = {m.group(1) for name in missing if (m := re.match(r"libcu\w*\.so\.(\d+)", name))}
+    if majors == {"12"}:
+        pin = f"<12.{driver[1] + 1}" if driver and driver[0] == 12 else ""
+        return [f"nvidia-cuda-runtime-cu12{pin}", f"nvidia-cublas-cu12{pin}"]
+    if majors == {"13"}:
+        pin = f">=13,<13.{driver[1] + 1}" if driver and driver[0] == 13 else "==13.*"
+        return [f"nvidia-cuda-runtime{pin}", f"nvidia-cublas{pin}"]
+    return []
+
+
+def lib_dirs(root: Path) -> str:
+    """Alle Ordner unter `root`, die Bibliotheken enthalten – als LD_LIBRARY_PATH-Wert."""
+    if not root.is_dir():
+        return ""
+    return ":".join(sorted({str(f.parent) for f in root.rglob("lib*.so*") if f.is_file()}))
+
+
+def ensure_cuda_libs(directory: Path | None = None, run: Runner = subprocess.run, out=print) -> str | None:
+    """Leerer Text = nichts nötig (kein CUDA-Build oder System-CUDA da), Pfad = LD_LIBRARY_PATH, None = Fehler."""
+    d = directory or bonsai_dir()
+    binary = d / CUDA_SERVER
+    if not binary.exists():
+        return ""
+    missing = missing_libs(binary, run=run)
+    if not missing:
+        return ""
+    target = d / CUDA_LIBS
+    path = lib_dirs(target)
+    if path and not missing_libs(binary, path, run=run):
+        return path  # schon früher geladen
+    packages = cuda_packages(missing, driver_cuda_version(run))
+    if not packages:
+        out(T(f"✘ llama-server findet diese Bibliotheken nicht: {', '.join(missing)}",
+              f"✘ llama-server cannot find these libraries: {', '.join(missing)}"))
+        return None
+    out(T(f"Lade die CUDA-Laufzeit für llama-server ({', '.join(missing)} fehlen; ~0,8 GB, ohne root) …",
+          f"Downloading the CUDA runtime for llama-server ({', '.join(missing)} missing; ~0.8 GB, no root) …"))
+    uv = shutil.which("uv")
+    cmd = ([uv, "pip", "install", "--python", sys.executable] if uv else [sys.executable, "-m", "pip", "install"])
+    run([*cmd, "--upgrade", "--target", str(target), *packages])
+    path = lib_dirs(target)
+    still = missing_libs(binary, path, run=run) if path else missing
+    if still:
+        out(T(f"✘ Weiterhin fehlend: {', '.join(still)}. Alternativ das CUDA-Toolkit der Distribution installieren "
+              f"oder in {d} scripts/build_cuda_linux.sh ausführen.",
+              f"✘ Still missing: {', '.join(still)}. Alternatively install your distribution's CUDA toolkit "
+              f"or run scripts/build_cuda_linux.sh in {d}."))
+        return None
+    out(T("✔ CUDA-Laufzeit eingerichtet.", "✔ CUDA runtime set up."))
+    return path
+
+
 def install(state_path: Path, gpu: dict | None = None, activate: bool = True, directory: Path | None = None,
             run: Runner = subprocess.run, out=print) -> str | None:
-    from .models import detect_gpu, register_profile
+    from .models import added_profiles, detect_gpu, register_profile
     d = directory or bonsai_dir()
     if not setup(d, run=run, out=out):
         return None
-    profile = make_profile(gpu or detect_gpu(), d)
+    lib_path = ensure_cuda_libs(d, run=run, out=out)
+    if lib_path is None:
+        return None
+    old_key = added_profiles(state_path).get(PROFILE_NAME, {}).get("api_key")  # erneutes add = Reparatur
+    profile = make_profile(gpu or detect_gpu(), d, api_key=old_key if isinstance(old_key, str) and old_key else None,
+                           lib_path=lib_path)
     return register_profile(state_path, PROFILE_NAME, profile, activate=activate)

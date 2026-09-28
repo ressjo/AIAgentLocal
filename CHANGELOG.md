@@ -47,5 +47,6 @@ First public release.
   pre-selected from detection, ROCm override for RX 6600/6700/7600) and the model from a VRAM-aware preset list.
 - Add models later with `jarvis model add` or **+ ADD MODEL** in the web UI (download progress, fit marks).
 - **Bonsai 2 27B** is set up automatically when chosen in the installer or with `jarvis model add bonsai`
-  (Bonsai-demo checkout, llama.cpp binaries, model, GPU-specific server profile).
+  (Bonsai-demo checkout, llama.cpp binaries, model, GPU-specific server profile). On NVIDIA the CUDA runtime
+  libraries are fetched automatically when the system has none.
 - `jarvis doctor`, `jarvis update`.
