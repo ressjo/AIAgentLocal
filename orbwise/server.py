@@ -19,15 +19,16 @@ from fastapi.staticfiles import StaticFiles
 
 from . import askpass, metrics, prompts
 from .agent import Agent
-from .config import Config, env
+from .config import BRIEFING_SECTIONS, BriefingConfig, Config, env
 from .lang import set_lang
 from .llm import FakeLLM, LLMError
 from .llm_router import LLMRouter
 from .memory import Memory
 from .memory.files import valid_day
 from .reminders import ReminderStore
-from .tools import proc
+from .tools import briefing, proc
 from .tools.calendar_tools import calendar_status
+from .tools.registry import ToolContext
 from .tools.trilium import trilium_status
 from .voice import catalog
 from .voice.listen import AudioSession, WakeWordFactory, WhisperSTT
@@ -537,6 +538,35 @@ def create_app(cfg: Config) -> FastAPI:
             await chat_switched()
         await hub.broadcast({"type": "chats_changed"})
         return {"ok": True, "days": days}
+
+    @app.get("/api/briefing")
+    async def briefing_get():
+        s, why = briefing.settings(cfg), briefing.availability(cfg)
+        en = cfg.language == "en"
+        return {"settings": s.model_dump(), "customized": s != cfg.briefing,
+                "sections": [{"id": k, "label": briefing.LABELS[k][1 if en else 0], "note": why[k]}
+                             for k in BRIEFING_SECTIONS]}
+
+    @app.put("/api/briefing")
+    async def briefing_put(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "JSON-Objekt erwartet")
+        allowed = set(BriefingConfig.model_fields)
+        try:
+            s = briefing.save_settings(cfg, {k: v for k, v in body.items() if k in allowed})
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"ok": True, "settings": s.model_dump()}
+
+    @app.delete("/api/briefing")
+    async def briefing_reset():
+        return {"ok": True, "settings": briefing.save_settings(cfg, None).model_dump()}
+
+    @app.post("/api/briefing/preview")
+    async def briefing_preview():
+        ctx = ToolContext(cfg=cfg, memory=memory, services=agent.services)
+        return {"text": await briefing.build_briefing(ctx)}
 
     @app.get("/api/voices")
     async def voices():

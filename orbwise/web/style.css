@@ -220,12 +220,12 @@ button { font-family: inherit; cursor: pointer; }
 /* ---------- Seitenpanel ---------- */
 .tabs { display: flex; border-bottom: 1px solid var(--line); padding-left: 8px; }
 .tab {
-  flex: 1; min-width: 0; background: none; border: none; color: var(--muted); padding: 12px 4px 10px; font-size: 11.5px;
-  letter-spacing: .16em; white-space: nowrap;
+  flex: 1 1 auto; min-width: 0; background: none; border: none; color: var(--muted); padding: 12px 3px 10px;
+  font-size: 11px; letter-spacing: .08em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   border-bottom: 2px solid transparent;
 }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-.tab-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px; }
+.tab-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px 14px; }
 .activity { display: flex; flex-direction: column; gap: 10px; }
 .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 30px 0; }
 .act {
@@ -260,7 +260,7 @@ button { font-family: inherit; cursor: pointer; }
                background: rgba(0,0,0,.35); border: 1px solid var(--line); outline: none; }
 .chat-search:focus { border-color: var(--accent); }
 .chat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.chat-item { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: start; padding: 7px 8px;
+.chat-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 7px 8px;
              border: 1px solid var(--line); background: rgba(4,16,28,.5); cursor: pointer; }
 .chat-item:hover { border-color: rgba(63,208,255,.5); }
 .chat-item.active { border-color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
@@ -291,6 +291,21 @@ button { font-family: inherit; cursor: pointer; }
 #fx-amount { flex: 1; accent-color: var(--accent); }
 .fx-value { font-family: var(--mono); font-size: 12px; color: var(--muted); width: 42px; text-align: right; }
 .fx-hint { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+.brief-list { list-style: none; margin: 0; padding: 0; }
+.brief-item { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.brief-item label { flex: 1; display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+.brief-item input { accent-color: var(--accent); }
+.brief-item .brief-note { color: var(--muted); font-size: 11.5px; }
+.brief-item button { height: 22px; min-width: 24px; padding: 0 6px; font-size: 11px; }
+.brief-item.off label { color: var(--muted); }
+.brief-fields label { display: block; color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+.brief-fields input, .brief-fields textarea { display: block; width: 100%; box-sizing: border-box; margin-top: 4px;
+  background: rgba(0,0,0,.25); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px;
+  font: inherit; font-size: 13px; resize: vertical; }
+.brief-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.brief-status { color: var(--muted); font-size: 12px; }
+.brief-out { white-space: pre-wrap; font-family: var(--mono); font-size: 12px; color: var(--text);
+  background: rgba(0,0,0,.25); border: 1px solid var(--line); border-radius: 4px; padding: 10px; margin-top: 10px; }
 .voices { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .voice { border: 1px solid var(--line); background: rgba(2,10,18,.5); padding: 8px 10px; border-left: 2px solid var(--muted); }
 .voice.current { border-left-color: var(--accent); box-shadow: inset 0 0 14px rgba(63,208,255,.08); }

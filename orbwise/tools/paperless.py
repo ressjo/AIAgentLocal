@@ -535,6 +535,34 @@ async def paperless_apply_metadata(
     return await _guard(run())
 
 
+async def inbox_summary(cfg, tag: str = "", limit: int = 5) -> str | None:
+    """Für das Briefing: Dokumente im Posteingang (Tag aus der Config, sonst Paperless' Posteingangs-Tags)."""
+    if not cfg.paperless.enabled:
+        return None
+    try:
+        async with PaperlessClient(cfg) as pc:
+            params: dict[str, Any] = {"page_size": limit, "ordering": "-added", "truncate_content": "true"}
+            if tag.strip():
+                params["tags__name__iexact"] = tag.strip()
+            else:
+                inbox = await pc.json("/tags/", is_inbox_tag="true", page_size=100) or {}
+                ids = [str(t["id"]) for t in inbox.get("results", []) if t.get("is_inbox_tag", True)]
+                if not ids:
+                    return ("Paperless-Posteingang: kein Posteingangs-Tag festgelegt (in Paperless beim Tag "
+                            "„Posteingangs-Tag“ anhaken oder briefing.inbox_tag setzen).")
+                params["tags__id__in"] = ",".join(ids)
+            data = await pc.json("/documents/", **params) or {}
+    except PaperlessError as e:
+        return f"Paperless-Posteingang: {e}"
+    count, docs = data.get("count", 0), data.get("results", [])
+    if not count:
+        return "Paperless-Posteingang: leer."
+    titles = ", ".join(f"„{d.get('title') or '?'}“ [{d['id']}]" for d in docs)
+    more = f" und {count - len(docs)} weitere" if count > len(docs) else ""
+    return (f"Paperless-Posteingang: {count} Dokument{'e' if count != 1 else ''} – {titles}{more}. "
+            "(Auf Wunsch einordnen: paperless_suggest_metadata)")
+
+
 async def paperless_status(cfg) -> dict:
     """Für orbwise doctor."""
     if not cfg.paperless.enabled:

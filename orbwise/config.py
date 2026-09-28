@@ -258,6 +258,33 @@ class WeatherConfig(BaseModel):
     location: str = ""
 
 
+BRIEFING_SECTIONS = ("weather", "calendar", "reminders", "paperless_inbox", "news", "updates", "storage")
+
+
+class BriefingConfig(BaseModel):
+    # Punkte in dieser Reihenfolge (Datum/Uhrzeit steht immer am Anfang); nicht eingerichtete Dienste entfallen
+    sections: list[str] = Field(default_factory=lambda: list(BRIEFING_SECTIONS))
+    # Termine und Erinnerungen/Fristen der nächsten Tage (0 = nur heute; 1 = heute + morgen …)
+    lookahead_days: int = 2
+    # Schlagzeilen zu diesen Themen (leer = keine Nachrichten), je Thema so viele
+    news_topics: list[str] = Field(default_factory=list)
+    news_count: int = 3
+    # Paperless: Tag des Posteingangs – leer = die in Paperless als Posteingang markierten Tags
+    inbox_tag: str = ""
+    # eigener Wunsch an das Modell, z. B. "Halte dich kurz und fang mit den Terminen an."
+    instructions: str = ""
+
+    @field_validator("sections")
+    @classmethod
+    def _sections(cls, v: list[str]) -> list[str]:
+        return list(dict.fromkeys(s for s in v if s in BRIEFING_SECTIONS))
+
+    @field_validator("lookahead_days", "news_count")
+    @classmethod
+    def _small(cls, v: int) -> int:
+        return max(0, min(int(v), 14))
+
+
 class Config(BaseModel):
     # Sprache von Orbwise und der Oberfläche: "de" (Deutsch) oder "en" (English)
     language: str = "de"
@@ -277,6 +304,7 @@ class Config(BaseModel):
     homeassistant: HomeAssistantConfig = Field(default_factory=HomeAssistantConfig)
     weather: WeatherConfig = Field(default_factory=WeatherConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
+    briefing: BriefingConfig = Field(default_factory=BriefingConfig)
     # Zusätzliche Websites für open_website: Name → URL; "{q}" wird durch die Suche ersetzt
     websites: dict[str, str] = Field(default_factory=dict)
 

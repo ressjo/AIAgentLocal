@@ -36,7 +36,8 @@ First public release.
   disk usage and clean-up, power (shutdown, reboot, suspend, lock).
 - Files & apps: find and open files (also on a NAS), read/write text files, launch applications, websites.
 - Web search (Brave Search API, your own SearXNG or ddgs) and page fetching, weather (Open-Meteo), reminders
-  and timers, morning briefing.
+  and timers, a morning briefing with selectable items and order (weather, events and deadlines of the next
+  days, Paperless inbox, news, updates, storage) – configurable in the config or the dashboard's BRIEFING tab.
 - Integrations: **Home Assistant**, **Paperless-ngx** (search, ask, open documents; suggest and apply
   correspondent, type, tags, title and date – also for many documents at once, after one confirmation),
   **Obsidian** vaults, **Trilium** notes and a **CalDAV/iCloud** calendar.

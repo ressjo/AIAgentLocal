@@ -98,6 +98,7 @@
         <button class="tab" data-tab="chats">VERLAUF</button>
         <button class="tab" data-tab="memory">GEDÄCHTNIS</button>
         <button class="tab" data-tab="voice">STIMME</button>
+        <button class="tab" data-tab="briefing">BRIEFING</button>
       </div>
       <div class="tab-body" id="tab-activity">
         <div class="activity" id="activity">
@@ -127,6 +128,30 @@
           <div class="mem-title">DEUTSCHE STIMMEN</div>
           <ul class="voices" id="voices"></ul>
         </div>
+      </div>
+      <div class="tab-body hidden" id="tab-briefing">
+        <div class="mem-section">
+          <div class="mem-title">PUNKTE &amp; REIHENFOLGE</div>
+          <ul class="brief-list" id="brief-list"></ul>
+        </div>
+        <div class="mem-section brief-fields">
+          <label>Vorausschau für Termine und Erinnerungen (Tage)
+            <input type="number" id="brief-days" min="0" max="14"></label>
+          <label>Nachrichten-Themen (mit Komma getrennt)
+            <input type="text" id="brief-topics" placeholder="z. B. Linux, Freiburg, KI"></label>
+          <label>Schlagzeilen je Thema
+            <input type="number" id="brief-count" min="1" max="10"></label>
+          <label>Paperless-Posteingangs-Tag
+            <input type="text" id="brief-inbox" placeholder="leer = Posteingangs-Tags aus Paperless"></label>
+          <label>Eigener Wunsch fürs Briefing
+            <textarea id="brief-instr" rows="2" placeholder="z. B. Halte dich kurz und fang mit den Terminen an."></textarea></label>
+        </div>
+        <div class="brief-actions">
+          <button class="ghost small" id="brief-preview">VORSCHAU</button>
+          <button class="ghost small" id="brief-reset" title="Einstellungen aus der Config-Datei verwenden">ZURÜCKSETZEN</button>
+          <span class="brief-status" id="brief-status"></span>
+        </div>
+        <pre class="brief-out hidden" id="brief-out"></pre>
       </div>
       <div class="tab-body hidden" id="tab-memory">
         <div class="mem-section">

@@ -39,7 +39,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Files** | Find files by name (plocate/fd) or content (ripgrep), list folders, read/write text files, open files and URLs – also on a mounted **NAS** |
 | **Apps & web** | Start installed applications, open websites (with your own shortcuts), web search (official **Brave Search API**, your own SearXNG, or scraping via ddgs), read web pages |
 | **Shell** | Any bash command – read-only ones run directly, changing ones only after confirmation, destructive ones never |
-| **Everyday** | Weather (Open-Meteo), reminders and timers, morning briefing |
+| **Everyday** | Weather (Open-Meteo), reminders and timers, a **morning briefing** with the items you choose (incl. news and your Paperless inbox) |
 | **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation) |
 | **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
@@ -355,6 +355,25 @@ weather:
 
 Reminders and timers are announced by voice, with a banner and chime in the UI and a desktop notification (even
 when the UI is closed); missed reminders are reported at the next start.
+
+### Morning briefing
+
+"Good morning", "briefing" or "what's on today?" gives you a short overview. Choose its items and their order in
+the **BRIEFING** tab of the dashboard (tick, ▲▼, **PREVIEW**) or in the config – dashboard changes take precedence
+until you click **RESET**:
+
+```yaml
+briefing:
+  sections: [weather, calendar, reminders, paperless_inbox, news, updates, storage]   # order = order in the briefing
+  lookahead_days: 2          # events and reminders/deadlines for today + the next 2 days (0 = today only)
+  news_topics: [Linux, Berlin]   # headlines of the last 24 h per topic (Brave API, otherwise ddgs)
+  news_count: 3
+  inbox_tag: ""              # Paperless inbox tag – empty = the tags marked as inbox tags in Paperless
+  instructions: "Keep it short and start with my appointments."
+```
+
+Items whose service isn't set up (no calendar, no Paperless, no news topics) are skipped automatically. System
+updates are checked with `checkupdates` (Arch) or `apt list --upgradable` (Debian/Ubuntu).
 
 ## Telemetry
 

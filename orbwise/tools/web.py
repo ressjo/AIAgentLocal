@@ -111,21 +111,49 @@ BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
 TAG_RE = re.compile(r"<[^>]+>")
 
 
-async def _brave(key: str, query: str, n: int, language: str = "de") -> list[dict]:
+BRAVE_NEWS_URL = "https://api.search.brave.com/res/v1/news/search"
+
+
+async def _brave_get(key: str, url: str, query: str, n: int, language: str, **extra) -> dict:
     """Offizielle Brave Search API – kein Auslesen von Suchseiten, daher kein Bot-Blockieren."""
-    params: dict[str, str | int] = {"q": query, "count": n}
+    params: dict[str, str | int] = {"q": query, "count": n, **extra}
     params.update({"country": "DE", "search_lang": "de"} if language == "de" else {"search_lang": "en"})
     headers = {"X-Subscription-Token": key, "Accept": "application/json"}
     async with httpx.AsyncClient(timeout=20, transport=TRANSPORT, headers=headers) as client:
-        r = await client.get(BRAVE_URL, params=params)
+        r = await client.get(url, params=params)
     if r.status_code in (401, 403) or (r.status_code == 422 and "TOKEN" in r.text.upper()):
         raise RuntimeError(f"Brave-API-Schlüssel ungültig oder ohne Berechtigung (HTTP {r.status_code})")
     if r.status_code == 429:
         raise RuntimeError("Brave-API: Kontingent oder Rate-Limit erreicht (HTTP 429) – später erneut versuchen")
     r.raise_for_status()
+    return r.json()
+
+
+async def _brave(key: str, query: str, n: int, language: str = "de") -> list[dict]:
+    data = await _brave_get(key, BRAVE_URL, query, n, language)
     return [{"title": TAG_RE.sub("", x.get("title", "")), "href": x.get("url", ""),
              "body": TAG_RE.sub("", x.get("description", ""))}
-            for x in (r.json().get("web") or {}).get("results", [])[:n]]
+            for x in (data.get("web") or {}).get("results", [])[:n]]
+
+
+def _ddgs_news(query: str, n: int) -> list[dict]:
+    from ddgs import DDGS
+    return DDGS().news(query, region="de-de", timelimit="d", max_results=n) or []
+
+
+async def news_headlines(cfg, topic: str, n: int) -> list[dict]:
+    """Aktuelle Schlagzeilen (letzte 24 h) zu einem Thema: [{title, source, url}] – Brave-API, sonst ddgs."""
+    tools = cfg.tools
+    if tools.brave_key:
+        try:
+            data = await _brave_get(tools.brave_key, BRAVE_NEWS_URL, topic, n, cfg.language, freshness="pd")
+            return [{"title": TAG_RE.sub("", x.get("title", "")), "url": x.get("url", ""),
+                     "source": (x.get("meta_url") or {}).get("hostname", "")} for x in data.get("results", [])[:n]]
+        except Exception:
+            if not tools.search_fallback:
+                raise
+    items = await asyncio.to_thread(_ddgs_news, topic, n)
+    return [{"title": x.get("title", ""), "url": x.get("url", ""), "source": x.get("source", "")} for x in items[:n]]
 
 
 async def search_status(cfg) -> dict:

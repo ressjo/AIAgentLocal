@@ -96,6 +96,14 @@ homeassistant:             # Home Assistant: lights, switches, heating, covers, 
 weather:
   location: ""             # default place for weather and the morning briefing, e.g. "Berlin"
 
+briefing:                  # "good morning" – also adjustable in the dashboard (BRIEFING tab)
+  sections: [weather, calendar, reminders, paperless_inbox, news, updates, storage]   # order as listed
+  lookahead_days: 2        # events + reminders/deadlines for today and the next days (0 = today only)
+  news_topics: []          # e.g. [Linux, Berlin] – headlines of the last 24 h
+  news_count: 3            # headlines per topic
+  inbox_tag: ""            # Paperless inbox tag – empty = the inbox tags defined in Paperless
+  instructions: ""         # e.g. "Keep it short and start with my appointments."
+
 websites: {}               # your own shortcuts for "open …", e.g.:
 #  nas: http://192.168.1.10:5000
 #  proxmox: https://pve.local:8006

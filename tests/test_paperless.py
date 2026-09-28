@@ -209,7 +209,7 @@ def test_suggest_shows_state_paperless_hints_and_known_names(cfg, fake):
     assert "[8] Stromrechnung 2026" in out
     assert "Paperless schlägt vor – Korrespondent: Stadtwerke · Typ: Rechnung · Tags: Steuer · Daten im Text: 2026-09-01" in out
     assert "84,20 EUR" in out and "[99] ✘" in out
-    assert "Vorhandene Korrespondenten (2): Stadtwerke, Telekom" in out and "Vorhandene Tags (2): Steuer, Vertrag" in out
+    assert "Vorhandene Korrespondenten (2): Stadtwerke, Telekom" in out and "Vorhandene Tags (3): Posteingang, Steuer, Vertrag" in out
     assert "paperless_apply_metadata" in out
     cfg.paperless.max_chars = 1000  # Budget wird aufgeteilt
     long = run(pl.paperless_suggest_metadata(ctx(cfg), "7"))

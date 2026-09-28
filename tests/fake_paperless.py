@@ -15,7 +15,8 @@ VERTRAG = ("Mobilfunkvertrag Telekom\n\nVertragsbeginn: 01.03.2025\n\n" + "Allge
 class FakePaperless:
     def __init__(self):
         self.correspondents = [{"id": 1, "name": "Telekom"}, {"id": 2, "name": "Stadtwerke"}]
-        self.tags = [{"id": 10, "name": "Vertrag"}, {"id": 11, "name": "Steuer"}]
+        self.tags = [{"id": 10, "name": "Vertrag"}, {"id": 11, "name": "Steuer"},
+                     {"id": 12, "name": "Posteingang", "is_inbox_tag": True}]
         self.types = [{"id": 20, "name": "Vertrag"}, {"id": 21, "name": "Rechnung"}]
         self.docs = [
             {"id": 7, "title": "Handyvertrag Telekom", "created": "2025-03-01", "correspondent": 1,
@@ -48,7 +49,10 @@ class FakePaperless:
             lists[path].append(item)
             return httpx.Response(201, json=item)
         if path in lists:
-            return httpx.Response(200, json={"count": len(lists[path]), "results": lists[path]})
+            items = lists[path]
+            if q.get("is_inbox_tag") == "true":
+                items = [x for x in items if x.get("is_inbox_tag")]
+            return httpx.Response(200, json={"count": len(items), "results": items})
         m = re.fullmatch(r"/documents/(\d+)/suggestions/", path)
         if m:
             if not self.suggestions:
@@ -75,6 +79,12 @@ class FakePaperless:
                 names = {c["id"] for c in self.correspondents
                          if q["correspondent__name__icontains"].lower() in c["name"].lower()}
                 docs = [d for d in docs if d["correspondent"] in names]
+            if q.get("tags__id__in"):
+                wanted = {int(x) for x in q["tags__id__in"].split(",")}
+                docs = [d for d in docs if wanted & set(d["tags"])]
+            if q.get("tags__name__iexact"):
+                ids = {t["id"] for t in self.tags if t["name"].lower() == q["tags__name__iexact"].lower()}
+                docs = [d for d in docs if ids & set(d["tags"])]
             if q.get("created__gte"):
                 docs = [d for d in docs if d["created"] >= q["created__gte"]]
             if q.get("ordering") == "-created":

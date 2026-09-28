@@ -201,6 +201,7 @@ def test_reminder_api(cfg, app_client):
 
 def test_briefing_combines_sources(cfg, fake_weather, monkeypatch):
     cfg.weather.location = "Freiburg"
+    cfg.tools.package_manager = "pacman"
     c = ctx(cfg)
     reminder_tools.store_for(c).add("Paket abholen", datetime.now().replace(hour=23, minute=59))
 
@@ -219,7 +220,7 @@ def test_briefing_combines_sources(cfg, fake_weather, monkeypatch):
 def test_briefing_survives_missing_sources(cfg, monkeypatch):
     monkeypatch.setattr(briefing.shutil, "which", lambda n: None)
     out = run(briefing.daily_briefing(ctx(cfg)))
-    assert "kein Standardort" in out and "keine Erinnerungen" in out
+    assert "kein Standardort" in out and "Keine Erinnerungen" in out
 
 
 def test_searxng_403_falls_back_to_duckduckgo(cfg, monkeypatch):

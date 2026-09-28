@@ -833,6 +833,8 @@
       if (tab.dataset.tab === "chats") loadChats();
       $("tab-memory").classList.toggle("hidden", tab.dataset.tab !== "memory");
       $("tab-voice").classList.toggle("hidden", tab.dataset.tab !== "voice");
+      $("tab-briefing").classList.toggle("hidden", tab.dataset.tab !== "briefing");
+      if (tab.dataset.tab === "briefing") loadBriefing();
       if (tab.dataset.tab === "memory") loadMemory();
       if (tab.dataset.tab === "voice") loadVoices();
     };
@@ -1169,6 +1171,91 @@
   }
 
   // ---------------------------------------------------------------- REST
+  // ---------------------------------------------------------------- Briefing-Einstellungen
+  const B = { sections: [], settings: null, timer: null };
+
+  function renderBriefing() {
+    const s = B.settings;
+    const order = [...s.sections, ...B.sections.map((x) => x.id).filter((id) => !s.sections.includes(id))];
+    const list = $("brief-list");
+    list.innerHTML = "";
+    order.forEach((id, i) => {
+      const info = B.sections.find((x) => x.id === id);
+      const on = s.sections.includes(id);
+      const li = document.createElement("li");
+      li.className = "brief-item" + (on ? "" : " off");
+      li.innerHTML = `<label><input type="checkbox" ${on ? "checked" : ""}> ${escapeHtml(info.label)}`
+        + (info.note ? ` <span class="brief-note">– ${escapeHtml(info.note)}</span>` : "") + `</label>`
+        + `<button class="ghost" data-move="-1" title="${L("nach oben", "move up")}" ${i === 0 ? "disabled" : ""}>▲</button>`
+        + `<button class="ghost" data-move="1" title="${L("nach unten", "move down")}" ${i === order.length - 1 ? "disabled" : ""}>▼</button>`;
+      li.querySelector("input").onchange = (e) => {
+        const cur = order.filter((x) => x === id ? e.target.checked : s.sections.includes(x));
+        saveBriefing({ sections: cur });
+      };
+      li.querySelectorAll("button").forEach((b) => b.onclick = () => {
+        const j = i + Number(b.dataset.move);
+        [order[i], order[j]] = [order[j], order[i]];
+        saveBriefing({ sections: order.filter((x) => s.sections.includes(x)) });
+      });
+      list.appendChild(li);
+    });
+    $("brief-days").value = s.lookahead_days;
+    $("brief-topics").value = s.news_topics.join(", ");
+    $("brief-count").value = s.news_count;
+    $("brief-inbox").value = s.inbox_tag;
+    $("brief-instr").value = s.instructions;
+  }
+
+  async function loadBriefing() {
+    try {
+      const data = await getJSON("/api/briefing");
+      B.sections = data.sections;
+      B.settings = data.settings;
+      $("brief-status").textContent = data.customized ? L("im Dashboard angepasst", "customised in the dashboard")
+                                                     : L("aus der Config", "from the config file");
+      renderBriefing();
+    } catch { $("brief-status").textContent = L("Laden fehlgeschlagen", "Loading failed"); }
+  }
+
+  async function saveBriefing(patch) {
+    B.settings = { ...B.settings, ...patch };
+    renderBriefing();
+    try {
+      const r = await fetch("/api/briefing", { method: "PUT", headers: { "Content-Type": "application/json" },
+                                               body: JSON.stringify(B.settings) });
+      if (!r.ok) throw new Error(r.status);
+      B.settings = (await r.json()).settings;
+      $("brief-status").textContent = L("✔ gespeichert", "✔ saved");
+    } catch { $("brief-status").textContent = L("Speichern fehlgeschlagen", "Saving failed"); }
+  }
+
+  function briefingFieldsChanged() {
+    clearTimeout(B.timer);
+    B.timer = setTimeout(() => saveBriefing({
+      lookahead_days: Number($("brief-days").value) || 0,
+      news_topics: $("brief-topics").value.split(",").map((t) => t.trim()).filter(Boolean),
+      news_count: Number($("brief-count").value) || 3,
+      inbox_tag: $("brief-inbox").value.trim(),
+      instructions: $("brief-instr").value.trim(),
+    }), 600);
+  }
+  ["brief-days", "brief-topics", "brief-count", "brief-inbox", "brief-instr"].forEach((id) => {
+    $(id).addEventListener("input", briefingFieldsChanged);
+  });
+  $("brief-reset").onclick = async () => {
+    await fetch("/api/briefing", { method: "DELETE" });
+    await loadBriefing();
+  };
+  $("brief-preview").onclick = async () => {
+    const out = $("brief-out");
+    out.classList.remove("hidden");
+    out.textContent = L("Briefing wird zusammengestellt …", "Putting the briefing together …");
+    try {
+      const r = await fetch("/api/briefing/preview", { method: "POST" });
+      out.textContent = (await r.json()).text;
+    } catch { out.textContent = L("Vorschau fehlgeschlagen", "Preview failed"); }
+  };
+
   async function getJSON(url) {
     const r = await fetch(url);
     if (!r.ok) throw new Error(r.status);
