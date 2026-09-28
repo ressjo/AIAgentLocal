@@ -64,7 +64,13 @@ button { font-family: inherit; cursor: pointer; }
 .model-menu {
   position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 300px;
   background: #04111e; border: 1px solid var(--accent); box-shadow: 0 0 30px rgba(63,208,255,.25); padding: 6px;
+  max-height: 72vh; overflow-y: auto; width: min(440px, calc(100vw - 24px));
 }
+.model-item.add { color: var(--accent); border-top: 1px solid var(--line); margin-top: 4px; }
+.model-item .fit-ok { color: var(--accent-2); } .model-item .fit-tight { color: var(--warn); }
+.model-item .fit-big { color: var(--danger); }
+.model-item .mi-note { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.mm-hint { font-size: 11px; color: var(--muted); padding: 4px 8px 6px; line-height: 1.45; }
 .model-menu .mm-title { font-size: 10px; letter-spacing: .3em; color: var(--muted); padding: 6px 8px 4px; }
 .model-item {
   display: block; width: 100%; text-align: left; background: none; border: 1px solid transparent; color: var(--text);

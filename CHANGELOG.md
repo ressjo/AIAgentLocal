@@ -43,4 +43,7 @@ First public release.
   memory browser, voice settings – optimised for smooth rendering in Firefox.
 
 ### Installation
-- One-line installer for Arch-based and Debian/Ubuntu-based systems, `jarvis doctor`, `jarvis update`.
+- Installer for Arch-based and Debian/Ubuntu-based systems that asks for the language, the GPU (NVIDIA/AMD/CPU,
+  pre-selected from detection, ROCm override for RX 6600/6700/7600) and the model from a VRAM-aware preset list.
+- Add models later with `jarvis model add` or **+ ADD MODEL** in the web UI (download progress, fit marks).
+- `jarvis doctor`, `jarvis update`.

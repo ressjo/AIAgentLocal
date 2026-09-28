@@ -59,7 +59,13 @@ git clone https://github.com/ressjo/AIAgentLocal.git ~/jarvis
 ~/jarvis/scripts/install.sh --lang en      # --lang de for German
 ```
 
-Options: `--model qwen3:8b` (choose the model), `--gpu auto|cuda|rocm|vulkan|cpu`, `--no-autostart`.
+The installer asks three questions – **language**, **graphics card** (NVIDIA / AMD / none, the detected one is
+pre-selected) and the **language model** from a list of presets that shows what fits your video memory
+(✔ fits · ~ partly in RAM · ✘ too big) with a recommendation. On AMD cards that ROCm doesn't officially support
+(RX 6600/6650/6700, RX 7600) it offers to set the needed `HSA_OVERRIDE_GFX_VERSION` for Ollama.
+
+Options: `--model qwen3:8b` (skip the model question), `--gpu auto|cuda|rocm|vulkan|cpu`, `--lang de|en`,
+`--yes` (no questions, use the detected/recommended defaults), `--no-autostart`.
 
 > Please install with **git**, not as a ZIP – then updates are a single command (`jarvis update`).
 > If you start `install.sh` from a ZIP folder it offers to move to `~/jarvis`.
@@ -68,7 +74,7 @@ The installer
 
 1. installs the system packages (Ollama with the right GPU backend, `uv`, `fd`, `ripgrep`, `plocate`, `xdg-utils`, …),
 2. sets up the Python environment (`uv sync --extra voice`),
-3. picks a model for your VRAM (≥ 15 GB → `qwen3:14b`, ≥ 7 GB → `qwen3:8b`, otherwise `qwen3:4b`) and pulls it together with `bge-m3` (embeddings),
+3. pulls the chosen model (recommendation: ≥ 22 GB → `qwen3:30b`, ≥ 12 GB → `qwen3:14b`, ≥ 6 GB → `qwen3:8b`, otherwise `qwen3:4b`) together with `bge-m3` (embeddings) – if a download fails you can pick another model,
 4. downloads a Piper voice (English: *Alan*, German: *Thorsten*), the wake word model and Whisper,
 5. creates `~/.config/jarvis/config.yaml`, a **JARVIS** entry in the application menu and an autostart entry.
 
@@ -144,6 +150,15 @@ everything from the other chats.
   are rebuilt from the rest. Learned facts are kept (delete them in the MEMORY tab or say "forget …").
 
 ## Models & profiles
+
+**Adding models after installation:** click the **LLM pill** at the top → **+ ADD MODEL** and pick one of the
+presets (with the same fit marks and download progress), or run
+
+```bash
+jarvis model add              # interactive list of presets for your GPU
+jarvis model add qwen3:14b    # or any model from ollama.com/library
+jarvis model remove qwen3-14b # remove it from the list (optionally also delete the files)
+```
 
 Jarvis can know several language models and switch between them – click the **LLM pill** at the top or run
 `jarvis model <name>` (`jarvis model` lists all profiles). The choice is remembered.
@@ -359,6 +374,8 @@ All options with explanations: [`jarvis/config.example.yaml`](jarvis/config.exam
 jarvis serve [--open] [-v]    # start the server
 jarvis doctor                 # check the installation
 jarvis model [name]           # list or switch model profiles
+jarvis model add [ollama-tag] # download another model (interactive presets without a tag)
+jarvis model remove <name>    # remove a downloaded model from the list
 jarvis update                 # update (git pull, dependencies, restart)
 jarvis version                # show the installed version
 jarvis reindex                # rebuild the search index from the Markdown files

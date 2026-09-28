@@ -128,8 +128,9 @@ class LLMRouter:
     def __init__(self, cfg: LLMConfig, state_path: Path | None = None,
                  transport: httpx.AsyncBaseTransport | None = None):
         self.cfg = cfg
-        self.profiles = cfg.resolved_profiles()
         self.state_path = state_path
+        self.profiles = cfg.resolved_profiles()
+        self.add_downloaded_models()
         self.transport = transport
         self.ollama = OllamaLLM(cfg, transport=transport)  # Embeddings + Entladen
         self.active = self._initial_profile()
@@ -139,6 +140,23 @@ class LLMRouter:
         self._lock = asyncio.Lock()
         self.detected_ctx: dict[str, int] = {}  # vom Server gemeldete Kontextgröße je Profil
         self._build_client()
+
+    def add_downloaded_models(self) -> list[str]:
+        """Per `jarvis model add` bzw. Oberfläche geladene Ollama-Modelle als Profile ergänzen."""
+        if not self.state_path:
+            return []
+        from .models import BY_TAG, added_models, slug
+        new = []
+        for tag in added_models(self.state_path):
+            name = slug(tag)
+            if name in self.profiles:
+                continue
+            label = BY_TAG[tag].label if tag in BY_TAG else tag
+            extra = self.cfg.model_copy(update={"profiles": {name: ProfileConfig(backend="ollama", model=tag,
+                                                                                  label=label)}})
+            self.profiles[name] = extra.resolved_profiles()[name]
+            new.append(name)
+        return new
 
     # ---------- Auswahl ----------
     def _initial_profile(self) -> str:

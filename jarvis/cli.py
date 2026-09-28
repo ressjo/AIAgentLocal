@@ -238,6 +238,8 @@ def cmd_model(args) -> None:
 
     cfg = load_config()
     state = cfg.memory.dir.parent / "state.json"
+    if args.name in ("add", "remove", "choose"):
+        return cmd_model_manage(args, cfg, state)
     router = LLMRouter(cfg.llm, state_path=state)
     base = f"http://127.0.0.1:{cfg.port}"
     headers = {"Host": f"localhost:{cfg.port}"}
@@ -246,8 +248,10 @@ def cmd_model(args) -> None:
             star = "▶" if info["active"] else " "
             extra = T(" · startet Server selbst", " · starts its own server") if info["managed"] else ""
             print(f"{star} {info['name']:<12} {info['backend']:<7} {info['model']}  ({info['base_url']}){extra}")
-        print(T("\nUmschalten: jarvis model <name>   ·   Profile in ~/.config/jarvis/config.yaml unter llm.profiles",
-                "\nSwitch: jarvis model <name>   ·   profiles live in ~/.config/jarvis/config.yaml under llm.profiles"))
+        print(T("\nUmschalten: jarvis model <name>   ·   neues Modell laden: jarvis model add   ·   entfernen: "
+                "jarvis model remove <name>\nEigene Profile (z. B. llama-server): ~/.config/jarvis/config.yaml → llm.profiles",
+                "\nSwitch: jarvis model <name>   ·   download a new model: jarvis model add   ·   remove: "
+                "jarvis model remove <name>\nCustom profiles (e.g. llama-server): ~/.config/jarvis/config.yaml → llm.profiles"))
         return
     if args.name not in router.profiles:
         print(T("Unbekanntes Profil", "Unknown profile") + f" '{args.name}'. " + T("Vorhanden: ", "Available: ")
@@ -267,6 +271,75 @@ def cmd_model(args) -> None:
                 f"Jarvis is not running – '{args.name}' will be used on the next start."))
 
 
+def cmd_model_manage(args, cfg, state: Path) -> None:
+    """jarvis model add [ollama-name] · jarvis model remove <name> · jarvis model choose (für den Installer)."""
+    import subprocess
+
+    import httpx
+
+    from . import models as mdl
+
+    base = f"http://127.0.0.1:{cfg.port}"
+    headers = {"Host": f"localhost:{cfg.port}"}
+    if args.name == "choose":
+        vram = args.vram if args.vram is not None else mdl.detect_gpu()["vram_gb"]
+        if not sys.stdin.isatty():
+            tag = mdl.recommend(vram)
+        else:
+            tag = mdl.choose_interactive(vram, mdl.installed_models(cfg.llm.base_url))
+        if args.out:
+            Path(args.out).write_text(tag or "", encoding="utf-8")
+        else:
+            print(tag)
+        return
+    if args.name == "remove":
+        if not args.tag:
+            print(T("Welches Modell? jarvis model remove <name>", "Which model? jarvis model remove <name>"))
+            sys.exit(1)
+        tag = mdl.unregister_model(state, args.tag)
+        if not tag:
+            print(T(f"'{args.tag}' ist kein per 'jarvis model add' geladenes Modell.",
+                    f"'{args.tag}' is not a model added with 'jarvis model add'."))
+            sys.exit(1)
+        print(T(f"✔ '{tag}' aus der Modellliste entfernt.", f"✔ Removed '{tag}' from the model list."))
+        if shutil.which("ollama") and sys.stdin.isatty() and \
+                input(T("Auch die Modelldatei löschen (ollama rm)? [j/N] ", "Also delete the model files (ollama rm)? [y/N] ")
+                      ).strip().lower() in ("j", "ja", "y", "yes"):
+            subprocess.run(["ollama", "rm", tag])
+        return
+    # add
+    gpu = mdl.detect_gpu()
+    tag = (args.tag or "").strip().lower() or mdl.choose_interactive(gpu["vram_gb"], mdl.installed_models(cfg.llm.base_url))
+    if not tag or not mdl.TAG_RE.match(tag):
+        print(T("Ungültiger Modellname.", "Invalid model name."))
+        sys.exit(1)
+    if not shutil.which("ollama"):
+        print(T("ollama ist nicht installiert – erst scripts/install.sh ausführen.",
+                "ollama is not installed – run scripts/install.sh first."))
+        sys.exit(1)
+    print(T(f"Lade {tag} … (das kann dauern)", f"Downloading {tag} … (this can take a while)"))
+    if subprocess.run(["ollama", "pull", tag]).returncode != 0:
+        print(T(f"✘ '{tag}' konnte nicht geladen werden – Name prüfen (ollama.com/library) oder anderes Modell wählen.",
+                f"✘ Could not download '{tag}' – check the name (ollama.com/library) or pick another model."))
+        sys.exit(1)
+    name = mdl.register_model(state, tag)
+    activate = not sys.stdin.isatty() or input(T(f"'{tag}' jetzt aktivieren? [J/n] ", f"Activate '{tag}' now? [Y/n] ")
+                                                ).strip().lower() not in ("n", "nein", "no")
+    try:
+        httpx.post(f"{base}/api/models/reload", headers=headers, timeout=10)
+        if activate:
+            r = httpx.post(f"{base}/api/models/{name}/activate", headers=headers, timeout=600)
+            ok = r.status_code == 200
+            print(f"✔ {T('Aktiv', 'Active')}: {name}" if ok else f"✘ {r.json().get('detail', r.text)}")
+        else:
+            print(T(f"✔ '{name}' steht jetzt im Modell-Menü.", f"✔ '{name}' is now in the model menu."))
+    except httpx.ConnectError:
+        if activate:
+            mdl.register_model(state, tag, activate=True)
+        print(T(f"✔ '{name}' gespeichert" + (" und wird beim nächsten Start verwendet." if activate else "."),
+                f"✔ '{name}' saved" + (" and will be used on the next start." if activate else ".")))
+
+
 def cmd_update(args) -> None:
     from .update import main_update
     main_update(load_config().port)
@@ -282,6 +355,8 @@ def main(argv: list[str] | None = None) -> None:
         set_lang(load_config().language)
     except Exception:  # noqa: BLE001 – kaputte Config: doctor/serve melden das selbst
         pass
+    if os.environ.get("JARVIS_LANG"):  # z. B. vom Installer, bevor es eine Config gibt
+        set_lang(os.environ["JARVIS_LANG"])
     parser = argparse.ArgumentParser(prog="jarvis", description=T("JARVIS – lokaler KI-Assistent",
                                                                   "JARVIS – local AI assistant"))
     sub = parser.add_subparsers(dest="cmd")
@@ -289,8 +364,13 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--open", action="store_true", help=T("Browser öffnen", "open the browser"))
     p.add_argument("-v", "--verbose", action="store_true")
     sub.add_parser("doctor", help=T("Installation prüfen", "check the installation"))
-    p = sub.add_parser("model", help=T("Modell-Profile anzeigen oder umschalten", "list or switch model profiles"))
-    p.add_argument("name", nargs="?", help=T("Profilname zum Umschalten", "profile to switch to"))
+    p = sub.add_parser("model", help=T("Modelle anzeigen, umschalten, laden (add) oder entfernen (remove)",
+                                       "list, switch, download (add) or remove (remove) models"))
+    p.add_argument("name", nargs="?", help=T("Profilname zum Umschalten – oder add / remove",
+                                             "profile to switch to – or add / remove"))
+    p.add_argument("tag", nargs="?", help=T("bei add/remove: Ollama-Modellname", "with add/remove: Ollama model name"))
+    p.add_argument("--vram", type=float, help=argparse.SUPPRESS)
+    p.add_argument("--out", help=argparse.SUPPRESS)
     sub.add_parser("update", help=T("Auf den neuesten Stand bringen (git pull, Abhängigkeiten, Neustart)",
                                     "update (git pull, dependencies, restart)"))
     sub.add_parser("version", help=T("Installierte Version anzeigen", "show the installed version"))

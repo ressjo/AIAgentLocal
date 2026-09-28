@@ -357,6 +357,9 @@
         S.substate = "";
         loadStatus();
         break;
+      case "model_pull":
+        modelPullEvent(ev);
+        return;
       case "model_error":
         S.modelSwitching = null;
         S.substate = "";
@@ -1066,7 +1069,8 @@
       b.disabled = !!data.switching;
       b.innerHTML = `<div class="mi-head"><span class="mi-name"></span><span class="mi-tag"></span></div><div class="mi-sub"></div>`;
       b.querySelector(".mi-name").textContent = p.label;
-      b.querySelector(".mi-tag").textContent = p.active ? "AKTIV" : p.managed ? "STARTET SERVER" : p.backend.toUpperCase();
+      b.querySelector(".mi-tag").textContent = p.active ? L("AKTIV", "ACTIVE")
+        : p.managed ? L("STARTET SERVER", "STARTS SERVER") : p.backend.toUpperCase();
       b.querySelector(".mi-sub").textContent = `${p.backend} · ${p.model}`;
       b.onclick = async () => {
         closeModelMenu();
@@ -1076,9 +1080,69 @@
       };
       modelMenu.appendChild(b);
     }
+    if (data.active !== "demo") {
+      const add = document.createElement("button");
+      add.className = "model-item add";
+      add.textContent = L("+ MODELL HINZUFÜGEN …", "+ ADD MODEL …");
+      add.onclick = (e) => { e.stopPropagation(); openPresetMenu(); };
+      modelMenu.appendChild(add);
+    }
     modelMenu.classList.remove("hidden");
     $("pill-llm").setAttribute("aria-expanded", "true");
   }
+  // Vorauswahl bekannter Ollama-Modelle: passend zum Grafikspeicher, Laden mit Fortschritt (model_pull-Events)
+  async function openPresetMenu() {
+    let data;
+    try { data = await getJSON("/api/models/presets"); } catch { toast(L("Vorauswahl nicht ladbar", "Could not load presets")); return; }
+    const g = data.gpu;
+    const gpuText = g.vendor === "none" ? L("keine GPU erkannt", "no GPU detected") : `${g.name || g.vendor} · ${g.vram_gb} GB`;
+    modelMenu.innerHTML = `<div class="mm-title">${L("MODELL HINZUFÜGEN", "ADD MODEL")}</div>
+      <div class="mm-hint"></div>`;
+    modelMenu.querySelector(".mm-hint").textContent = gpuText + " · " +
+      L("✔ passt · ~ teils im RAM (langsamer) · ✘ zu groß", "✔ fits · ~ partly in RAM (slower) · ✘ too big");
+    const marks = { ok: "✔", tight: "~", big: "✘" };
+    for (const p of data.presets) {
+      const b = document.createElement("button");
+      b.className = "model-item";
+      const pulling = data.pulling.includes(p.tag);
+      b.innerHTML = `<div class="mi-head"><span><span class="fit-${p.fit}">${marks[p.fit]}</span> <span class="mi-name"></span></span>
+        <span class="mi-tag"></span></div><div class="mi-sub"></div><div class="mi-note"></div>`;
+      b.querySelector(".mi-name").textContent = p.label;
+      b.querySelector(".mi-tag").textContent = pulling ? L("LÄDT …", "LOADING …")
+        : p.installed ? L("INSTALLIERT", "INSTALLED") : p.recommended ? L("EMPFOHLEN", "RECOMMENDED") : "";
+      b.querySelector(".mi-sub").textContent = `${p.tag} · ~${p.download_gb} GB`;
+      b.querySelector(".mi-note").textContent = p.note;
+      b.disabled = pulling;
+      b.onclick = async (e) => {
+        e.stopPropagation();
+        if (p.fit === "big" && !confirm(L(`${p.label} ist für deinen Grafikspeicher zu groß und wird sehr langsam. Trotzdem laden?`,
+                                          `${p.label} is too big for your video memory and will be very slow. Download anyway?`))) return;
+        closeModelMenu();
+        try {
+          await api("POST", "/api/models/pull", { tag: p.tag });
+          toast(L(`Lade ${p.tag} …`, `Downloading ${p.tag} …`));
+        } catch { /* Meldung kommt von api() */ }
+      };
+      modelMenu.appendChild(b);
+    }
+    const back = document.createElement("button");
+    back.className = "model-item add";
+    back.textContent = L("← ZURÜCK", "← BACK");
+    back.onclick = (e) => { e.stopPropagation(); openModelMenu(); };
+    modelMenu.appendChild(back);
+  }
+
+  function modelPullEvent(ev) {
+    if (ev.error) { toast(L(`✘ ${ev.tag}: `, `✘ ${ev.tag}: `) + ev.error); return; }
+    if (ev.done) {
+      toast(L(`✔ ${ev.tag} geladen – jetzt im Modell-Menü auswählbar.`, `✔ ${ev.tag} downloaded – now selectable in the model menu.`));
+      addSystem(L(`Modell ${ev.tag} ist bereit (Menü LLM oben).`, `Model ${ev.tag} is ready (LLM menu at the top).`));
+      return;
+    }
+    const pct = ev.total ? ` ${Math.floor((100 * (ev.completed || 0)) / ev.total)} %` : "";
+    toast(L(`Lade ${ev.tag}: `, `Downloading ${ev.tag}: `) + (ev.status || "") + pct);
+  }
+
   function closeModelMenu() {
     modelMenu.classList.add("hidden");
     $("pill-llm").setAttribute("aria-expanded", "false");

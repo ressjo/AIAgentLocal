@@ -9,9 +9,11 @@ import logging
 import os
 import re
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -356,6 +358,64 @@ def create_app(cfg: Config) -> FastAPI:
         if password is None:
             return JSONResponse({"error": "abgelehnt"}, status_code=403)
         return JSONResponse({"password": password}, headers={"Cache-Control": "no-store"})
+
+    # ---------- Modelle hinzufügen (Vorauswahl + ollama pull mit Fortschritt) ----------
+    state_file = cfg.memory.dir.parent / "state.json"
+    pulls: dict[str, asyncio.Task] = {}
+
+    @app.get("/api/models/presets")
+    async def model_presets():
+        from . import models as mdl
+        gpu = await asyncio.to_thread(mdl.detect_gpu)
+        installed = await asyncio.to_thread(mdl.installed_models, cfg.llm.base_url)
+        return {"gpu": gpu, "presets": mdl.preset_list(gpu["vram_gb"], installed),
+                "pulling": sorted(pulls)}
+
+    async def pull_model(tag: str) -> None:
+        from . import models as mdl
+        last = 0.0
+        try:
+            async with httpx.AsyncClient(base_url=cfg.llm.base_url, timeout=None) as client:
+                async with client.stream("POST", "/api/pull", json={"model": tag, "stream": True}) as resp:
+                    if resp.status_code != 200:
+                        raise LLMError(f"Ollama {resp.status_code}: {(await resp.aread()).decode(errors='replace')[:200]}")
+                    async for line in resp.aiter_lines():
+                        if not line.strip():
+                            continue
+                        ev = json.loads(line)
+                        if ev.get("error"):
+                            raise LLMError(ev["error"])
+                        now = time.monotonic()
+                        if now - last > 0.5 or ev.get("status") == "success":
+                            last = now
+                            await hub.broadcast({"type": "model_pull", "tag": tag, "status": ev.get("status", ""),
+                                                 "completed": ev.get("completed"), "total": ev.get("total")})
+            name = mdl.register_model(state_file, tag)
+            if isinstance(llm, LLMRouter):
+                llm.add_downloaded_models()
+            await hub.broadcast({"type": "model_pull", "tag": tag, "done": True, "profile": name})
+        except (httpx.HTTPError, LLMError, ValueError) as e:
+            text = str(e) if not isinstance(e, httpx.ConnectError) else "Ollama ist nicht erreichbar"
+            await hub.broadcast({"type": "model_pull", "tag": tag, "error": text})
+        finally:
+            pulls.pop(tag, None)
+
+    @app.post("/api/models/pull")
+    async def model_pull(request: Request):
+        from . import models as mdl
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        tag = str((await request.json()).get("tag", "")).strip().lower()
+        if not mdl.TAG_RE.match(tag):
+            raise HTTPException(400, "Ungültiger Modellname")
+        if tag not in pulls:
+            pulls[tag] = asyncio.create_task(pull_model(tag))
+        return {"ok": True, "tag": tag}
+
+    @app.post("/api/models/reload")
+    async def models_reload():
+        added = llm.add_downloaded_models() if isinstance(llm, LLMRouter) else []
+        return {"added": added}
 
     @app.post("/api/models/{name}/activate")
     async def activate_model(name: str):

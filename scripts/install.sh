@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # JARVIS – installer for Arch Linux / Manjaro / EndeavourOS and Debian / Ubuntu / Linux Mint
 #
-#   ./scripts/install.sh                   # everything with sensible defaults
+#   ./scripts/install.sh                   # asks for language, GPU and model (with recommendations)
 #   ./scripts/install.sh --lang en         # English assistant, voice and UI (default: de)
 #   ./scripts/install.sh --model qwen3:8b  # choose the Ollama model yourself
 #   ./scripts/install.sh --gpu vulkan      # force the Ollama backend: auto | cuda | rocm | vulkan | cpu (Arch)
+#   ./scripts/install.sh --yes             # no questions, use the detected/recommended defaults
 #   ./scripts/install.sh --no-autostart
+# Change or add models later with:  jarvis model add
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -13,8 +15,9 @@ DATA="${XDG_DATA_HOME:-$HOME/.local/share}/jarvis"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/jarvis"
 MODEL=""
 GPU="auto"
-LANG_CHOICE="de"
+LANG_CHOICE=""
 AUTOSTART=1
+ASK=1
 REPO="${JARVIS_REPO:-https://github.com/ressjo/AIAgentLocal.git}"
 BRANCH="${JARVIS_BRANCH:-main}"
 PIPER="https://huggingface.co/rhasspy/piper-voices/resolve/main"
@@ -27,13 +30,33 @@ while [[ $# -gt 0 ]]; do
     --vulkan) GPU="vulkan"; shift ;;   # kept for compatibility
     --cpu) GPU="cpu"; shift ;;
     --no-autostart) AUTOSTART=0; shift ;;
-    -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+    -y|--yes) ASK=0; shift ;;
+    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
-[[ "$LANG_CHOICE" == "en" ]] || LANG_CHOICE="de"
-
 say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
+[[ -t 0 ]] || ASK=0
+
+# ---------------------------------------------------------------- Language
+if [[ -z "$LANG_CHOICE" && $ASK == 1 ]]; then
+  echo "Language / Sprache:"
+  echo "  1) Deutsch"
+  echo "  2) English"
+  read -r -p "[1]: " answer
+  [[ "$answer" == "2" ]] && LANG_CHOICE="en"
+fi
+[[ "$LANG_CHOICE" == "en" ]] || LANG_CHOICE="de"
+export JARVIS_LANG="$LANG_CHOICE"
+t() { if [[ "$LANG_CHOICE" == "en" ]]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
+ask_yes() {  # ask_yes "Frage" "Question" [default y|n]
+  local def="${3:-y}" answer
+  (( ASK )) || { [[ "$def" == "y" ]]; return; }
+  read -r -p "$(t "$1" "$2") [$( [[ $def == y ]] && t 'J/n' 'Y/n' || t 'j/N' 'y/N')] " answer
+  answer="${answer,,}"
+  [[ -z "$answer" ]] && answer="$def"
+  [[ "$answer" =~ ^(j|ja|y|yes)$ ]]
+}
 
 if command -v pacman >/dev/null; then DISTRO="arch"
 elif command -v apt-get >/dev/null; then DISTRO="debian"
@@ -53,13 +76,42 @@ if [[ ! -d "$ROOT/.git" && -t 0 ]]; then
   fi
 fi
 
-# ---------------------------------------------------------------- GPU detection
+# ---------------------------------------------------------------- GPU
+PCI="$(lspci 2>/dev/null | grep -iE 'vga|3d controller|display' || true)"
+if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1 || grep -qi nvidia <<<"$PCI"; then DETECTED="cuda"
+elif ls /sys/class/drm/card*/device/mem_info_vram_total >/dev/null 2>&1 || grep -qiE 'amd|ati' <<<"$PCI"; then DETECTED="rocm"
+else DETECTED="cpu"; fi
 if [[ "$GPU" == "auto" ]]; then
-  if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then GPU="cuda"
-  elif ls /sys/class/drm/card*/device/mem_info_vram_total >/dev/null 2>&1; then GPU="rocm"
-  else GPU="cpu"; fi
+  GPU="$DETECTED"
+  if (( ASK )); then
+    [[ -n "$PCI" ]] && printf '%s\n' "$(t 'Gefundene Grafikkarte(n):' 'Detected graphics card(s):')" "$PCI"
+    echo "$(t 'Welche Grafikkarte soll das Sprachmodell nutzen?' 'Which graphics card should run the language model?')"
+    echo "  1) NVIDIA (CUDA)"
+    echo "  2) AMD (ROCm)"
+    echo "  3) $(t 'Keine / nur CPU (langsam)' 'None / CPU only (slow)')"
+    default=$([[ $DETECTED == cuda ]] && echo 1 || { [[ $DETECTED == rocm ]] && echo 2 || echo 3; })
+    read -r -p "$(t 'Auswahl' 'Choice') [$default]: " answer
+    case "${answer:-$default}" in 1) GPU="cuda" ;; 2) GPU="rocm" ;; *) GPU="cpu" ;; esac
+    if [[ $GPU == rocm && $DISTRO == arch ]] && ! ask_yes \
+        "ROCm verwenden? (Nein = Vulkan, für Karten ohne ROCm-Unterstützung)" \
+        "Use ROCm? (No = Vulkan, for cards without ROCm support)" y; then
+      GPU="vulkan"
+    fi
+  fi
 fi
 echo "GPU backend: $GPU"
+if [[ $GPU == cuda ]] && ! command -v nvidia-smi >/dev/null; then
+  echo "$(t '⚠ Kein NVIDIA-Treiber gefunden (nvidia-smi fehlt). Installieren mit:' '⚠ No NVIDIA driver found (nvidia-smi missing). Install it with:')"
+  if [[ $DISTRO == arch ]]; then echo "    sudo pacman -S nvidia-open nvidia-utils   # $(t 'danach neu starten' 'then reboot')"
+  else echo "    sudo ubuntu-drivers install   # $(t 'danach neu starten' 'then reboot')"; fi
+  ask_yes "Trotzdem fortfahren (Modelle laufen bis dahin auf der CPU)?" \
+          "Continue anyway (models run on the CPU until then)?" y || exit 1
+fi
+# RDNA2/RDNA3-Karten ohne offiziellen ROCm-Support laufen mit einem Override (z. B. RX 6600/6650/6700, RX 7600)
+HSA=""
+if [[ $GPU == rocm ]]; then
+  if grep -qiE 'navi 2[234]' <<<"$PCI"; then HSA="10.3.0"; elif grep -qiE 'navi 3[23]' <<<"$PCI"; then HSA="11.0.0"; fi
+fi
 
 # ---------------------------------------------------------------- System packages
 say "Installing system packages"
@@ -95,6 +147,14 @@ else
 fi
 sudo updatedb || true
 
+if [[ -n "$HSA" ]] && ask_yes "Deine AMD-Karte braucht für ROCm meist HSA_OVERRIDE_GFX_VERSION=$HSA. Für Ollama einrichten?" \
+                              "Your AMD card usually needs HSA_OVERRIDE_GFX_VERSION=$HSA for ROCm. Set it up for Ollama?" y; then
+  sudo mkdir -p /etc/systemd/system/ollama.service.d
+  printf '[Service]\nEnvironment="HSA_OVERRIDE_GFX_VERSION=%s"\n' "$HSA" | \
+    sudo tee /etc/systemd/system/ollama.service.d/jarvis-rocm.conf >/dev/null
+  sudo systemctl daemon-reload && sudo systemctl restart ollama.service || true
+fi
+
 # ---------------------------------------------------------------- Python environment
 say "Setting up the Python environment (uv)"
 cd "$ROOT"
@@ -112,15 +172,25 @@ if [[ -z "$MODEL" ]]; then
       v=$(( $(cat "$f") / 1024 / 1024 / 1024 )); (( v > GB )) && GB=$v
     done
   fi
-  if (( GB >= 15 )); then MODEL="qwen3:14b"
-  elif (( GB >= 7 )); then MODEL="qwen3:8b"
-  else MODEL="qwen3:4b"; fi
-  echo "Detected video memory: ${GB} GB → model $MODEL"
+  [[ $GPU == cpu ]] && GB=0
+  echo "$(t 'Grafikspeicher' 'Video memory'): ${GB} GB"
 fi
 
-say "Pulling models into Ollama (takes a while the first time)"
+say "$(t 'Sprachmodell wählen und laden (dauert beim ersten Mal)' 'Choosing and pulling the language model (takes a while the first time)')"
 for _ in {1..30}; do ollama list >/dev/null 2>&1 && break; sleep 1; done
-ollama pull "$MODEL"
+CHOICE_FILE="$(mktemp)"
+while true; do
+  if [[ -z "$MODEL" ]]; then
+    if (( ASK )); then uv run jarvis model choose --vram "$GB" --out "$CHOICE_FILE"
+    else uv run jarvis model choose --vram "$GB" --out "$CHOICE_FILE" </dev/null; fi
+    MODEL="$(cat "$CHOICE_FILE")"
+  fi
+  echo "→ $MODEL"
+  ollama pull "$MODEL" && break
+  echo "$(t "✘ '$MODEL' konnte nicht geladen werden." "✘ Could not pull '$MODEL'.")"
+  if (( ASK )); then MODEL=""; else exit 1; fi
+done
+rm -f "$CHOICE_FILE"
 ollama pull bge-m3
 
 # ---------------------------------------------------------------- Voice
@@ -181,6 +251,7 @@ Check:    jarvis doctor
 Update:   jarvis update
 (Open a new terminal or run "source ~/.bashrc" if "jarvis" is not found yet.)
 Web UI:   http://localhost:8765
+Models:   jarvis model add        (download and switch to another model – also in the web UI: LLM menu)
 
 NVIDIA: speech recognition can run on the GPU – set voice.stt_device: cuda and voice.stt_compute_type: float16.
 AMD: if ROCm does not pick up your card (ollama ps shows 100% CPU), see the README section "AMD GPUs".
