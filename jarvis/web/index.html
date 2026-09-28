@@ -29,7 +29,7 @@
 
   <main class="layout">
     <section class="panel chat-panel">
-      <div class="panel-head"><span>KOMMUNIKATION</span>
+      <div class="panel-head"><span>KOMMUNIKATION <small class="chat-title" id="chat-title"></small></span>
         <button class="ghost small" id="btn-reset" title="Neues Gespräch beginnen (Gedächtnis bleibt erhalten)">NEU</button>
       </div>
       <div class="chat" id="chat"></div>
@@ -95,6 +95,7 @@
     <section class="panel side-panel">
       <div class="tabs">
         <button class="tab active" data-tab="activity">AKTIVITÄT</button>
+        <button class="tab" data-tab="chats">VERLAUF</button>
         <button class="tab" data-tab="memory">GEDÄCHTNIS</button>
         <button class="tab" data-tab="voice">STIMME</button>
       </div>
@@ -102,6 +103,15 @@
         <div class="activity" id="activity">
           <div class="empty">Noch keine Systemaktivität.</div>
         </div>
+      </div>
+      <div class="tab-body hidden" id="tab-chats">
+        <div class="chat-tools">
+          <input class="chat-search" id="chat-search" type="search" placeholder="Chats durchsuchen …" aria-label="Chats durchsuchen">
+          <button class="ghost small" id="chat-new" title="Neuen Chat beginnen">+ NEU</button>
+        </div>
+        <ul class="chat-list" id="chat-list"></ul>
+        <p class="chat-hint">★ markiert wichtige Chats · Klick öffnet und setzt fort · Doppelklick auf den Titel benennt um ·
+          ✕ löscht den Chat auch aus Jarvis' Gedächtnis.</p>
       </div>
       <div class="tab-body hidden" id="tab-voice">
         <div class="mem-section">

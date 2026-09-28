@@ -282,6 +282,13 @@
         finishAssistant(ev.id, ev.cancelled);
         if (S.substate === THINKING_SUB) S.substate = "";
         setTimeout(loadStatus, 300);
+        if (!$("chat-title").textContent) {
+          getJSON("/api/chats").then((l) => {
+            const c = l.find((x) => x.active);
+            if (c && c.messages) $("chat-title").textContent = "· " + c.title;
+          }).catch(() => {});
+        }
+        if (!$("tab-chats").classList.contains("hidden")) loadChats();
         if (!$("tab-memory").classList.contains("hidden")) loadReminders();
         break;
       case "tool_call":
@@ -360,9 +367,13 @@
         pushSpark("tps", ev.tps);
         break;
       case "conversation_reset":
-        $("chat").innerHTML = "";
-        addSystem("Neues Gespräch begonnen – das Gedächtnis bleibt erhalten.");
+        break;  // Anzeige erledigt chat_switched
+      case "chat_switched":
+        openChatView(ev);
         break;
+      case "chats_changed":
+        if (!$("tab-chats").classList.contains("hidden")) loadChats();
+        return;
     }
     refresh();
   }
@@ -799,16 +810,14 @@
   };
 
   $("btn-stop").onclick = () => { send({ type: "stop" }); stopSpeech(true); };
-  $("btn-reset").onclick = () => {
-    if (confirm("Neues Gespräch beginnen? Der bisherige Verlauf bleibt im Gedächtnis gespeichert.")) {
-      send({ type: "reset_conversation" });
-    }
-  };
+  $("btn-reset").onclick = () => newChat();
 
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.onclick = () => {
       document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
       $("tab-activity").classList.toggle("hidden", tab.dataset.tab !== "activity");
+      $("tab-chats").classList.toggle("hidden", tab.dataset.tab !== "chats");
+      if (tab.dataset.tab === "chats") loadChats();
       $("tab-memory").classList.toggle("hidden", tab.dataset.tab !== "memory");
       $("tab-voice").classList.toggle("hidden", tab.dataset.tab !== "voice");
       if (tab.dataset.tab === "memory") loadMemory();
@@ -1110,10 +1119,96 @@
   }
   setInterval(() => { if (S.connected) loadStatus(); }, 20000);
 
+  // ---------------------------------------------------------------- Chat-Historie
+  async function api(method, url, body) {
+    const r = await fetch(url, { method, headers: body ? { "Content-Type": "application/json" } : {},
+                                 body: body ? JSON.stringify(body) : undefined });
+    if (!r.ok) {
+      let msg = `Fehler ${r.status}`;
+      try { msg = (await r.json()).detail || msg; } catch { /* egal */ }
+      toast(msg);
+      throw new Error(msg);
+    }
+    return r.json();
+  }
+
+  function chatWhen(ts) {
+    if (!ts) return "";
+    const d = new Date(ts * 1000);
+    const today = new Date();
+    const time = d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+    if (d.toDateString() === today.toDateString()) return `heute ${time}`;
+    if (d.toDateString() === new Date(Date.now() - 86400000).toDateString()) return `gestern ${time}`;
+    return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" }) + " " + time;
+  }
+
+  let chatSearchTimer = null;
+  async function loadChats() {
+    const q = $("chat-search").value.trim();
+    let list;
+    try { list = await getJSON("/api/chats" + (q ? "?q=" + encodeURIComponent(q) : "")); } catch { return; }
+    const ul = $("chat-list");
+    ul.innerHTML = "";
+    if (!list.length) {
+      ul.innerHTML = `<li class="empty">${q ? "Nichts gefunden." : "Noch keine Chats."}</li>`;
+      return;
+    }
+    for (const c of list) {
+      const li = document.createElement("li");
+      li.className = "chat-item" + (c.active ? " active" : "");
+      li.innerHTML = `<button class="star${c.starred ? " on" : ""}" title="${c.starred ? "Markierung entfernen" : "Als wichtig markieren"}">${c.starred ? "★" : "☆"}</button>
+        <div><div class="t"></div><div class="m"></div><div class="p"></div></div>
+        <button class="del" title="Chat löschen (auch aus dem Gedächtnis)">✕</button>`;
+      li.querySelector(".t").textContent = c.title;
+      li.querySelector(".m").textContent = `${chatWhen(c.updated)} · ${c.messages} Nachr.` + (c.active ? " · AKTIV" : "");
+      li.querySelector(".p").textContent = c.preview || "";
+      li.onclick = () => { if (!c.active) api("POST", `/api/chats/${c.id}/activate`).catch(() => {}); };
+      li.querySelector(".t").ondblclick = (e) => {
+        e.stopPropagation();
+        const title = prompt("Neuer Titel:", c.title);
+        if (title && title.trim()) api("PATCH", `/api/chats/${c.id}`, { title }).then(loadChats).catch(() => {});
+      };
+      li.querySelector(".star").onclick = (e) => {
+        e.stopPropagation();
+        api("POST", `/api/chats/${c.id}/star`, { starred: !c.starred }).then(loadChats).catch(() => {});
+      };
+      li.querySelector(".del").onclick = (e) => {
+        e.stopPropagation();
+        const extra = c.legacy ? "\n\nHinweis: Dieser Chat stammt von vor der Chat-Historie – ältere Tagebuch-Einträge "
+          + "daraus lassen sich nicht zuordnen und bleiben im Gedächtnis." : "";
+        if (confirm(`„${c.title}“ löschen?\n\nDer Chat wird auch aus Jarvis' Gedächtnis entfernt (Tagebuch, Suche, `
+            + `Tageszusammenfassung). Gelernte Fakten bleiben.${extra}`)) {
+          api("DELETE", `/api/chats/${c.id}`).then(() => { toast("Chat gelöscht."); loadChats(); }).catch(() => {});
+        }
+      };
+      ul.appendChild(li);
+    }
+  }
+  $("chat-search").addEventListener("input", () => {
+    clearTimeout(chatSearchTimer);
+    chatSearchTimer = setTimeout(loadChats, 250);
+  });
+  $("chat-new").onclick = () => newChat();
+
+  function newChat() {
+    api("POST", "/api/chats").catch(() => {});
+  }
+
+  function openChatView(ev) {
+    for (const id of Object.keys(assistants)) delete assistants[id];
+    $("chat").innerHTML = "";
+    $("chat-title").textContent = ev.title ? "· " + ev.title : "";
+    loadHistory().then(() => {
+      if (!$("chat").children.length) addSystem("Neuer Chat – frühere Chats findest du unter VERLAUF.");
+    });
+    if (!$("tab-chats").classList.contains("hidden")) loadChats();
+  }
+
   async function loadHistory() {
     try {
       const h = await getJSON("/api/history");
       S.historyLoaded = true;
+      $("chat-title").textContent = h.chat && h.chat.title ? "· " + h.chat.title : "";
       if (h.summary) addSystem("Frühere Gesprächsteile sind im Gedächtnis zusammengefasst.");
       for (const m of h.messages) {
         if (m.role === "user") addUser(m.content);

@@ -34,9 +34,12 @@ class JournalEntry:
     time: str
     speaker: str
     text: str
+    chat: str = ""
 
 
-ENTRY_RE = re.compile(r"^### (\d{2}:\d{2}:\d{2}) — (.+)$", re.M)
+# Kopfzeile eines Eintrags; die Chat-Kennung steht unsichtbar als HTML-Kommentar dahinter
+ENTRY_RE = re.compile(r"^### (\d{2}:\d{2}:\d{2}) — (.+?)(?: <!-- chat:([\w-]+) -->)?$", re.M)
+CHAT_TAG_RE = re.compile(r" <!-- chat:[\w-]+ -->")
 
 
 class Journal:
@@ -49,32 +52,58 @@ class Journal:
     def path(self, day: str) -> Path:
         return self.dir / f"{day}.md"
 
-    def append(self, speaker: str, text: str, when: datetime | None = None) -> None:
+    def append(self, speaker: str, text: str, when: datetime | None = None, chat: str = "") -> None:
         when = when or datetime.now()
         path = self.path(day_str(when))
         new = not path.exists()
+        tag = f" <!-- chat:{chat} -->" if chat else ""
         with path.open("a", encoding="utf-8") as f:
             if new:
                 f.write(f"# Journal {german_date(when)}\n\n")
-            f.write(f"### {when.strftime('%H:%M:%S')} — {speaker}\n{text.strip()}\n\n")
+            f.write(f"### {when.strftime('%H:%M:%S')} — {speaker}{tag}\n{text.strip()}\n\n")
 
     def days(self) -> list[str]:
         return sorted((p.stem for p in self.dir.glob("*.md") if valid_day(p.stem)), reverse=True)
 
-    def read(self, day: str) -> str | None:
+    def read(self, day: str, raw: bool = False) -> str | None:
+        """Tagesprotokoll; ohne raw ohne die unsichtbaren Chat-Kennungen."""
         if not valid_day(day):
             return None
         p = self.path(day)
-        return p.read_text(encoding="utf-8") if p.exists() else None
+        if not p.exists():
+            return None
+        text = p.read_text(encoding="utf-8")
+        return text if raw else CHAT_TAG_RE.sub("", text)
 
     def entries(self, day: str) -> list[JournalEntry]:
-        text = self.read(day) or ""
+        text = self.read(day, raw=True) or ""
         matches = list(ENTRY_RE.finditer(text))
         out = []
         for i, m in enumerate(matches):
             end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-            out.append(JournalEntry(m.group(1), m.group(2), text[m.end():end].strip()))
+            out.append(JournalEntry(m.group(1), m.group(2), text[m.end():end].strip(), m.group(3) or ""))
         return out
+
+    def remove_chat(self, chat: str) -> list[str]:
+        """Entfernt alle Einträge eines Chats; liefert die betroffenen Tage. Leere Tage werden gelöscht."""
+        affected = []
+        for day in self.days():
+            text = self.read(day, raw=True) or ""
+            if f"<!-- chat:{chat} -->" not in text:
+                continue
+            matches = list(ENTRY_RE.finditer(text))
+            head = text[: matches[0].start()] if matches else text
+            keep = []
+            for i, m in enumerate(matches):
+                end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+                if m.group(3) != chat:
+                    keep.append(text[m.start():end])
+            affected.append(day)
+            if keep:
+                self.path(day).write_text(head + "".join(keep), encoding="utf-8")
+            else:
+                self.path(day).unlink()
+        return affected
 
     def mtime(self, day: str) -> float:
         p = self.path(day)
@@ -94,6 +123,10 @@ class Summaries:
     def write(self, day: str, text: str) -> None:
         d = datetime.strptime(day, "%Y-%m-%d")
         self.path(day).write_text(f"# Zusammenfassung {german_date(d)}\n\n{text.strip()}\n", encoding="utf-8")
+
+    def delete(self, day: str) -> None:
+        if valid_day(day) and self.path(day).exists():
+            self.path(day).unlink()
 
     def read(self, day: str) -> str | None:
         if not valid_day(day):

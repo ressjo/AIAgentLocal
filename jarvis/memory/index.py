@@ -167,9 +167,10 @@ class MemoryIndex:
         self._matrix_ids = ids
 
     async def search(self, query: str, k: int = 6, exclude_after: float | None = None,
-                     kinds: tuple[str, ...] | None = None) -> list[Hit]:
+                     kinds: tuple[str, ...] | None = None, exclude_source: str | None = None) -> list[Hit]:
         """Hybride Suche. exclude_after: Journal-Einträge ab diesem Zeitpunkt ignorieren
-        (die stehen ohnehin noch wörtlich im aktuellen Gesprächsverlauf)."""
+        (die stehen ohnehin noch wörtlich im aktuellen Gesprächsverlauf). Mit exclude_source gilt das nur für
+        Einträge dieser Quelle (des aktuellen Chats) – andere Chats bleiben auffindbar."""
         ranks: dict[int, float] = {}
 
         q = fts_query(query)
@@ -201,14 +202,15 @@ class MemoryIndex:
             return []
         placeholders = ",".join("?" * len(ranks))
         rows = self.db.execute(
-            f"SELECT id, kind, day, text, created FROM chunks WHERE id IN ({placeholders})", list(ranks)
+            f"SELECT id, kind, day, text, created, source FROM chunks WHERE id IN ({placeholders})", list(ranks)
         ).fetchall()
         now = time.time()
         hits = []
-        for rid, kind, day, text, created in rows:
+        for rid, kind, day, text, created, source in rows:
             if kinds and kind not in kinds:
                 continue
-            if exclude_after is not None and kind == "journal" and created >= exclude_after:
+            if exclude_after is not None and kind == "journal" and created >= exclude_after and \
+                    (exclude_source is None or source == exclude_source):
                 continue
             age_days = max(0.0, (now - created) / 86400)
             recency = 0.004 * math.exp(-age_days / 30)  # leichte Bevorzugung frischer Erinnerungen

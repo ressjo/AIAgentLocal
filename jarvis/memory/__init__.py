@@ -4,7 +4,7 @@
     journal/YYYY-MM-DD.md     Rohprotokoll jedes Tages
     summaries/YYYY-MM-DD.md   Tageszusammenfassungen
     facts.md                  dauerhafte Fakten
-    session.json              aktueller Gesprächsverlauf + laufende Zusammenfassung
+    chats/<id>.json           Chats (Verlauf + laufende Zusammenfassung), chats/active = aktueller Chat
     index.sqlite              Suchindex (aus den .md-Dateien rekonstruierbar)
 """
 
@@ -15,6 +15,7 @@ import time
 from datetime import datetime
 
 from ..config import MemoryConfig
+from .chats import ChatStore
 from .context import Conversation, est_tokens
 from .files import Facts, Journal, Summaries, day_str
 from .index import Hit, MemoryIndex, split_text
@@ -35,7 +36,8 @@ class Memory:
         self.summaries = Summaries(cfg.dir / "summaries")
         self.facts = Facts(cfg.dir / "facts.md")
         self.index = MemoryIndex(cfg.dir / "index.sqlite", embedder=llm)
-        self.conversation = Conversation(cfg.dir / "session.json")
+        self.chats = ChatStore(cfg.dir / "chats", legacy_session=cfg.dir / "session.json")
+        self.conversation = self.chats.open_active()
         self.last_activity = time.time()
 
     def close(self) -> None:
@@ -44,13 +46,58 @@ class Memory:
     # ---------- Schreiben ----------
     async def log_exchange(self, user_text: str, assistant_text: str, tool_notes: list[str]) -> None:
         now = datetime.now()
-        self.journal.append("Du", user_text, now)
+        chat = self.conversation.chat_id
+        self.journal.append("Du", user_text, now, chat)
         for note in tool_notes:
-            self.journal.append("Tool", note, now)
-        self.journal.append("Jarvis", assistant_text or "(keine Antwort)", now)
+            self.journal.append("Tool", note, now, chat)
+        self.journal.append("Jarvis", assistant_text or "(keine Antwort)", now, chat)
         self.last_activity = time.time()
         text = f"Nutzer: {user_text}\n" + "".join(f"Tool: {n}\n" for n in tool_notes) + f"Jarvis: {assistant_text}"
-        await self.index.add("journal", day_str(now), f"journal:{day_str(now)}", text)
+        await self.index.add("journal", day_str(now), f"chat:{chat}" if chat else f"journal:{day_str(now)}", text)
+
+    # ---------- Chats ----------
+    def new_chat(self) -> Conversation:
+        """Neuer Chat – ist der aktuelle noch leer, wird er weiterverwendet."""
+        if not self.conversation.history:
+            return self.conversation
+        self.conversation.save()
+        self.conversation = self.chats.create()
+        return self.conversation
+
+    def switch_chat(self, chat_id: str) -> Conversation:
+        if chat_id != self.conversation.chat_id:
+            self.conversation.save()
+            self.conversation = self.chats.set_active(chat_id)
+        return self.conversation
+
+    def star_chat(self, chat_id: str, starred: bool) -> None:
+        if chat_id == self.conversation.chat_id:
+            self.conversation.meta["starred"] = bool(starred)
+            self.conversation.save()
+        else:
+            self.chats.set_star(chat_id, starred)
+
+    def rename_chat(self, chat_id: str, title: str) -> None:
+        if chat_id == self.conversation.chat_id:
+            from .context import make_title
+            self.conversation.meta["title"] = make_title(title, 80) or "Neuer Chat"
+            self.conversation.save()
+        else:
+            self.chats.rename(chat_id, title)
+
+    def forget_chat(self, chat_id: str) -> list[str]:
+        """Chat komplett vergessen: Datei, Tagebuch-Einträge, Suchindex, betroffene Tageszusammenfassungen
+        (werden aus dem Rest neu erstellt). Gelernte Fakten bleiben. Liefert die betroffenen Tage."""
+        self.chats.path(chat_id)  # prüft die ID
+        days = self.journal.remove_chat(chat_id)
+        self.index.delete_source(f"chat:{chat_id}")
+        for day in days:
+            self.summaries.delete(day)
+            self.index.delete_source(f"summary:{day}")
+        self.chats.delete(chat_id)
+        if chat_id == self.conversation.chat_id:
+            self.conversation = self.chats.create()
+        return days
 
     async def remember(self, fact: str) -> bool:
         added = self.facts.add(fact)
@@ -72,7 +119,9 @@ class Memory:
 
     # ---------- Lesen ----------
     async def retrieve(self, query: str, exclude_after: float | None = None) -> list[Hit]:
-        return await self.index.search(query, k=self.cfg.retrieval_top_k, exclude_after=exclude_after)
+        chat = self.conversation.chat_id
+        return await self.index.search(query, k=self.cfg.retrieval_top_k, exclude_after=exclude_after,
+                                       exclude_source=f"chat:{chat}" if chat else None)
 
     def format_hits(self, hits: list[Hit]) -> str:
         out, used = [], 0
@@ -92,7 +141,7 @@ class Memory:
 
     # ---------- Tageszusammenfassungen ----------
     async def summarize_day(self, day: str) -> str | None:
-        text = self.journal.read(day)
+        text = self.journal.read(day)  # ohne Chat-Kennungen
         if not text:
             return None
         system = {"role": "system", "content": (
@@ -140,15 +189,18 @@ class Memory:
         for day in sorted(self.journal.days()):
             entries = self.journal.entries(day)
             block: list[str] = []
+            source = f"journal:{day}"
             for e in entries:
                 if e.speaker == "Du" and block:
-                    await self.index.add("journal", day, f"journal:{day}", "\n".join(block),
+                    await self.index.add("journal", day, source, "\n".join(block),
                                          created=datetime.strptime(f"{day} {e.time}", "%Y-%m-%d %H:%M:%S").timestamp())
                     block = []
+                if e.speaker == "Du":
+                    source = f"chat:{e.chat}" if e.chat else f"journal:{day}"
                 label = {"Du": "Nutzer"}.get(e.speaker, e.speaker)
                 block.append(f"{label}: {e.text}")
             if block:
-                await self.index.add("journal", day, f"journal:{day}", "\n".join(block),
+                await self.index.add("journal", day, source, "\n".join(block),
                                      created=datetime.strptime(day, "%Y-%m-%d").timestamp())
         for day in self.summaries.days():
             body = self.summaries.read(day) or ""

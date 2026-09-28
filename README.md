@@ -106,7 +106,7 @@ Alles liegt als lesbare Dateien in `~/.local/share/jarvis/memory/`:
 | `journal/2026-09-27.md` | Vollständiges Protokoll des Tages – jede Frage, jede Antwort, jeder Tool-Aufruf |
 | `summaries/2026-09-27.md` | Tageszusammenfassung, automatisch erzeugt (Tageswechsel bzw. 15 min Leerlauf) |
 | `facts.md` | Dauerhafte Fakten („Das NAS ist unter /mnt/nas gemountet“) – auch von Hand editierbar |
-| `session.json` | Aktueller Gesprächsverlauf + laufende Zusammenfassung (überlebt Neustarts) |
+| `chats/<id>.json` | Ein Chat: Verlauf, laufende Zusammenfassung, Titel, Stern (`chats/active` = aktueller Chat) |
 | `index.sqlite` | Suchindex (Volltext + Embeddings) – nur Cache, mit `jarvis reindex` neu aufbaubar |
 
 **So bleibt der Kontext klein:** Jeder Prompt hat ein festes Budget (Standard 11 000 Tokens) aus
@@ -115,6 +115,21 @@ leichte Bevorzugung aktueller Einträge), der laufenden Zusammenfassung und den 
 Wird der Verlauf zu lang, faltet Jarvis die ältesten Nachrichten per LLM in die laufende Zusammenfassung –
 im Journal und im Index bleiben sie vollständig erhalten und werden bei Bedarf wieder hervorgeholt.
 So kann Jarvis sich über Monate „an alles erinnern“, ohne dass das Kontextfenster je überläuft.
+
+### Chat-Historie
+
+Im Reiter **VERLAUF** stehen alle Chats (gesternte oben, sonst neueste zuerst) mit Suche über Titel und Inhalt.
+**NEU** beginnt einen neuen Chat, der bisherige bleibt erhalten. Ein Klick öffnet einen alten Chat, und du kannst
+dort direkt weiterreden. Jarvis erinnert sich dabei weiterhin an alles aus den anderen Chats.
+
+- **★** markiert wichtige Chats. Automatisch gelöscht wird nichts.
+- **Doppelklick auf den Titel** benennt um. Der Titel entsteht sonst aus der ersten Frage.
+- **✕** löscht einen Chat **komplett**: Er verschwindet aus der Liste, aus dem Tagebuch und aus dem Suchindex.
+  Betroffene Tageszusammenfassungen werden aus dem Rest neu erstellt. Gelernte Fakten bleiben erhalten
+  (die löschst du im Reiter GEDÄCHTNIS bzw. mit „vergiss …“).
+
+Das bisherige Gespräch (`session.json`) wird beim Update automatisch zum ersten Chat. Tagebuch-Einträge aus der
+Zeit davor lassen sich keinem Chat zuordnen und bleiben beim Löschen im Gedächtnis.
 
 ## Alltag: Websites, Wetter, Erinnerungen, Briefing
 

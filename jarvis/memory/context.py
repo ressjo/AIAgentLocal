@@ -49,12 +49,27 @@ def render_for_summary(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def make_title(text: str, limit: int = 60) -> str:
+    """Chat-Titel aus der ersten Nutzernachricht."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0]
+    return (cut or text[:limit]) + " …"
+
+
 class Conversation:
-    def __init__(self, state_path: Path | None = None):
+    def __init__(self, state_path: Path | None = None, chat_id: str = ""):
         self.state_path = state_path
         self.history: list[dict] = []
         self.running_summary = ""
+        # Metadaten des Chats (Titel, Stern, Zeitstempel) – siehe memory/chats.py
+        self.meta: dict = {"id": chat_id, "title": "", "starred": False, "created": time.time()}
         self.load()
+
+    @property
+    def chat_id(self) -> str:
+        return self.meta.get("id", "")
 
     # ---------- Persistenz (Gespräch überlebt Neustarts) ----------
     def load(self) -> None:
@@ -63,6 +78,7 @@ class Conversation:
                 data = json.loads(self.state_path.read_text(encoding="utf-8"))
                 self.history = data.get("history", [])
                 self.running_summary = data.get("running_summary", "")
+                self.meta.update(data.get("meta") or {})
             except (json.JSONDecodeError, OSError) as e:
                 log.warning("Sitzungszustand nicht lesbar (%s) – starte neu", e)
 
@@ -71,13 +87,16 @@ class Conversation:
             return
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"history": self.history, "running_summary": self.running_summary},
+        self.meta["updated"] = time.time()
+        tmp.write_text(json.dumps({"meta": self.meta, "history": self.history, "running_summary": self.running_summary},
                                   ensure_ascii=False), encoding="utf-8")
         tmp.replace(self.state_path)
 
     def add(self, msg: dict) -> None:
         msg = dict(msg)
         msg.setdefault("ts", time.time())
+        if msg.get("role") == "user" and not self.meta.get("title") and msg.get("content"):
+            self.meta["title"] = make_title(msg["content"])
         self.history.append(msg)
 
     def reset(self) -> None:

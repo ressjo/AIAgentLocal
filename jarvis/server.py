@@ -413,9 +413,73 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/history")
     async def history():
-        msgs = [m for m in memory.conversation.history if m["role"] in ("user", "assistant") and m.get("content")]
-        return {"summary": memory.conversation.running_summary,
+        conv = memory.conversation
+        msgs = [m for m in conv.history if m["role"] in ("user", "assistant") and m.get("content")]
+        return {"summary": conv.running_summary, "chat": {"id": conv.chat_id, "title": conv.meta.get("title", "")},
                 "messages": [{"role": m["role"], "content": m["content"]} for m in msgs[-40:]]}
+
+    # ---------- Chat-Historie ----------
+    def chat_or_404(chat_id: str) -> None:
+        if not memory.chats.exists(chat_id):
+            raise HTTPException(404, "Chat nicht gefunden")
+
+    def not_busy() -> None:
+        if agent.lock.locked():
+            raise HTTPException(409, "Jarvis arbeitet gerade – bitte kurz warten oder STOP drücken")
+
+    async def chat_switched() -> None:
+        conv = memory.conversation
+        await hub.broadcast({"type": "chat_switched", "id": conv.chat_id, "title": conv.meta.get("title", "")})
+
+    @app.get("/api/chats")
+    async def chats(q: str = ""):
+        memory.conversation.save()
+        return memory.chats.list(q)
+
+    @app.post("/api/chats")
+    async def chat_new():
+        not_busy()
+        memory.new_chat()
+        await chat_switched()
+        return {"id": memory.conversation.chat_id}
+
+    @app.post("/api/chats/{chat_id}/activate")
+    async def chat_activate(chat_id: str):
+        chat_or_404(chat_id)
+        not_busy()
+        memory.switch_chat(chat_id)
+        await chat_switched()
+        return {"id": chat_id}
+
+    @app.post("/api/chats/{chat_id}/star")
+    async def chat_star(chat_id: str, request: Request):
+        chat_or_404(chat_id)
+        body = await request.json()
+        memory.star_chat(chat_id, bool(body.get("starred")))
+        await hub.broadcast({"type": "chats_changed"})
+        return {"ok": True}
+
+    @app.patch("/api/chats/{chat_id}")
+    async def chat_rename(chat_id: str, request: Request):
+        chat_or_404(chat_id)
+        title = str((await request.json()).get("title", "")).strip()
+        if not title:
+            raise HTTPException(400, "Titel fehlt")
+        memory.rename_chat(chat_id, title)
+        await hub.broadcast({"type": "chats_changed"})
+        return {"ok": True}
+
+    @app.delete("/api/chats/{chat_id}")
+    async def chat_delete(chat_id: str):
+        chat_or_404(chat_id)
+        was_active = chat_id == memory.conversation.chat_id
+        if was_active:
+            not_busy()
+        days = memory.forget_chat(chat_id)
+        if was_active:
+            await chat_switched()
+        await hub.broadcast({"type": "chats_changed"})
+        return {"ok": True, "days": days}
 
     @app.get("/api/voices")
     async def voices():
@@ -511,8 +575,11 @@ def create_app(cfg: Config) -> FastAPI:
                 elif t == "speech_interrupt":
                     hub.speaker.stop()
                 elif t == "reset_conversation":
-                    memory.conversation.reset()
-                    await hub.broadcast({"type": "conversation_reset"})
+                    # NEU-Knopf: neuer Chat (der bisherige bleibt in der Historie)
+                    if not agent.lock.locked():
+                        memory.new_chat()
+                        await hub.broadcast({"type": "conversation_reset"})
+                        await chat_switched()
         except WebSocketDisconnect:
             pass
         finally:
