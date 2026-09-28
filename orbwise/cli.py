@@ -173,6 +173,15 @@ def cmd_doctor(args) -> None:
     else:
         line(hs["online"], f"{hs.get('url') or cfg.homeassistant.url}" + (
             f" – {hs['entities']} {T('Entitäten', 'entities')} (Version {hs['version']})" if hs["online"] else ""), hs.get("error", ""))
+    print(T("E-Mail:", "E-mail:"))
+    from .tools.mail import mail_status
+    ms = asyncio.run(mail_status(cfg))
+    if not ms["enabled"]:
+        print(T("  – nicht konfiguriert", "  – not configured") + " (mail.username, mail.password)")
+    else:
+        line(ms["online"], f"{cfg.mail.username} @ {cfg.mail.host}:{cfg.mail.port}" + (
+            f" – {ms['unseen']} {T('ungelesen', 'unread')}, {ms['folders']} {T('Ordner', 'folders')}" if ms["online"] else ""),
+            ms.get("error", ""))
     print(T("Websuche:", "Web search:"))
     from .tools.web import search_status
     ws = asyncio.run(search_status(cfg))

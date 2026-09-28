@@ -21,6 +21,8 @@ KEYWORDS = {
     "homeassistant": r"licht|lampe|light|lamp|heizung|heating|thermostat|rollo|jalousie|blind|shutter|cover|"
                      r"steckdose|plug|schalte|switch|szene|scene|temperatur|temperature|sensor|smart ?home|"
                      r"home assistant|garage|\btür|door|schloss|lock|ventilator|fan|dimm|hell|bright|staubsauger|vacuum",
+    "mail": r"\bmail|e-?mail|postfach|mailbox|\binbox|posteingang|nachricht(en)? von|absender|sender|newsletter|"
+            r"anhang|anhänge|attachment|ungelesen|unread|spam|archivier|archive",
     "paperless": r"dokument|document|rechnung|invoice|vertrag|contract|\bbrief|letter|paperless|bescheid|"
                  r"versicherung|insurance|quittung|receipt|garantie|warranty|kündig|cancel|steuer|tax|\bpdf|"
                  r"\btag|korrespondent|correspondent|dokumenttyp|document type|posteingang|inbox|einordn|sortier|classif",

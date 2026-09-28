@@ -18,6 +18,7 @@ from ..config import BRIEFING_SECTIONS, BriefingConfig
 from ..memory.files import german_date
 from . import proc
 from .calendar_tools import CalendarError, events_between
+from .mail import inbox_brief
 from .packages import package_manager
 from .paperless import inbox_summary
 from .registry import ToolContext, tool
@@ -31,6 +32,7 @@ LABELS = {
     "weather": ("Wetter", "Weather"),
     "calendar": ("Termine", "Calendar"),
     "reminders": ("Erinnerungen & Fristen", "Reminders & deadlines"),
+    "mail": ("E-Mail (ungelesen)", "E-mail (unread)"),
     "paperless_inbox": ("Paperless-Posteingang", "Paperless inbox"),
     "news": ("Nachrichten", "News"),
     "updates": ("Systemupdates", "System updates"),
@@ -80,6 +82,7 @@ def availability(cfg) -> dict[str, str]:
         "weather": "" if cfg.weather.location else "weather.location " + ("missing" if en else "fehlt"),
         "calendar": "" if cfg.calendar.enabled else ("calendar not set up" if en else "Kalender nicht eingerichtet"),
         "reminders": "",
+        "mail": "" if cfg.mail.enabled else ("mailbox not set up" if en else "Postfach nicht eingerichtet"),
         "paperless_inbox": "" if cfg.paperless.enabled else ("Paperless not set up" if en else "Paperless nicht eingerichtet"),
         "news": "" if s.news_topics else ("no topics yet" if en else "keine Themen eingetragen"),
         "updates": "",
@@ -127,6 +130,10 @@ async def _reminders(ctx: ToolContext, s: BriefingConfig) -> str | None:
 
     title = "Heutige Erinnerungen" if not s.lookahead_days else "Erinnerungen & Fristen"
     return f"{title}:\n" + "\n".join(f"- {when(r)} {r.text}" for r in items)
+
+
+async def _mail(ctx: ToolContext, s: BriefingConfig) -> str | None:
+    return await inbox_brief(ctx.cfg)
 
 
 async def _paperless(ctx: ToolContext, s: BriefingConfig) -> str | None:
@@ -189,7 +196,7 @@ async def _storage(ctx: ToolContext, s: BriefingConfig) -> str | None:
     return ("Speicher: " + "; ".join(dict.fromkeys(notes)) + ".") if notes else None
 
 
-SECTIONS = {"weather": _weather, "calendar": _calendar, "reminders": _reminders, "paperless_inbox": _paperless,
+SECTIONS = {"weather": _weather, "calendar": _calendar, "reminders": _reminders, "mail": _mail, "paperless_inbox": _paperless,
             "news": _news, "updates": _updates, "storage": _storage}
 assert set(SECTIONS) == set(BRIEFING_SECTIONS)
 

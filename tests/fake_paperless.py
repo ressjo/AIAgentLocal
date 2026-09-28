@@ -27,6 +27,7 @@ class FakePaperless:
         ]
         self.requests: list[httpx.Request] = []
         self.patches: list[tuple[int, dict]] = []
+        self.uploads: list[dict] = []
         # Vorschläge des Paperless-Klassifikators (leer = Endpunkt fehlt → 404, wie bei alten Versionen)
         self.suggestions: dict[int, dict] = {8: {"correspondents": [2], "document_types": [21], "tags": [11],
                                                  "dates": ["2026-09-01"]}}
@@ -53,6 +54,13 @@ class FakePaperless:
             if q.get("is_inbox_tag") == "true":
                 items = [x for x in items if x.get("is_inbox_tag")]
             return httpx.Response(200, json={"count": len(items), "results": items})
+        if path == "/documents/post_document/" and request.method == "POST":
+            body = request.read()
+            name = re.search(rb'name="document"; filename="([^"]+)"', body)
+            title = re.search(rb'name="title"\r\n\r\n([^\r]*)', body)
+            self.uploads.append({"filename": name.group(1).decode() if name else "", "body": body,
+                                 "title": title.group(1).decode() if title else ""})
+            return httpx.Response(200, json=f"task-{len(self.uploads)}")
         m = re.fullmatch(r"/documents/(\d+)/suggestions/", path)
         if m:
             if not self.suggestions:

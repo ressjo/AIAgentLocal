@@ -258,7 +258,44 @@ class WeatherConfig(BaseModel):
     location: str = ""
 
 
-BRIEFING_SECTIONS = ("weather", "calendar", "reminders", "paperless_inbox", "news", "updates", "storage")
+class MailConfig(BaseModel):
+    # IMAP-Postfach – für Proton Mail über die lokale Proton Mail Bridge (Standard: 127.0.0.1:1143, STARTTLS)
+    host: str = "127.0.0.1"
+    port: int = 1143
+    security: str = "starttls"  # starttls | ssl | none
+    username: str = ""
+    # Bei Proton: das Bridge-Passwort (nicht das Proton-Passwort); alternativ $ORBWISE_MAIL_PASSWORD
+    password: str = ""
+    # Zertifikat prüfen? Leer = nur bei fremden Servern (die Bridge auf localhost nutzt ein eigenes Zertifikat)
+    verify_ssl: bool | None = None
+    archive_folder: str = "Archive"
+    trash_folder: str = "Trash"
+    timeout: float = 30.0
+    # so viel Mailtext geht höchstens an das Modell
+    max_chars: int = 6000
+
+    @field_validator("security")
+    @classmethod
+    def _security(cls, v: str) -> str:
+        v = (v or "starttls").strip().lower()
+        return v if v in ("starttls", "ssl", "none") else "starttls"
+
+    @property
+    def secret(self) -> str:
+        return self.password or env("MAIL_PASSWORD")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.host and self.username and self.secret)
+
+    @property
+    def verify(self) -> bool:
+        if self.verify_ssl is not None:
+            return self.verify_ssl
+        return self.host.strip().lower() not in ("127.0.0.1", "localhost", "::1")
+
+
+BRIEFING_SECTIONS = ("weather", "calendar", "reminders", "mail", "paperless_inbox", "news", "updates", "storage")
 
 
 class BriefingConfig(BaseModel):
@@ -305,6 +342,7 @@ class Config(BaseModel):
     weather: WeatherConfig = Field(default_factory=WeatherConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     briefing: BriefingConfig = Field(default_factory=BriefingConfig)
+    mail: MailConfig = Field(default_factory=MailConfig)
     # Zusätzliche Websites für open_website: Name → URL; "{q}" wird durch die Suche ersetzt
     websites: dict[str, str] = Field(default_factory=dict)
 

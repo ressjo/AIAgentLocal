@@ -110,6 +110,18 @@ class PaperlessClient:
             raise PaperlessError(f"Paperless hat die Änderung abgelehnt ({r.status_code}): {detail}")
         return r.json() if r.content else {}
 
+    async def upload(self, filename: str, data: bytes, content_type: str = "application/pdf", title: str = "") -> str:
+        """Dokument hochladen (POST /documents/post_document/) – liefert die Aufgaben-ID; Paperless verarbeitet es
+        danach im Hintergrund."""
+        r = await self.request("POST", "/documents/post_document/", files={"document": (filename, data, content_type)},
+                               data={"title": title} if title.strip() else None)
+        if r.status_code >= 400:
+            raise PaperlessError(f"Paperless hat den Upload abgelehnt ({r.status_code}): {r.text[:200]}")
+        try:
+            return str(r.json())
+        except ValueError:
+            return r.text.strip().strip('"')
+
     async def resolve(self, kind: str, name: str, created: list[str]) -> int:
         """ID zu einem Namen (Groß-/Kleinschreibung egal); fehlt er, wird er angelegt (Bestätigung liegt vor)."""
         names = await self.names(kind)

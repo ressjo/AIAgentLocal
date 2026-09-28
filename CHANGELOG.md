@@ -41,6 +41,10 @@ First public release.
 - Integrations: **Home Assistant**, **Paperless-ngx** (search, ask, open documents; suggest and apply
   correspondent, type, tags, title and date – also for many documents at once, after one confirmation),
   **Obsidian** vaults, **Trilium** notes and a **CalDAV/iCloud** calendar.
+- **E-mail** via IMAP – **Proton Mail through the Proton Mail Bridge** or any other mailbox: list unread mails,
+  search, read (without marking as read), ask about a mail, archive/move/label/trash and PDF attachments to
+  Paperless after confirmation, unread mails in the briefing. Mail content is passed to the model as untrusted
+  data; after reading a mail, all further actions in that request need confirmation.
 - Small context windows get only the tool groups that match the request; `tools.disabled` switches tools off.
 
 ### Web UI

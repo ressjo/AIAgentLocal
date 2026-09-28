@@ -22,6 +22,7 @@ from .tools.proc import clip
 from .tools.registry import (
     BLOCKED,
     CONFIRM,
+    SAFE,
     ToolContext,
     coerce_args,
     get_tool,
@@ -32,6 +33,12 @@ from .tools.registry import (
 from .tools.system import _os_name
 
 log = logging.getLogger(__name__)
+
+# Nach dem Lesen fremder Mailinhalte brauchen auch sonst sichere Tools dieser Gruppen eine Bestätigung –
+# eine Mail könnte versteckte Anweisungen enthalten (z. B. Daten per fetch_url nach außen schicken).
+TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_briefing"}
+TAINT_GUARDED = {"shell", "web", "files", "apps", "obsidian", "trilium", "calendar_tools", "homeassistant",
+                 "memory_tools", "reminder_tools", "power"}
 
 ANSWER_RESERVE = 1500  # Token, die im Kontextfenster für die Antwort frei bleiben
 Emit = Callable[[dict], Awaitable[None]]
@@ -171,6 +178,7 @@ class Agent:
         """think: Denkmodus für diese Anfrage (None = Einstellung des Modell-Profils)."""
         async with self.lock:
             self._think = think
+            self._tainted = False
             try:
                 return await self._run(user_text, emit, confirm)
             finally:
@@ -342,6 +350,8 @@ class Agent:
             return name, f"Fehlende Parameter: {', '.join(missing)}", f"{name}: Parameter fehlen"
         ctx = ToolContext(cfg=self.cfg, memory=self.memory, emit=emit, call_id=call_id, services=self.services)
         risk, reason = spec.assess(ctx, args)
+        if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED:
+            risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
         args_str = json.dumps(args, ensure_ascii=False)
         await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": reason})
 
@@ -360,6 +370,8 @@ class Agent:
         try:
             result = await spec.func(ctx, **args)
             status = "ok"
+            if name in TAINT_SOURCES and (name != "daily_briefing" or "E-Mail:" in result):
+                self._tainted = True
         except asyncio.CancelledError:
             await emit({"type": "tool_result", "id": call_id, "status": "error", "text": "abgebrochen"})
             raise
