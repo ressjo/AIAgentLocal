@@ -22,6 +22,9 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 
 > Jarvis is an independent hobby project. It is not affiliated with or endorsed by Marvel or Disney; it does not
 > ship the film voice or any other copyrighted material.
+>
+> ⚠ Jarvis can run commands on your computer (with root, if you allow it). Use it at your own risk – see the
+> [Disclaimer](#disclaimer).
 
 ## Features
 
@@ -438,6 +441,38 @@ JARVIS_FAKE_LLM=1 uv run jarvis serve --open       # UI demo without a model ("/
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the project layout and how to write a new tool.
+
+## Disclaimer
+
+Jarvis is a hobby project, provided **"as is", without warranty of any kind** (see the [MIT license](LICENSE)).
+It lets a language model run shell commands, install and remove packages, control services, write files and –
+if you enter your password – act as root. Language models make mistakes and can misunderstand you. Jarvis asks
+for confirmation before changing anything, but that only protects you if you read what you approve.
+
+- Read every confirmation dialog before clicking **Allow**.
+- Keep backups, and do not run Jarvis on production systems or computers that are not yours.
+- Keep `host: 127.0.0.1` – never expose Jarvis to a network or the internet (see [SECURITY.md](SECURITY.md)).
+- Check answers that matter (health, money, legal, security) against reliable sources.
+
+You use Jarvis at your own risk; the authors are not liable for any damage, data loss or costs resulting from
+its use, to the extent permitted by applicable law.
+
+## Third-party components & licenses
+
+Jarvis's own code is MIT-licensed. It does not ship third-party models or voices; the installer downloads them
+from their original sources, and their licenses apply:
+
+| Component | Used for | License |
+|---|---|---|
+| [piper-tts](https://github.com/OHF-Voice/piper1-gpl) | speech output (optional `voice` extra) | GPL-3.0-or-later |
+| Piper voices (e.g. `de_DE-thorsten-high`, `en_GB-alan-medium`) | voice | per voice – see its `MODEL_CARD` |
+| [openWakeWord](https://github.com/dscripka/openWakeWord) | wake word | code Apache-2.0 · pre-trained "hey_jarvis" model **CC BY-NC-SA 4.0 (non-commercial)** |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) + Whisper models | speech recognition | MIT |
+| Language models via Ollama / Bonsai-demo (Qwen, Llama, Mistral, gpt-oss, Bonsai, …) | chat | per model – see its model card |
+| [ddgs](https://pypi.org/project/ddgs/), [trafilatura](https://github.com/adbar/trafilatura), [caldav](https://github.com/python-caldav/caldav) | web search, page text, calendar | MIT · Apache-2.0 · GPL-3.0-or-later OR Apache-2.0 |
+
+If you redistribute Jarvis together with these components (e.g. as a package or image), you must comply with
+their licenses as well. Using the "Hey Jarvis" wake word model commercially is not allowed by its license.
 
 ## License
 

@@ -52,3 +52,6 @@ First public release.
 - Web search via the official **Brave Search API** (key asked for by the installer) – no scraping of result
   pages and no bot blocking; SearXNG and ddgs remain as alternatives.
 - `jarvis doctor`, `jarvis update`.
+
+### Project
+- MIT license, security policy, disclaimer and an overview of third-party components and their licenses.
