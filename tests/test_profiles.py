@@ -110,7 +110,8 @@ def test_stream_text_and_timings():
     assert [e["text"] for e in events if e["type"] == "token"] == ["Guten ", "Abend."]
     done = events[-1]
     assert done["message"] == {"role": "assistant", "content": "Guten Abend."}
-    assert done["stats"] == {"tokens": 5, "tps": 19.2, "prompt_tokens": 800, "prompt_tps": 300.0}
+    assert done["stats"] == {"tokens": 5, "tps": 19.2, "prompt_tokens": 800, "prompt_total": 800,
+                             "prompt_tps": 300.0}
     assert seen["auth"] == "Bearer geheim"
     body = seen["body"]
     assert body["stream"] and body["tools"] and body["chat_template_kwargs"] == {"enable_thinking": False}
@@ -408,3 +409,46 @@ def test_context_overflow_detected_and_agent_retries_smaller(cfg, memory):
     llm = TightLLM()
     assert run(Agent(cfg, llm, memory).run("Und jetzt?", emit, confirm)) == "passt"
     assert len(llm.sizes) == 2 and llm.sizes[1] < llm.sizes[0]
+
+
+def test_prompt_total_includes_cache():
+    from jarvis.llm import openai_stats
+    st = openai_stats({"predicted_n": 5, "predicted_per_second": 20, "prompt_n": 120, "cache_n": 4800}, {}, None, 0)
+    assert st["prompt_total"] == 4920 and st["prompt_tokens"] == 120
+    assert openai_stats({}, {"prompt_tokens": 777, "completion_tokens": 3}, None, 0)["prompt_total"] == 777
+
+
+def test_context_event_reports_usage_and_trimming(cfg, memory):
+    class LLM:
+        context_size = 8192
+
+        async def chat_stream(self, messages, tools=None):
+            yield {"type": "done", "message": {"role": "assistant", "content": "ok"},
+                   "stats": {"tps": 20.0, "prompt_total": 3456}}
+
+    events = []
+
+    async def emit(e):
+        events.append(e)
+
+    async def confirm(*a):
+        return False
+
+    agent = Agent(cfg, LLM(), memory)
+    run(agent.run("Hallo", emit, confirm))
+    ctx_events = [e for e in events if e["type"] == "context"]
+    first, last = ctx_events[0], ctx_events[-1]
+    assert first["window"] == 8192 and first["budget"] == 8192 - 1500
+    parts = first["parts"]
+    assert parts["tools"] > 0 and parts["system"] > 0 and parts["history"] > 0
+    assert first["used"] == sum(parts.values()) and not first["trimmed"]
+    assert last["real"] == 3456 and agent.last_context["real"] == 3456
+
+    # sehr langer Verlauf → wird gekürzt, Anzeige meldet das
+    for i in range(80):
+        memory.conversation.add({"role": "user", "content": f"Frage {i} " + "x" * 900})
+        memory.conversation.add({"role": "assistant", "content": "y" * 900})
+    events.clear()
+    run(agent.run("Und?", emit, confirm))
+    ev = next(e for e in events if e["type"] == "context")
+    assert ev["trimmed"] and ev["used"] <= ev["budget"] + 200

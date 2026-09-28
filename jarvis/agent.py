@@ -16,6 +16,7 @@ from pathlib import Path
 from .config import Config
 from .llm import ContextOverflow, LLMError, strip_think
 from .memory import Memory, est_tokens
+from .memory.context import TRIM_NOTE, msg_tokens
 from .memory.files import german_date
 from .tools.proc import clip
 from .tools.registry import BLOCKED, CONFIRM, ToolContext, coerce_args, get_tool, load_all_tools, missing_args, tool_schemas
@@ -77,6 +78,7 @@ class Agent:
         self.memory = memory
         self._budget_scale = 1.0  # < 1, wenn der Server „Kontext zu klein“ gemeldet hat
         self._think: bool | None = None
+        self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
         self.tools = load_all_tools()
         self.schemas = tool_schemas(cfg)
         self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
@@ -137,7 +139,8 @@ Verhalten:
 
     def build_messages(self, hits) -> list[dict]:
         conv = self.memory.conversation
-        sections = [self.system_prompt()]
+        base = self.system_prompt()
+        sections = [base]
         facts = self.memory.facts_text()
         if facts:
             sections.append("## Dauerhafte Fakten\n" + facts)
@@ -147,17 +150,35 @@ Verhalten:
         if conv.running_summary:
             sections.append("## Früherer Verlauf dieses Gesprächs (zusammengefasst)\n" + conv.running_summary)
         system = "\n\n".join(sections)
-        budget = self.context_budget() - est_tokens(system) - self.schema_tokens
-        return [{"role": "system", "content": system}, *conv.trimmed_history(max(budget, 1000))]
+        total_budget = self.context_budget()
+        budget = total_budget - est_tokens(system) - self.schema_tokens
+        history = conv.trimmed_history(max(budget, 1000))
+        # Für die Anzeige „Kontext“ in der Oberfläche (Schätzung; echte Server-Token kommen nach dem Schritt)
+        base_t, system_t = est_tokens(base), est_tokens(system)
+        history_t = sum(msg_tokens(m) for m in history)
+        trimmed = len(history) < len(conv.history) or any(
+            m["role"] == "tool" and (m.get("content") or "").endswith(TRIM_NOTE) for m in history)
+        self.last_context = {
+            "window": self.model_window(), "budget": total_budget,
+            "used": system_t + self.schema_tokens + history_t,
+            "parts": {"system": base_t, "tools": self.schema_tokens, "memory": system_t - base_t,
+                      "history": history_t},
+            "trimmed": trimmed,
+        }
+        return [{"role": "system", "content": system}, *history]
 
-    def context_budget(self) -> int:
-        """Prompt-Budget: Kontextfenster des aktiven Modells (optional begrenzt durch context_budget_tokens)
-        (abzüglich Platz für die Antwort) – z. B. Bonsai mit 8192 Token."""
+    def model_window(self) -> int:
+        """Kontextfenster des aktiven Modells (vom Server gemeldet, sonst aus der Config)."""
         num_ctx = getattr(self.llm, "context_size", None)
         if not num_ctx:
             profile = getattr(self.llm, "profile", None)
             num_ctx = getattr(profile, "num_ctx", None) or self.cfg.llm.num_ctx
-        budget = int(num_ctx) - ANSWER_RESERVE
+        return int(num_ctx)
+
+    def context_budget(self) -> int:
+        """Prompt-Budget: Kontextfenster des aktiven Modells (optional begrenzt durch context_budget_tokens)
+        (abzüglich Platz für die Antwort) – z. B. Bonsai mit 8192 Token."""
+        budget = self.model_window() - ANSWER_RESERVE
         if self.cfg.memory.context_budget_tokens:
             budget = min(budget, self.cfg.memory.context_budget_tokens)
         return max(2000, int(budget * self._budget_scale))
@@ -263,7 +284,9 @@ Verhalten:
         result: dict = {}
         await emit({"type": "state", "state": "thinking"})
         async for ev in self._stream_fitting(hits, final=final):
-            if ev["type"] == "token":
+            if ev["type"] == "context":
+                await emit(ev)
+            elif ev["type"] == "token":
                 text = filt.feed(ev["text"])
                 thought = filt.take_thought()
                 if thought:
@@ -275,8 +298,12 @@ Verhalten:
                 await emit({"type": "reasoning", "id": msg_id, "text": ev.get("text", "")})
             elif ev["type"] == "done":
                 result = ev["message"]
-                if ev.get("stats", {}).get("tps"):
-                    await emit({"type": "llm_stats", **ev["stats"]})
+                stats = ev.get("stats") or {}
+                if stats.get("tps"):
+                    await emit({"type": "llm_stats", **stats})
+                if self.last_context is not None and stats.get("prompt_total"):
+                    self.last_context["real"] = stats["prompt_total"]
+                    await emit({"type": "context", **self.last_context})
         tail = filt.flush()
         if tail:
             await emit({"type": "token", "id": msg_id, "text": tail})
@@ -291,6 +318,7 @@ Verhalten:
         for attempt in range(3):
             try:
                 messages = self.build_messages(hits)
+                yield {"type": "context", **(self.last_context or {})}
                 if final:
                     messages.append({"role": "user", "content": FINAL_NUDGE})
                 kwargs = {} if self._think is None else {"think": self._think}

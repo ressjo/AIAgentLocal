@@ -191,7 +191,7 @@ button { font-family: inherit; cursor: pointer; }
 .core #orb { top: 92px; height: calc(100% - 92px); }
 .telemetry {
   position: absolute; top: 0; left: 0; right: 0; z-index: 1;
-  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px;
+  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px;
 }
 .tele {
   position: relative; padding: 6px 8px 4px; background: rgba(4, 16, 28, .55);
@@ -199,7 +199,7 @@ button { font-family: inherit; cursor: pointer; }
 }
 .tele-label { font-size: 10px; letter-spacing: .25em; color: var(--muted); }
 .tele-value { font-family: var(--mono); color: var(--accent); white-space: nowrap; overflow: hidden; }
-.tele-num { font-size: 19px; }
+.tele-num { font-size: 18px; }
 .tele-unit { font-size: 10px; color: var(--muted); margin-left: 3px; }
 .tele-sub { font-family: var(--mono); font-size: 10px; color: var(--muted); min-height: 1.2em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tele-bar { height: 3px; background: rgba(63,208,255,.12); margin-top: 3px; }

@@ -246,7 +246,11 @@
     switch (ev.type) {
       case "hello":
         if (ev.busy) S.serverState = "thinking";
+        if (ev.context) showContext(ev.context);
         break;
+      case "context":
+        showContext(ev);
+        return;
       case "state":
         S.serverState = ev.state === "confirm" ? S.serverState : ev.state;
         S.substate = ev.state === "executing" && ev.tool ? ev.tool : "";
@@ -919,7 +923,32 @@
 
   // ---------------------------------------------------------------- Telemetrie
   const T = { tokenTimes: [], exactTps: null, lastExact: 0, spark: {} };
-  const SPARK_MAX = { gpu: 100, power: null, vram: null, ram: null, tps: null };
+  const SPARK_MAX = { gpu: 100, power: null, vram: null, ram: null, tps: null, ctx: 100 };
+
+  // Kontext-Budget: genutzte (geschätzte) Prompt-Token im Verhältnis zum Budget des Modells
+  function kTok(n) {
+    return n >= 1000 ? `${fmt(n / 1000, n >= 10000 ? 0 : 1)}k` : String(n);
+  }
+  function showContext(c) {
+    if (!c || !c.budget) return;
+    const pct = (100 * c.used) / c.budget;
+    const p = c.parts || {};
+    setTile("ctx", c.used / 1000, {
+      pct,
+      digits: 1,
+      sub: `${Math.round(pct)} %` + (c.trimmed ? " · gekürzt" : ""),
+      title: [
+        `Prompt ca. ${c.used} von ${c.budget} Token Budget (Fenster ${c.window}, Rest bleibt für die Antwort)`,
+        `System ${p.system ?? "?"} · Tools ${p.tools ?? "?"} · Gedächtnis ${p.memory ?? "?"} · Verlauf ${p.history ?? "?"}`,
+        c.real ? `Laut Modell-Server: ${c.real} Token` : "",
+        c.trimmed ? "Ältere Teile/lange Tool-Ergebnisse wurden gekürzt, damit alles passt." : "",
+      ].filter(Boolean).join("\n"),
+    });
+    $("tele-ctx").querySelector(".tele-num").textContent = kTok(c.used);
+    $("tele-ctx").querySelector(".tele-unit").textContent = "/" + Math.round(c.budget / 1000) + "k";
+    $("tele-ctx").classList.toggle("warn", c.trimmed || (pct >= 80 && pct < 95));
+    pushSpark("ctx", Math.min(100, pct));
+  }
 
   function fmt(v, digits = 1) {
     return v === null || v === undefined || Number.isNaN(v) ? "–" : Number(v).toLocaleString("de-DE", {

@@ -458,7 +458,7 @@ def create_app(cfg: Config) -> FastAPI:
         client.audio = AudioSession(cfg.voice, stt, wake, client.send, lambda t: hub.submit(t, "voice"))
         hub.clients.add(client)
         await client.send({"type": "hello", "busy": agent.lock.locked(),
-                           "pending": [cid for cid in hub.pending]})
+                           "pending": [cid for cid in hub.pending], "context": agent.last_context})
         if hub.undelivered:
             events, hub.undelivered = hub.undelivered, []
             for event in events:

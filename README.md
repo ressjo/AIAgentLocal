@@ -180,6 +180,7 @@ Oben über dem Orb zeigt eine HUD-Leiste live (alle 2 s, mit Verlaufskurve):
 | Kachel | Quelle |
 |---|---|
 | **TOK/S** | Live geschätzt während Jarvis schreibt, danach der exakte Wert von Ollama (+ Prompt-Verarbeitung) |
+| **KONTEXT** | Wie voll der Prompt ist: genutzte / verfügbare Token (Kontextfenster minus Reserve für die Antwort). Tooltip: Aufteilung System · Tools · Gedächtnis · Verlauf und die echte Zahl laut Modell-Server; „gekürzt“ = ältere Teile oder lange Tool-Ergebnisse mussten weichen |
 | **GPU** | Auslastung in % und Temperatur |
 | **VRAM** | Belegter / gesamter Grafikspeicher |
 | **RAM** | Belegter / gesamter Arbeitsspeicher, dazu CPU-Last |

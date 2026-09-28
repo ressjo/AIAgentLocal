@@ -342,14 +342,18 @@ class OpenAICompatLLM:
 
 def openai_stats(timings: dict, usage: dict, first_token: float | None, started: float) -> dict:
     """Token/s aus llama.cpp-Timings, sonst aus usage + gemessener Zeit."""
+    # Gesamtgröße des Prompts: neu verarbeitete + aus dem Cache wiederverwendete Token
+    total = usage.get("prompt_tokens")
+    if timings.get("prompt_n") is not None:
+        total = (timings.get("prompt_n") or 0) + (timings.get("cache_n") or 0) or total
     if timings.get("predicted_per_second"):
         return {"tokens": timings.get("predicted_n"), "tps": round(timings["predicted_per_second"], 1),
-                "prompt_tokens": timings.get("prompt_n"),
+                "prompt_tokens": timings.get("prompt_n"), "prompt_total": total,
                 "prompt_tps": round(timings["prompt_per_second"], 1) if timings.get("prompt_per_second") else None}
     tokens = usage.get("completion_tokens")
     elapsed = time.monotonic() - (first_token or started)
     return {"tokens": tokens, "tps": round(tokens / elapsed, 1) if tokens and elapsed > 0 else None,
-            "prompt_tokens": usage.get("prompt_tokens"), "prompt_tps": None}
+            "prompt_tokens": usage.get("prompt_tokens"), "prompt_total": total, "prompt_tps": None}
 
 
 def generation_stats(chunk: dict) -> dict:
@@ -360,6 +364,7 @@ def generation_stats(chunk: dict) -> dict:
         "tokens": chunk.get("eval_count"),
         "tps": rate(chunk.get("eval_count"), chunk.get("eval_duration")),
         "prompt_tokens": chunk.get("prompt_eval_count"),
+        "prompt_total": chunk.get("prompt_eval_count"),
         "prompt_tps": rate(chunk.get("prompt_eval_count"), chunk.get("prompt_eval_duration")),
     }
 

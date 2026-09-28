@@ -83,7 +83,8 @@ def test_ollama_token_stats():
         return [e async for e in llm.chat_stream([{"role": "user", "content": "x"}])]
 
     done = run(go())[-1]
-    assert done["stats"] == {"tokens": 120, "tps": 60.0, "prompt_tokens": 900, "prompt_tps": 1800.0}
+    assert done["stats"] == {"tokens": 120, "tps": 60.0, "prompt_tokens": 900, "prompt_total": 900,
+                             "prompt_tps": 1800.0}
 
 
 def test_agent_emits_llm_stats(cfg, llm, memory):
