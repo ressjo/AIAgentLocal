@@ -41,7 +41,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Shell** | Any bash command – read-only ones run directly, changing ones only after confirmation, destructive ones never |
 | **Everyday** | Weather (Open-Meteo), reminders and timers, morning briefing |
 | **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
-| **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF (read-only) |
+| **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation) |
 | **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
 | **Trilium** | Search and read notes, create notes in the inbox, append to notes |
 | **Calendar** | iCloud or any CalDAV server: list events, find free time, create/change/delete events |
@@ -296,7 +296,14 @@ Locks, alarm panels and garage doors/gates always require confirmation.
 
 Search (full text incl. OCR, filter by correspondent/tag/type/date), **ask questions about a document** (short
 documents are read completely, long ones only the most relevant passages), read, and open as PDF (cached in
-`~/.cache/orbwise/paperless/`). Read-only – nothing is changed in Paperless.
+`~/.cache/orbwise/paperless/`).
+
+**Classify documents:** "Sort my inbox" or "Assign document 42" – Orbwise looks at the text, Paperless' own
+suggestions and your existing correspondents, document types and tags, shows a proposal (correspondent, type,
+tags to add/remove, title, date) and applies it for one or many documents after **one confirmation**. The
+confirmation dialog lists every change and marks correspondents/types/tags that would be **created new** (with a
+hint if a similar one already exists). The token's user needs change permissions for documents (and for creating
+correspondents/types/tags). To keep Paperless read-only: `tools: {disabled: [paperless_apply_metadata]}`.
 
 ### Obsidian notes
 

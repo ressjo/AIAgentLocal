@@ -1,5 +1,6 @@
 """In-Memory-Nachbildung der Paperless-ngx-REST-API für Tests (httpx.MockTransport)."""
 
+import json
 import re
 
 import httpx
@@ -24,6 +25,11 @@ class FakePaperless:
              "original_file_name": "strom.jpg"},
         ]
         self.requests: list[httpx.Request] = []
+        self.patches: list[tuple[int, dict]] = []
+        # Vorschläge des Paperless-Klassifikators (leer = Endpunkt fehlt → 404, wie bei alten Versionen)
+        self.suggestions: dict[int, dict] = {8: {"correspondents": [2], "document_types": [21], "tags": [11],
+                                                 "dates": ["2026-09-01"]}}
+        self.legacy_dates = False  # alte Versionen: Datum nur über created_date
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -34,8 +40,32 @@ class FakePaperless:
             return httpx.Response(401, json={"detail": "Ungültiges Token."})
         path, q = request.url.path.removeprefix("/api"), request.url.params
         lists = {"/correspondents/": self.correspondents, "/tags/": self.tags, "/document_types/": self.types}
+        if path in lists and request.method == "POST":
+            name = json.loads(request.content)["name"]
+            if any(x["name"].lower() == name.lower() for x in lists[path]):
+                return httpx.Response(400, json={"name": ["existiert bereits"]})
+            item = {"id": 100 + sum(len(v) for v in lists.values()), "name": name}
+            lists[path].append(item)
+            return httpx.Response(201, json=item)
         if path in lists:
             return httpx.Response(200, json={"count": len(lists[path]), "results": lists[path]})
+        m = re.fullmatch(r"/documents/(\d+)/suggestions/", path)
+        if m:
+            if not self.suggestions:
+                return httpx.Response(404, json={"detail": "Nicht gefunden."})
+            return httpx.Response(200, json=self.suggestions.get(int(m.group(1)), {}))
+        m = re.fullmatch(r"/documents/(\d+)/", path)
+        if m and request.method == "PATCH":
+            doc = next((d for d in self.docs if d["id"] == int(m.group(1))), None)
+            if not doc:
+                return httpx.Response(404, json={"detail": "Nicht gefunden."})
+            body = json.loads(request.content)
+            if "created" in body and self.legacy_dates:
+                return httpx.Response(400, json={"created": ["Datetime has wrong format."]})
+            self.patches.append((doc["id"], dict(body)))
+            body["created"] = body.pop("created_date", body.get("created", doc["created"]))
+            doc.update(body)
+            return httpx.Response(200, json=doc)
         if path == "/documents/":
             docs = list(self.docs)
             if q.get("query"):

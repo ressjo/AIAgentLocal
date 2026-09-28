@@ -22,7 +22,8 @@ KEYWORDS = {
                      r"steckdose|plug|schalte|switch|szene|scene|temperatur|temperature|sensor|smart ?home|"
                      r"home assistant|garage|\btür|door|schloss|lock|ventilator|fan|dimm|hell|bright|staubsauger|vacuum",
     "paperless": r"dokument|document|rechnung|invoice|vertrag|contract|\bbrief|letter|paperless|bescheid|"
-                 r"versicherung|insurance|quittung|receipt|garantie|warranty|kündig|cancel|steuer|tax|\bpdf",
+                 r"versicherung|insurance|quittung|receipt|garantie|warranty|kündig|cancel|steuer|tax|\bpdf|"
+                 r"\btag|korrespondent|correspondent|dokumenttyp|document type|posteingang|inbox|einordn|sortier|classif",
     "trilium": r"notiz|note|trilium|notier|aufschrieb|anleitung|how-?to|wiki|schreib (das |mir )?auf|write down",
     "obsidian": r"notiz|note|obsidian|notier|aufschrieb|anleitung|how-?to|wiki|protokoll|minutes|vault|"
                 r"schreib (das |mir )?auf|write down",

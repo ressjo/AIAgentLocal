@@ -91,7 +91,9 @@ def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None,
             jtype, pytype = _json_type(hint)
             prop: dict[str, Any] = {"type": jtype}
             if jtype == "array":
-                prop["items"] = {"type": "string"}
+                item = (get_args(hint) or (str,))[0]
+                is_obj = get_origin(item) is dict or item is dict
+                prop["items"] = {"type": "object" if is_obj else _JSON_TYPES.get(item, "string")}
             if desc:
                 prop["description"] = desc
             props[pname] = prop

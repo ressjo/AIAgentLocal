@@ -35,11 +35,11 @@ First public release.
 - System & network: processes, systemd services and logs, network info, ping, open ports, port check,
   disk usage and clean-up, power (shutdown, reboot, suspend, lock).
 - Files & apps: find and open files (also on a NAS), read/write text files, launch applications, websites.
-- Web search (DuckDuckGo or your own SearXNG) and page fetching, weather (Open-Meteo), reminders and timers,
-  morning briefing.
-- Integrations: **Home Assistant**, **Paperless-ngx** (search, ask, open documents), **Obsidian** vaults and
-  **Trilium** notes,
-  **CalDAV/iCloud** calendar.
+- Web search (Brave Search API, your own SearXNG or ddgs) and page fetching, weather (Open-Meteo), reminders
+  and timers, morning briefing.
+- Integrations: **Home Assistant**, **Paperless-ngx** (search, ask, open documents; suggest and apply
+  correspondent, type, tags, title and date – also for many documents at once, after one confirmation),
+  **Obsidian** vaults, **Trilium** notes and a **CalDAV/iCloud** calendar.
 - Small context windows get only the tool groups that match the request; `tools.disabled` switches tools off.
 
 ### Web UI
