@@ -160,6 +160,7 @@ def load_all_tools() -> dict[str, ToolSpec]:
         files,
         homeassistant,
         memory_tools,
+        obsidian,
         packages,
         paperless,
         power,

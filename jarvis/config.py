@@ -140,6 +140,23 @@ class ToolsConfig(BaseModel):
         return ["~" if p is None else p for p in v]
 
 
+class ObsidianConfig(BaseModel):
+    # Pfad zum Obsidian-Vault (normaler Ordner mit Markdown-Dateien), z. B. ~/Obsidian/Notes
+    vault: str = ""
+    # Ordner im Vault für neue Notizen
+    inbox: str = "Inbox"
+    # so viel Notiztext geht höchstens an das Modell (größere Notizen: abschnittsweise bzw. nur relevante Stellen)
+    max_chars: int = 8000
+
+    @property
+    def path(self) -> Path | None:
+        return Path(self.vault).expanduser() if self.vault.strip() else None
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.path and self.path.is_dir())
+
+
 class TriliumConfig(BaseModel):
     # z. B. http://localhost:8080 oder die Adresse auf dem NAS
     url: str = ""
@@ -236,6 +253,7 @@ class Config(BaseModel):
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     trilium: TriliumConfig = Field(default_factory=TriliumConfig)
+    obsidian: ObsidianConfig = Field(default_factory=ObsidianConfig)
     paperless: PaperlessConfig = Field(default_factory=PaperlessConfig)
     homeassistant: HomeAssistantConfig = Field(default_factory=HomeAssistantConfig)
     weather: WeatherConfig = Field(default_factory=WeatherConfig)

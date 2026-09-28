@@ -139,6 +139,14 @@ def cmd_doctor(args) -> None:
         from .tools.netutil import normalize_url
         line(tr["online"], f"{normalize_url(cfg.trilium.url, '/etapi')}" + (f" (Version {tr.get('version')})" if tr["online"] else ""),
              tr.get("error", ""))
+    print("Obsidian:")
+    from .tools.obsidian import obsidian_status
+    obs = asyncio.run(obsidian_status(cfg))
+    if not obs["enabled"]:
+        print(T("  – nicht konfiguriert", "  – not configured") + " (obsidian.vault)")
+    else:
+        line(obs["online"], f"Vault {obs['vault']}" + (f" – {obs['count']} {T('Notizen', 'notes')}" if obs["online"] else ""),
+             obs.get("error", ""))
     proxies = [k for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy") if os.environ.get(k)]
     if proxies and (cfg.trilium.enabled or cfg.paperless.enabled):
         print(f"  ℹ Proxy ({', '.join(proxies)}) – " + T("Heimnetz-Dienste werden bewusst direkt angesprochen", "home network services are contacted directly on purpose"))

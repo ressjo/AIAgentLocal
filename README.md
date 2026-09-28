@@ -36,6 +36,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Everyday** | Weather (Open-Meteo), reminders and timers, morning briefing |
 | **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF (read-only) |
+| **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
 | **Trilium** | Search and read notes, create notes in the inbox, append to notes |
 | **Calendar** | iCloud or any CalDAV server: list events, find free time, create/change/delete events |
 | **Memory** | Remembers everything permanently (see below), `remember` / `recall` / `forget`, **chat history** |
@@ -241,6 +242,21 @@ Locks, alarm panels and garage doors/gates always require confirmation.
 Search (full text incl. OCR, filter by correspondent/tag/type/date), **ask questions about a document** (short
 documents are read completely, long ones only the most relevant passages), read, and open as PDF (cached in
 `~/.cache/jarvis/paperless/`). Read-only – nothing is changed in Paperless.
+
+### Obsidian notes
+
+No plugin and no running Obsidian needed – Jarvis works directly on the Markdown files of your vault:
+
+```yaml
+obsidian:
+  vault: ~/Obsidian/Notes
+  inbox: Inbox               # folder for new notes
+```
+
+Search (titles, content, tags), read (long notes in sections), **ask questions about a note** (only the most
+relevant passages go to the model), create notes in the inbox, append (e.g. shopping list, log), open a note in
+the Obsidian app. Replacing a note's content requires confirmation; frontmatter is preserved and paths outside
+the vault are refused.
 
 ### Trilium notes
 

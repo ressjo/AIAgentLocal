@@ -76,6 +76,10 @@ trilium:                   # Trilium / TriliumNext notes
   token: ""                # Trilium → Options → ETAPI → create token (or $JARVIS_TRILIUM_TOKEN)
   verify_ssl: true         # HTTPS with a self-signed certificate: false (or the path to your CA file)
 
+obsidian:                  # Obsidian notes – works directly on the vault folder, no plugin needed
+  vault: ""                # e.g. ~/Obsidian/Notes – leave empty to disable
+  inbox: Inbox             # folder inside the vault for new notes
+
 paperless:                 # Paperless-ngx: search, ask and open documents (read-only)
   url: ""                  # e.g. http://nas.local:8000 – leave empty to disable
   token: ""                # Paperless → profile (top right) → API auth token (or $JARVIS_PAPERLESS_TOKEN)

@@ -33,7 +33,8 @@ First public release.
 - Files & apps: find and open files (also on a NAS), read/write text files, launch applications, websites.
 - Web search (DuckDuckGo or your own SearXNG) and page fetching, weather (Open-Meteo), reminders and timers,
   morning briefing.
-- Integrations: **Home Assistant**, **Paperless-ngx** (search, ask, open documents), **Trilium** notes,
+- Integrations: **Home Assistant**, **Paperless-ngx** (search, ask, open documents), **Obsidian** vaults and
+  **Trilium** notes,
   **CalDAV/iCloud** calendar.
 - Small context windows get only the tool groups that match the request; `tools.disabled` switches tools off.
 

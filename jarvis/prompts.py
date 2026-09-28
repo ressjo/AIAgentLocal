@@ -75,6 +75,11 @@ HINTS = {
         "trilium": "- Die persönlichen Notizen des Nutzers liegen in Trilium. Fragen zu seinen Notizen, Aufschrieben oder "
                    "Anleitungen beantwortest du mit trilium_search und trilium_read. Bei 'notier/schreib auf/leg eine "
                    "Notiz an' nutzt du trilium_create_note (landet in der Inbox), zum Ergänzen trilium_append.\n",
+        "obsidian": "- Die persönlichen Notizen des Nutzers liegen in Obsidian. Fragen zu seinen Notizen, Aufschrieben, "
+                    "Protokollen oder Anleitungen: erst obsidian_search, dann obsidian_read (ganze Notiz) oder "
+                    "obsidian_ask (Frage zum Inhalt einer langen Notiz) – antworte aus dem Text und nenne die Notiz. "
+                    "Bei 'notier/schreib auf/leg eine Notiz an' nutzt du obsidian_create_note (landet in der Inbox), "
+                    "zum Ergänzen obsidian_append, 'öffne die Notiz' → obsidian_open.\n",
         "homeassistant": "- Das Smart Home des Nutzers läuft über Home Assistant: Geräte finden mit ha_find (nach Name, "
                          "Raum oder Typ), Zustand mit ha_state, schalten/dimmen/Temperatur/Rollos/Szenen mit ha_control. "
                          "Nutze die entity_id aus ha_find.\n",
@@ -93,6 +98,11 @@ HINTS = {
         "trilium": "- The user's personal notes live in Trilium. Answer questions about notes or how-tos with "
                    "trilium_search and trilium_read. For 'note down / write down / create a note' use "
                    "trilium_create_note (goes to the inbox), to extend a note use trilium_append.\n",
+        "obsidian": "- The user's personal notes live in Obsidian. For questions about notes, minutes or how-tos: first "
+                    "obsidian_search, then obsidian_read (whole note) or obsidian_ask (question about a long note) – "
+                    "answer from the text and name the note. For 'note down / write down / create a note' use "
+                    "obsidian_create_note (goes to the inbox), to extend a note obsidian_append, 'open the note' → "
+                    "obsidian_open.\n",
         "homeassistant": "- The user's smart home runs on Home Assistant: find devices with ha_find (by name, room or "
                          "type), read state with ha_state, switch/dim/set temperature/covers/scenes with ha_control. "
                          "Use the entity_id returned by ha_find.\n",
@@ -163,6 +173,9 @@ def hints(cfg) -> str:
         out += h["paperless"]
     if cfg.trilium.enabled:
         out += h["trilium"]
+    obs = getattr(cfg, "obsidian", None)
+    if obs is not None and obs.enabled:
+        out += h["obsidian"]
     if ha_on:
         out += h["homeassistant"]
     return out

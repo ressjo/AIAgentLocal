@@ -24,6 +24,8 @@ KEYWORDS = {
     "paperless": r"dokument|document|rechnung|invoice|vertrag|contract|\bbrief|letter|paperless|bescheid|"
                  r"versicherung|insurance|quittung|receipt|garantie|warranty|kündig|cancel|steuer|tax|\bpdf",
     "trilium": r"notiz|note|trilium|notier|aufschrieb|anleitung|how-?to|wiki|schreib (das |mir )?auf|write down",
+    "obsidian": r"notiz|note|obsidian|notier|aufschrieb|anleitung|how-?to|wiki|protokoll|minutes|vault|"
+                r"schreib (das |mir )?auf|write down",
     "calendar_tools": r"termin|kalender|calendar|meeting|appointment|\bevent|verabred|besprechung|"
                       r"frei(e zeit)?\b|free time|schedule|wann habe ich|when do i",
 }
