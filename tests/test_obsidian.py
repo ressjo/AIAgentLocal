@@ -1,9 +1,9 @@
 import pytest
 from conftest import run
 
-from jarvis.agent import Agent
-from jarvis.tools import obsidian as ob
-from jarvis.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
+from orbwise.agent import Agent
+from orbwise.tools import obsidian as ob
+from orbwise.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
 
 TOOLS = {"obsidian_search", "obsidian_read", "obsidian_ask", "obsidian_create_note", "obsidian_append",
          "obsidian_update_note", "obsidian_open"}

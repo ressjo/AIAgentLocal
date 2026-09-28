@@ -2,9 +2,9 @@ import pytest
 from conftest import run
 from fake_trilium import TOKEN, FakeTrilium
 
-from jarvis.agent import Agent
-from jarvis.tools import trilium as tr
-from jarvis.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
+from orbwise.agent import Agent
+from orbwise.tools import trilium as tr
+from orbwise.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
 
 TRILIUM_TOOLS = {"trilium_search", "trilium_read", "trilium_create_note", "trilium_append", "trilium_update_note"}
 
@@ -27,12 +27,12 @@ def names(schemas):
 
 
 def test_tools_only_when_configured(cfg, monkeypatch):
-    monkeypatch.delenv("JARVIS_TRILIUM_TOKEN", raising=False)
+    monkeypatch.delenv("ORBWISE_TRILIUM_TOKEN", raising=False)
     load_all_tools()
     assert not TRILIUM_TOOLS & names(tool_schemas(cfg))
     cfg.trilium.url, cfg.trilium.token = "http://x", "t"
     assert TRILIUM_TOOLS <= names(tool_schemas(cfg))
-    monkeypatch.setenv("JARVIS_TRILIUM_TOKEN", "env")
+    monkeypatch.setenv("ORBWISE_TRILIUM_TOKEN", "env")
     cfg.trilium.token = ""
     assert cfg.trilium.enabled
 

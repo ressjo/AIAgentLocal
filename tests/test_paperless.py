@@ -3,8 +3,8 @@ import pytest
 from conftest import run
 from fake_paperless import TOKEN, FakePaperless
 
-from jarvis.tools import paperless as pl
-from jarvis.tools.registry import SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
+from orbwise.tools import paperless as pl
+from orbwise.tools.registry import SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
 
 TOOLS = {"paperless_search", "paperless_ask", "paperless_read", "paperless_open"}
 
@@ -27,7 +27,7 @@ def names(schemas):
 
 
 def test_tools_only_when_configured_and_read_only(cfg, monkeypatch):
-    monkeypatch.delenv("JARVIS_PAPERLESS_TOKEN", raising=False)
+    monkeypatch.delenv("ORBWISE_PAPERLESS_TOKEN", raising=False)
     load_all_tools()
     assert not TOOLS & names(tool_schemas(cfg))
     cfg.paperless.url, cfg.paperless.token = "http://x", "t"
@@ -85,14 +85,14 @@ def test_open_downloads_to_cache_and_opens(cfg, fake, tmp_path, monkeypatch):
     monkeypatch.setattr(pl.proc, "launch", fake_launch)
     monkeypatch.setattr(pl.shutil, "which", lambda c: "/usr/bin/" + c)
     out = run(pl.paperless_open(ctx(cfg), 7))
-    target = tmp_path / "jarvis" / "paperless" / "7-Handyvertrag Telekom.pdf"
+    target = tmp_path / "orbwise" / "paperless" / "7-Handyvertrag Telekom.pdf"
     assert target.read_bytes() == b"%PDF-1.7 archiv" and "Geöffnet" in out
     assert launched == [["xdg-open", str(target)]]
     n = len(fake.requests)
     run(pl.paperless_open(ctx(cfg), 7))  # zweites Mal aus dem Cache
     assert not any("download" in str(r.url) for r in fake.requests[n:])
     run(pl.paperless_open(ctx(cfg), 8, original=True))
-    assert (tmp_path / "jarvis" / "paperless" / "8-Stromrechnung 2026.jpg").read_bytes() == b"ORIGINAL"
+    assert (tmp_path / "orbwise" / "paperless" / "8-Stromrechnung 2026.jpg").read_bytes() == b"ORIGINAL"
 
 
 def test_errors(cfg, fake):
@@ -114,7 +114,7 @@ def test_status_and_unreachable(cfg, fake, monkeypatch):
     import httpx
     monkeypatch.setattr(pl, "TRANSPORT", httpx.MockTransport(boom))
     out = run(pl.paperless_search(ctx(cfg), "x"))
-    assert "Paperless unter http://paperless.local:8000" in out and "jarvis doctor" in out
+    assert "Paperless unter http://paperless.local:8000" in out and "orbwise doctor" in out
 
 
 def test_split_passages_overlap_and_coverage():
@@ -125,7 +125,7 @@ def test_split_passages_overlap_and_coverage():
 
 
 def test_url_normalization():
-    from jarvis.tools.netutil import normalize_url
+    from orbwise.tools.netutil import normalize_url
     assert normalize_url("https:///192.168.1.20:8444") == "https://192.168.1.20:8444"
     assert normalize_url("https://nas:8444/api/", "/api") == "https://nas:8444"
     assert normalize_url("nas.local:8000") == "http://nas.local:8000"
@@ -141,7 +141,7 @@ def test_client_uses_normalized_url_no_proxy_and_verify_option(cfg, monkeypatch)
     assert str(pc.client.base_url) == "https://192.168.1.20:8444/api/"
     assert pc.client._trust_env is False
     cfg.paperless.verify_ssl = False
-    from jarvis.tools.netutil import verify_arg
+    from orbwise.tools.netutil import verify_arg
     assert verify_arg(False) is False and verify_arg(True) is True
     with pytest.raises((FileNotFoundError, ssl.SSLError, OSError)):
         verify_arg("/gibt/es/nicht.pem")

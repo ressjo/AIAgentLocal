@@ -1,7 +1,7 @@
-from jarvis.server import check_host, parse_yes_no
-from jarvis.tools.apps import App, match_app
-from jarvis.tools.registry import coerce_args, get_tool, load_all_tools
-from jarvis.voice.tts import SentenceSplitter, clean_for_speech
+from orbwise.server import check_host, parse_yes_no
+from orbwise.tools.apps import App, match_app
+from orbwise.tools.registry import coerce_args, get_tool, load_all_tools
+from orbwise.voice.tts import SentenceSplitter, clean_for_speech
 
 
 def test_schemas_valid():
@@ -55,8 +55,8 @@ def test_host_check():
 def test_example_config_loads():
     from pathlib import Path
 
-    from jarvis.config import load_config
-    cfg = load_config(Path(__file__).parent.parent / "jarvis" / "config.example.yaml")
+    from orbwise.config import load_config
+    cfg = load_config(Path(__file__).parent.parent / "orbwise" / "config.example.yaml")
     assert cfg.tools.search_paths == [Path.home()]
     assert cfg.llm.model.startswith("qwen")
 
@@ -64,7 +64,7 @@ def test_example_config_loads():
 def test_launch_reports_failure_and_success():
     from conftest import run
 
-    from jarvis.tools import proc
+    from orbwise.tools import proc
     ok, err = run(proc.launch(["sh", "-c", "echo kaputt >&2; exit 3"]))
     assert not ok and "Exit-Code 3" in err and "kaputt" in err
     assert run(proc.launch(["sh", "-c", "exit 0"])) == (True, "")
@@ -74,7 +74,7 @@ def test_launch_reports_failure_and_success():
 
 
 def test_desktop_env_from_systemd(monkeypatch):
-    from jarvis.tools import proc
+    from orbwise.tools import proc
     for k in ("DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(proc, "_systemd_user_env",
@@ -87,8 +87,8 @@ def test_desktop_env_from_systemd(monkeypatch):
 def test_open_file_resolves_name_and_reports_errors(cfg, tmp_path, monkeypatch):
     from conftest import run
 
-    from jarvis.tools import files, proc
-    from jarvis.tools.registry import ToolContext
+    from orbwise.tools import files, proc
+    from orbwise.tools.registry import ToolContext
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "Bericht.pdf").write_text("x")
     (tmp_path / "a").mkdir()
@@ -115,7 +115,7 @@ def test_open_file_resolves_name_and_reports_errors(cfg, tmp_path, monkeypatch):
 
 
 def test_exec_argv_places_files():
-    from jarvis.tools.apps import _exec_argv
+    from orbwise.tools.apps import _exec_argv
     assert _exec_argv("kate -b %U", ["/a", "/b"]) == ["kate", "-b", "/a", "/b"]
     assert _exec_argv("gimp-2.10 %f", ["/x.png"]) == ["gimp-2.10", "/x.png"]
     assert _exec_argv("code --new-window", ["/y"]) == ["code", "--new-window", "/y"]

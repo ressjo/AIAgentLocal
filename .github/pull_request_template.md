@@ -2,7 +2,7 @@
 
 ## How was it tested?
 - [ ] `uv run pytest -q`
-- [ ] `uv run ruff check jarvis tests`
+- [ ] `uv run ruff check orbwise tests`
 - [ ] Tried it in the web UI (if the UI changed)
 
 ## Safety

@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.config import Config
-from jarvis.llm import FakeLLM
-from jarvis.memory import Memory
+from orbwise.config import Config
+from orbwise.llm import FakeLLM
+from orbwise.memory import Memory
 
 
 @pytest.fixture

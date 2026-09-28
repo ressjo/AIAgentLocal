@@ -5,9 +5,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 from fastapi.testclient import TestClient
 
-from jarvis import models as mdl
-from jarvis.config import LLMConfig
-from jarvis.llm_router import LLMRouter
+from orbwise import models as mdl
+from orbwise.config import LLMConfig
+from orbwise.llm_router import LLMRouter
 
 
 def test_recommend_and_fit():
@@ -89,11 +89,11 @@ def ollama():
 
 
 def test_pull_via_web_api(cfg, ollama, monkeypatch):
-    monkeypatch.setenv("JARVIS_SKIP_WARMUP", "1")
-    monkeypatch.delenv("JARVIS_FAKE_LLM", raising=False)
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
     cfg.llm.base_url = ollama
-    from jarvis.server import create_app
+    from orbwise.server import create_app
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         presets = client.get("/api/models/presets").json()
         assert any(p["tag"] == "qwen3:8b" and p["installed"] for p in presets["presets"])

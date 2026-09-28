@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import update as upd
+from orbwise import update as upd
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,10 +23,10 @@ def repos(tmp_path, monkeypatch):
     (origin / "a.txt").write_text("1")
     git(origin, "add", ".")
     git(origin, "commit", "-q", "-m", "Erster Stand")
-    clone = tmp_path / "jarvis"
+    clone = tmp_path / "orbwise"
     subprocess.run(["git", "clone", "-q", str(origin), str(clone)], check=True)
     (clone / ".venv/bin").mkdir(parents=True)
-    (clone / ".venv/bin/jarvis").write_text("")
+    (clone / ".venv/bin/orbwise").write_text("")
     monkeypatch.setattr(upd, "server_running", lambda port: False)
     monkeypatch.setattr(upd.shutil, "which", lambda n: f"/usr/bin/{n}")
     return origin, clone
@@ -61,7 +61,7 @@ def test_already_current_skips_sync(repos):
 
 def test_missing_venv_triggers_sync(repos):
     _, clone = repos
-    (clone / ".venv/bin/jarvis").unlink()
+    (clone / ".venv/bin/orbwise").unlink()
     calls = []
     assert upd.update(clone, runner=fake_runner(calls), out=lambda s: None) == 0
     assert calls
@@ -93,24 +93,24 @@ def test_zip_download_gets_hint(tmp_path):
 
 
 def test_launcher_self_heals(tmp_path):
-    home = tmp_path / "jarvis"
+    home = tmp_path / "orbwise"
     (home / ".venv/bin").mkdir(parents=True)
     (home / "pyproject.toml").write_text("")
     fakebin = tmp_path / "bin"
     fakebin.mkdir()
     # uv-Attrappe legt die fehlende .venv an
-    (fakebin / "uv").write_text(f'#!/bin/sh\nprintf "#!/bin/sh\\necho gestartet \\"\\$@\\"\\n" > "{home}/.venv/bin/jarvis"\n'
-                                f'chmod +x "{home}/.venv/bin/jarvis"\n')
+    (fakebin / "uv").write_text(f'#!/bin/sh\nprintf "#!/bin/sh\\necho gestartet \\"\\$@\\"\\n" > "{home}/.venv/bin/orbwise"\n'
+                                f'chmod +x "{home}/.venv/bin/orbwise"\n')
     (fakebin / "uv").chmod(0o755)
-    launcher = tmp_path / "jarvis-launcher"
-    launcher.write_text((ROOT / "scripts/jarvis-launcher").read_text().replace("@JARVIS_HOME@", str(home)))
+    launcher = tmp_path / "orbwise-launcher"
+    launcher.write_text((ROOT / "scripts/orbwise-launcher").read_text().replace("@ORBWISE_HOME@", str(home)))
     launcher.chmod(0o755)
     env = {**os.environ, "PATH": f"{fakebin}:/usr/bin:/bin"}
-    env.pop("JARVIS_HOME", None)
+    env.pop("ORBWISE_HOME", None)
     r = subprocess.run([str(launcher), "doctor"], capture_output=True, text=True, env=env)
     assert r.returncode == 0 and r.stdout.strip() == "gestartet doctor"
     assert "recreating" in r.stderr
 
     r = subprocess.run([str(launcher)], capture_output=True, text=True,
-                       env={**env, "JARVIS_HOME": str(tmp_path / "weg")})
+                       env={**env, "ORBWISE_HOME": str(tmp_path / "weg")})
     assert r.returncode == 1 and "was not found" in r.stderr

@@ -2,7 +2,7 @@ from datetime import datetime
 
 from conftest import run
 
-from jarvis.memory.context import Conversation, est_tokens
+from orbwise.memory.context import Conversation, est_tokens
 
 
 def test_journal_file_per_day(memory):
@@ -84,7 +84,7 @@ def test_trimmed_history_never_starts_with_tool(tmp_path):
 
 
 def test_trimmed_history_always_keeps_current_question():
-    from jarvis.memory.context import Conversation
+    from orbwise.memory.context import Conversation
     conv = Conversation()
     conv.add({"role": "user", "content": "alte Frage"})
     conv.add({"role": "assistant", "content": "alte Antwort"})
@@ -101,8 +101,8 @@ def test_trimmed_history_always_keeps_current_question():
 
 
 def test_budget_respects_model_context(cfg, memory):
-    from jarvis.agent import Agent
-    from jarvis.config import ProfileConfig
+    from orbwise.agent import Agent
+    from orbwise.config import ProfileConfig
 
     class Small:
         profile = ProfileConfig(backend="openai", base_url="http://x/v1", model="bonsai", num_ctx=8192)

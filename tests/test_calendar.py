@@ -9,9 +9,9 @@ from datetime import date, datetime, timedelta
 import pytest
 from conftest import run
 
-from jarvis.tools import briefing
-from jarvis.tools import calendar_tools as cal
-from jarvis.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools
+from orbwise.tools import briefing
+from orbwise.tools import calendar_tools as cal
+from orbwise.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools
 
 USER, PASSWORD = "alex", "app-pass-1234"
 
@@ -105,7 +105,7 @@ def test_parse_day_and_start(monkeypatch):
 
 
 def test_tools_gated_and_risks(cfg):
-    from jarvis.tools.registry import tool_schemas
+    from orbwise.tools.registry import tool_schemas
     load_all_tools()
     names = lambda c: {s["function"]["name"] for s in tool_schemas(c)}  # noqa: E731
     assert "calendar_add" not in names(cfg)
@@ -235,7 +235,7 @@ def test_persistent_error_is_reported(ccfg, monkeypatch):
 
     monkeypatch.setattr(cal.CalendarClient, "events", broken)
     out = run(cal.calendar_events(ctx(ccfg)))
-    assert "Kalenderfehler (ConnectionError): kaputt" in out and "jarvis.log" in out
+    assert "Kalenderfehler (ConnectionError): kaputt" in out and "orbwise.log" in out
 
 
 def test_broken_event_is_skipped(ccfg, monkeypatch):

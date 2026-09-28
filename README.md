@@ -1,14 +1,16 @@
-# J.A.R.V.I.S. – a local AI voice assistant for Linux
+# Orbwise – a local AI voice assistant for Linux
 
-A Jarvis-style assistant that runs **entirely on your own Linux PC**: an animated HUD web interface, voice input
+A voice assistant that runs **entirely on your own Linux PC**: an animated HUD web interface, voice input
 via wake word ("Hey Jarvis") or push-to-talk, spoken answers, a local LLM (Ollama or llama.cpp), **persistent
 memory in plain Markdown files** and real control over your system – updates, packages, files, NAS, apps,
 services, network, smart home, documents, notes and calendar.
 
-German and English are supported (`language: de|en`).
+German and English are supported (`language: de|en`). Out of the box the assistant introduces itself as
+**"Jarvis"** and listens for "Hey Jarvis" – that is just its default persona; give it any name with
+`assistant_name` in the config.
 
-![Jarvis web interface](docs/screenshot.png)
-<sub>Screenshot in demo mode (`JARVIS_FAKE_LLM=1`, no real model attached).</sub>
+![Orbwise web interface](docs/screenshot.png)
+<sub>Screenshot in demo mode (`ORBWISE_FAKE_LLM=1`, no real model attached).</sub>
 
 ```
 Browser (localhost:8765)                          Python backend (FastAPI, 127.0.0.1 only)
@@ -17,18 +19,19 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
  ├─ microphone → 16 kHz PCM             ──WS──►   wake word (openWakeWord) → VAD → Whisper
  └─ playback + level → orb              ◄──────   Piper TTS (sentence by sentence)
                                                    │
-                         Ollama / llama-server (LLM + bge-m3)   ~/.local/share/jarvis/memory/
+                         Ollama / llama-server (LLM + bge-m3)   ~/.local/share/orbwise/memory/
 ```
 
-> Jarvis is an independent hobby project. It is not affiliated with or endorsed by Marvel or Disney; it does not
-> ship the film voice or any other copyrighted material.
+> Orbwise is an independent hobby project. Its default persona "Jarvis" is a nod to the film assistant; the project
+> is not affiliated with or endorsed by Marvel or Disney and does not ship the film voice or any other copyrighted
+> material.
 >
-> ⚠ Jarvis can run commands on your computer (with root, if you allow it). Use it at your own risk – see the
+> ⚠ Orbwise can run commands on your computer (with root, if you allow it). Use it at your own risk – see the
 > [Disclaimer](#disclaimer).
 
 ## Features
 
-| Area | What Jarvis can do |
+| Area | What Orbwise can do |
 |---|---|
 | **Voice** | "Hey Jarvis" wake word, microphone button or **hold the space bar** (push-to-talk). Answers are spoken sentence by sentence while the model is still writing; interrupt at any time. |
 | **System** | Full system update (Arch: `pacman -Syu` + AUR via yay/paru, Debian/Ubuntu: `apt`), list/search/install/remove packages, system info, shutdown/reboot/suspend/lock |
@@ -58,8 +61,8 @@ sudo pacman -S --needed git
 # Debian/Ubuntu-based
 sudo apt install git
 
-git clone https://github.com/ressjo/AIAgentLocal.git ~/jarvis
-~/jarvis/scripts/install.sh --lang en      # --lang de for German
+git clone https://github.com/ressjo/orbwise.git ~/orbwise
+~/orbwise/scripts/install.sh --lang en      # --lang de for German
 ```
 
 The installer asks three questions – **language**, **graphics card** (NVIDIA / AMD / none, the detected one is
@@ -70,8 +73,8 @@ pre-selected) and the **language model** from a list of presets that shows what 
 Options: `--model qwen3:8b` (skip the model question), `--gpu auto|cuda|rocm|vulkan|cpu`, `--lang de|en`,
 `--yes` (no questions, use the detected/recommended defaults), `--no-autostart`.
 
-> Please install with **git**, not as a ZIP – then updates are a single command (`jarvis update`).
-> If you start `install.sh` from a ZIP folder it offers to move to `~/jarvis`.
+> Please install with **git**, not as a ZIP – then updates are a single command (`orbwise update`).
+> If you start `install.sh` from a ZIP folder it offers to move to `~/orbwise`.
 
 The installer
 
@@ -79,29 +82,37 @@ The installer
 2. sets up the Python environment (`uv sync --extra voice`),
 3. pulls the chosen model (recommendation: ≥ 22 GB → `qwen3:30b`, ≥ 12 GB → `qwen3:14b`, ≥ 6 GB → `qwen3:8b`, otherwise `qwen3:4b`) together with `bge-m3` (embeddings) – if a download fails you can pick another model,
 4. downloads a Piper voice (English: *Alan*, German: *Thorsten*), the wake word model and Whisper,
-5. creates `~/.config/jarvis/config.yaml`, a **JARVIS** entry in the application menu and an autostart entry.
+5. creates `~/.config/orbwise/config.yaml`, an **Orbwise** entry in the application menu and an autostart entry.
 
 Then:
 
 ```bash
-jarvis doctor        # checks Ollama, models, voice, wake word, tools, integrations, NAS
-jarvis serve --open  # starts the server and opens http://localhost:8765
+orbwise doctor        # checks Ollama, models, voice, wake word, tools, integrations, NAS
+orbwise serve --open  # starts the server and opens http://localhost:8765
 ```
 
-Or click **JARVIS** in the application menu – it opens the UI in its own app window.
+Or click **Orbwise** in the application menu – it opens the UI in its own app window.
 
 ### Updating
 
 ```bash
-jarvis update
+orbwise update
 ```
 
-pulls the latest version (`git pull`), updates the Python dependencies and restarts a running Jarvis server –
-then just reload the browser page. `jarvis version` shows what is installed. Your **configuration**
-(`~/.config/jarvis/`), **voices** and **memory** (`~/.local/share/jarvis/`) live outside the project folder and
+pulls the latest version (`git pull`), updates the Python dependencies and restarts a running Orbwise server –
+then just reload the browser page. `orbwise version` shows what is installed. Your **configuration**
+(`~/.config/orbwise/`), **voices** and **memory** (`~/.local/share/orbwise/`) live outside the project folder and
 are never touched by updates.
 
-## Using Jarvis
+### Upgrading from "Jarvis"
+
+Until version 0.1 the project was called **Jarvis**. Existing installations move over automatically on the first
+start after `jarvis update`: `~/.config/jarvis` and `~/.local/share/jarvis` become `…/orbwise` (the old paths stay
+as symlinks), the launcher, menu and autostart entries are switched to Orbwise, and `JARVIS_*` environment
+variables are still read. The old `jarvis` command keeps working as an alias until version 0.2 – use `orbwise`
+from now on. Your assistant keeps its name "Jarvis".
+
+## Using Orbwise
 
 - **Start:** click **START SYSTEM** once (browsers only allow audio/microphone after a click).
 - **WAKE** on → say "Hey Jarvis, …". The microphone is only streamed to your own local server.
@@ -124,7 +135,7 @@ Examples:
 
 ## Memory – without context-window problems
 
-Everything is stored as readable files in `~/.local/share/jarvis/memory/`:
+Everything is stored as readable files in `~/.local/share/orbwise/memory/`:
 
 | File | Content |
 |---|---|
@@ -132,7 +143,7 @@ Everything is stored as readable files in `~/.local/share/jarvis/memory/`:
 | `summaries/2026-09-27.md` | Daily summary, generated automatically (day change or 15 min idle) |
 | `facts.md` | Permanent facts ("The NAS is mounted at /mnt/nas") – editable by hand |
 | `chats/<id>.json` | One chat: messages, running summary, title, star (`chats/active` = current chat) |
-| `index.sqlite` | Search index (full text + embeddings) – just a cache, rebuild with `jarvis reindex` |
+| `index.sqlite` | Search index (full text + embeddings) – just a cache, rebuild with `orbwise reindex` |
 
 **How the context stays small:** every prompt has a budget derived from the model's real context window (minus
 room for the answer). It is filled with the system prompt, facts, the **most relevant memories** (hybrid search:
@@ -144,7 +155,7 @@ overflowing the model. The **CONTEXT** tile shows how full the prompt is.
 ### Chat history
 
 The **HISTORY** tab lists all chats (starred first, then newest) with search across titles and content.
-**NEW** starts a new chat; the old one is kept. Click a chat to open and continue it – Jarvis still remembers
+**NEW** starts a new chat; the old one is kept. Click a chat to open and continue it – Orbwise still remembers
 everything from the other chats.
 
 - **★** marks important chats. Nothing is deleted automatically.
@@ -158,32 +169,32 @@ everything from the other chats.
 presets (with the same fit marks and download progress), or run
 
 ```bash
-jarvis model add              # interactive list of presets for your GPU
-jarvis model add qwen3:14b    # or any model from ollama.com/library
-jarvis model add bonsai       # Bonsai 2 27B incl. its llama.cpp server (see below)
-jarvis model remove qwen3-14b # remove it from the list (optionally also delete the files)
+orbwise model add              # interactive list of presets for your GPU
+orbwise model add qwen3:14b    # or any model from ollama.com/library
+orbwise model add bonsai       # Bonsai 2 27B incl. its llama.cpp server (see below)
+orbwise model remove qwen3-14b # remove it from the list (optionally also delete the files)
 ```
 
-Jarvis can know several language models and switch between them – click the **LLM pill** at the top or run
-`jarvis model <name>` (`jarvis model` lists all profiles). The choice is remembered.
+Orbwise can know several language models and switch between them – click the **LLM pill** at the top or run
+`orbwise model <name>` (`orbwise model` lists all profiles). The choice is remembered.
 
 - `backend: ollama` – models from Ollama (Qwen 3 recommended for tool use)
 - `backend: openai` – any OpenAI-compatible server: **llama-server** from llama.cpp, LM Studio, vLLM, …
-- With `server:` Jarvis starts the model server itself when the profile is activated, waits until it is ready and
-  stops it again when switching back or quitting (log: `~/.local/state/jarvis-llm.log`). The real context size
+- With `server:` Orbwise starts the model server itself when the profile is activated, waits until it is ready and
+  stops it again when switching back or quitting (log: `~/.local/state/orbwise-llm.log`). The real context size
   is read from the server.
 - `unload_ollama: true` evicts Ollama models from VRAM first, `embed_on_cpu: true` runs the memory embeddings on
   the CPU – useful with 8 GB of VRAM.
 
 **Bonsai 2 27B** (27B-class model in ~7 GB, runs on its own llama.cpp server from the PrismML fork) is set up
-automatically: pick it in the installer or run `jarvis model add bonsai`. Jarvis clones
-[Bonsai-demo](https://github.com/PrismML-Eng/Bonsai-demo) to `~/bonsai` (or `$JARVIS_BONSAI_DIR`), runs its
+automatically: pick it in the installer or run `orbwise model add bonsai`. Orbwise clones
+[Bonsai-demo](https://github.com/PrismML-Eng/Bonsai-demo) to `~/bonsai` (or `$ORBWISE_BONSAI_DIR`), runs its
 `setup.sh` (llama.cpp binaries for CUDA/ROCm + model download) and creates an activated profile with settings for
 your GPU – context size by VRAM, compressed KV cache and CPU embeddings on 8 GB cards, the ROCm override for
 RX 6600/6700/7600 – and a random `api_key`. On NVIDIA cards without a system CUDA toolkit the prebuilt
-llama-server lacks `libcudart`/`libcublas`; Jarvis then downloads NVIDIA's runtime packages from PyPI into
+llama-server lacks `libcudart`/`libcublas`; Orbwise then downloads NVIDIA's runtime packages from PyPI into
 `~/bonsai/cuda-libs` (no root, matched to your driver) and sets `LD_LIBRARY_PATH` in the profile. Running it again
-updates the checkout and repairs an existing setup (the `api_key` is kept); `jarvis doctor` shows missing libraries. In the web UI Bonsai is listed
+updates the checkout and repairs an existing setup (the `api_key` is kept); `orbwise doctor` shows missing libraries. In the web UI Bonsai is listed
 under **+ ADD MODEL** with a pointer to the terminal command, because the setup is interactive.
 
 The same profile written by hand, e.g. **Bonsai 2 27B on an RX 6650 XT (8 GB, ROCm)**:
@@ -209,13 +220,13 @@ llm:
           HSA_OVERRIDE_GFX_VERSION: "10.3.0"   # RX 6600/6650/6700 (gfx103x) → report as supported gfx1030
           BONSAI_CTX: "16384"                 # context window (fall back to 8192 if VRAM runs out)
           BONSAI_KV4: "1"                     # compressed KV cache
-          BONSAI_MMPROJ_CPU: "1"              # keep the vision module in RAM (Jarvis doesn't need it)
+          BONSAI_MMPROJ_CPU: "1"              # keep the vision module in RAM (Orbwise doesn't need it)
         startup_timeout: 240
 ```
 
 The `api_key` keeps websites in your browser from talking to the llama-server.
 
-**Small context windows** (e.g. 8k): Jarvis then sends only the core tools plus the tool groups that match the
+**Small context windows** (e.g. 8k): Orbwise then sends only the core tools plus the tool groups that match the
 request (e.g. Home Assistant tools only when you talk about lights or heating). You can also switch tools or whole
 groups off: `tools: {disabled: [sysadmin, paperless]}`.
 
@@ -230,7 +241,7 @@ llama-server, **don't** pass `--reasoning-budget 0`, which disables reasoning se
 
 In the **VOICE** tab you can install, preview and select Piper voices with one click – English (Alan, Northern
 English male, Ryan, Joe, Jenny, Amy) or German (Thorsten, Pavoque, Karlsson, Kerstin, Ramona). They are stored
-in `~/.local/share/jarvis/voices/`; drop your own Piper voices (`.onnx` + `.onnx.json`) there and they appear too.
+in `~/.local/share/orbwise/voices/`; drop your own Piper voices (`.onnx` + `.onnx.json`) there and they appear too.
 
 The **Jarvis effect** (on/off + strength) adds a slightly deeper, sonorous tone, a light room reverb, a subtle
 chorus and a "digital" shimmer.
@@ -241,23 +252,23 @@ on AMD it runs on the CPU (`small`/`int8` takes about 1–2 s per sentence).
 ## Integrations
 
 All integrations are optional – their tools are only offered to the model once URL and token are set.
-`jarvis doctor` checks each one. HTTPS with a self-signed certificate: add `verify_ssl: false` (or the path to
+`orbwise doctor` checks each one. HTTPS with a self-signed certificate: add `verify_ssl: false` (or the path to
 your CA file). Home-network services are always contacted directly, never through a system proxy.
 
 ### Web search
 
-Jarvis searches in this order:
+Orbwise searches in this order:
 
 1. **Brave Search API** (recommended) – the official API, so there is no risk of being blocked as a bot. Get a key
    at [api-dashboard.search.brave.com](https://api-dashboard.search.brave.com) (the installer asks for it) and set
-   `tools.brave_api_key` or `$JARVIS_BRAVE_API_KEY`. If the API fails (quota used up, invalid key) Jarvis says so
+   `tools.brave_api_key` or `$ORBWISE_BRAVE_API_KEY`. If the API fails (quota used up, invalid key) Orbwise says so
    instead of silently scraping – unless you set `tools.search_fallback: true`.
 2. **Your own SearXNG** instance (`tools.searxng_url`).
 3. Without either: the [ddgs](https://pypi.org/project/ddgs/) library reads the normal result pages of several
    search engines (Wikipedia, DuckDuckGo, Bing, Brave, Google, …). Fine for occasional use, but engines may throttle
    your IP or show you captchas, and it is against their terms of service.
 
-`jarvis doctor` shows which one is active and tests the Brave key.
+`orbwise doctor` shows which one is active and tests the Brave key.
 
 ### Home Assistant
 
@@ -266,7 +277,7 @@ Jarvis searches in this order:
    ```yaml
    homeassistant:
      url: http://homeassistant.local:8123
-     token: "your-token"          # or $JARVIS_HA_TOKEN
+     token: "your-token"          # or $ORBWISE_HA_TOKEN
    ```
 
 Tools: `ha_find` (by name, room or type, with state), `ha_state`, `ha_control` (on/off/toggle, brightness,
@@ -280,16 +291,16 @@ Locks, alarm panels and garage doors/gates always require confirmation.
    ```yaml
    paperless:
      url: http://nas.local:8000
-     token: "your-token"          # or $JARVIS_PAPERLESS_TOKEN
+     token: "your-token"          # or $ORBWISE_PAPERLESS_TOKEN
    ```
 
 Search (full text incl. OCR, filter by correspondent/tag/type/date), **ask questions about a document** (short
 documents are read completely, long ones only the most relevant passages), read, and open as PDF (cached in
-`~/.cache/jarvis/paperless/`). Read-only – nothing is changed in Paperless.
+`~/.cache/orbwise/paperless/`). Read-only – nothing is changed in Paperless.
 
 ### Obsidian notes
 
-No plugin and no running Obsidian needed – Jarvis works directly on the Markdown files of your vault:
+No plugin and no running Obsidian needed – Orbwise works directly on the Markdown files of your vault:
 
 ```yaml
 obsidian:
@@ -305,7 +316,7 @@ the vault are refused.
 ### Trilium notes
 
 1. Trilium → **Options → ETAPI → create new ETAPI token**.
-2. Config: `trilium: {url: http://localhost:8080, token: "…"}` (or `$JARVIS_TRILIUM_TOKEN`).
+2. Config: `trilium: {url: http://localhost:8080, token: "…"}` (or `$ORBWISE_TRILIUM_TOKEN`).
 
 Search, read, create notes (Markdown is converted), append; overwriting a note requires confirmation.
 
@@ -317,7 +328,7 @@ Search, read, create notes (Markdown is converted), append; overwriting a note r
    calendar:
      url: https://caldav.icloud.com   # or your Nextcloud/Radicale/… CalDAV URL
      username: you@icloud.com
-     password: "xxxx-xxxx-xxxx-xxxx"  # or $JARVIS_CALENDAR_PASSWORD
+     password: "xxxx-xxxx-xxxx-xxxx"  # or $ORBWISE_CALENDAR_PASSWORD
      calendars: []                    # which calendars to read (empty = all)
      default_calendar: ""             # where new events go
    ```
@@ -346,7 +357,7 @@ usage vs. budget, with a breakdown in the tooltip), **GPU** load and temperature
 
 ## Security
 
-Jarvis can run commands on your system, so:
+Orbwise can run commands on your system, so:
 
 - **Confirmation required:** everything that changes something (installs, updates, `rm`, writing files, service
   control, killing processes, unknown programs, command substitution `$(…)`) shows a dialog with the exact
@@ -356,7 +367,7 @@ Jarvis can run commands on your system, so:
   not even after confirmation.
 - **Local only:** the server listens on `127.0.0.1` and checks the `Host` header and `Origin` – other websites
   cannot send commands.
-- **Root privileges** (`privilege_cmd: jarvis`, default): after your confirmation a **password field** appears
+- **Root privileges** (`privilege_cmd: dashboard`, default): after your confirmation a **password field** appears
   in the dashboard. It works through `sudo -A` with a small helper that uses a one-time token for exactly that
   command; the password goes straight to sudo and is never stored, logged or shown to the model. Alternatives:
   `pkexec` (desktop polkit dialog) or `sudo` with a NOPASSWD rule.
@@ -379,8 +390,8 @@ See [SECURITY.md](SECURITY.md) for details and how to report vulnerabilities.
 
 ## Configuration
 
-All options with explanations: [`jarvis/config.example.yaml`](jarvis/config.example.yaml)
-(active file: `~/.config/jarvis/config.yaml`). The most important ones:
+All options with explanations: [`orbwise/config.example.yaml`](orbwise/config.example.yaml)
+(active file: `~/.config/orbwise/config.yaml`). The most important ones:
 
 | Option | Meaning |
 |---|---|
@@ -391,43 +402,43 @@ All options with explanations: [`jarvis/config.example.yaml`](jarvis/config.exam
 | `voice.stt_model` | Whisper size: `base`, `small`, `medium`, `large-v3` |
 | `voice.wakeword_threshold` | Wake word sensitivity (lower = more sensitive) |
 | `tools.nas_paths` | Mounted NAS folders |
-| `tools.privilege_cmd` | `jarvis` (password field, default), `pkexec` or `sudo` (NOPASSWD) |
+| `tools.privilege_cmd` | `dashboard` (password field, default), `pkexec` or `sudo` (NOPASSWD) |
 | `tools.package_manager` | `auto`, `pacman` or `apt` |
-| `tools.max_steps` | Max. tool rounds per request (default 25), then Jarvis summarises and offers to continue |
+| `tools.max_steps` | Max. tool rounds per request (default 25), then Orbwise summarises and offers to continue |
 | `tools.disabled` | Tools or groups to switch off, e.g. `[sysadmin, open_ports]` |
-| `user_name`, `persona_extra` | How Jarvis addresses you and extra personality instructions |
+| `user_name`, `persona_extra` | How the assistant addresses you and extra personality instructions (its name: `assistant_name`) |
 
 ## Commands
 
 ```bash
-jarvis serve [--open] [-v]    # start the server
-jarvis doctor                 # check the installation
-jarvis model [name]           # list or switch model profiles
-jarvis model add [ollama-tag] # download another model (interactive presets without a tag)
-jarvis model remove <name>    # remove a downloaded model from the list
-jarvis update                 # update (git pull, dependencies, restart)
-jarvis version                # show the installed version
-jarvis reindex                # rebuild the search index from the Markdown files
-jarvis summarize [YYYY-MM-DD] # create daily summaries
-jarvis init-config            # create the example configuration
+orbwise serve [--open] [-v]    # start the server
+orbwise doctor                 # check the installation
+orbwise model [name]           # list or switch model profiles
+orbwise model add [ollama-tag] # download another model (interactive presets without a tag)
+orbwise model remove <name>    # remove a downloaded model from the list
+orbwise update                 # update (git pull, dependencies, restart)
+orbwise version                # show the installed version
+orbwise reindex                # rebuild the search index from the Markdown files
+orbwise summarize [YYYY-MM-DD] # create daily summaries
+orbwise init-config            # create the example configuration
 ```
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---|---|
-| `jarvis: command not found` | Open a new terminal (PATH was extended) or run `~/jarvis/scripts/install.sh` again |
-| The orb stays "OFFLINE" | Is `jarvis serve` running? Log: `~/.local/state/jarvis.log` |
+| `orbwise: command not found` | Open a new terminal (PATH was extended) or run `~/orbwise/scripts/install.sh` again |
+| The orb stays "OFFLINE" | Is `orbwise serve` running? Log: `~/.local/state/orbwise.log` |
 | "Ollama not reachable" | `sudo systemctl enable --now ollama` |
-| No Piper speech | `jarvis doctor` → voice missing? The browser speaks as a fallback |
+| No Piper speech | `orbwise doctor` → voice missing? The browser speaks as a fallback |
 | Microphone doesn't work | Open `http://localhost:8765` (not the IP), check the browser's microphone permission |
 | Wake word triggers too often/rarely | Adjust `voice.wakeword_threshold` (0.3–0.7) |
-| No password field appears | The dashboard must be open; `jarvis doctor` checks the askpass helper |
-| A file/app doesn't open | `jarvis doctor` → "Desktop": graphical session and default apps; set one with `xdg-mime default org.kde.kate.desktop text/plain`, or say "open X with Kate" |
-| Integration "unreachable" | The message names the address, reason and a tip (certificate → `verify_ssl: false`, wrong port, http vs https, …); check with `jarvis doctor` |
+| No password field appears | The dashboard must be open; `orbwise doctor` checks the askpass helper |
+| A file/app doesn't open | `orbwise doctor` → "Desktop": graphical session and default apps; set one with `xdg-mime default org.kde.kate.desktop text/plain`, or say "open X with Kate" |
+| Integration "unreachable" | The message names the address, reason and a tip (certificate → `verify_ssl: false`, wrong port, http vs https, …); check with `orbwise doctor` |
 | Web search: SearXNG `403 Forbidden` | Public SearXNG instances block the JSON API – leave `tools.searxng_url` empty or use your own instance |
 | Web search: "Brave … HTTP 429" | Brave API quota or rate limit reached – wait, check your plan, or allow `tools.search_fallback: true` |
-| Web search: "Brave API key invalid" | Check `tools.brave_api_key` / `$JARVIS_BRAVE_API_KEY`; `jarvis doctor` tests the key |
+| Web search: "Brave API key invalid" | Check `tools.brave_api_key` / `$ORBWISE_BRAVE_API_KEY`; `orbwise doctor` tests the key |
 | File search misses new files | `sudo updatedb` |
 | Answers get cut off / "context too small" | Increase the model's context window; watch the CONTEXT tile |
 
@@ -436,30 +447,30 @@ jarvis init-config            # create the example configuration
 ```bash
 uv sync --extra voice --extra dev
 uv run pytest -q                                   # all tests run offline, no GPU/Ollama needed
-uv run ruff check jarvis tests
-JARVIS_FAKE_LLM=1 uv run jarvis serve --open       # UI demo without a model ("/tool <name> <json>" calls tools)
+uv run ruff check orbwise tests
+ORBWISE_FAKE_LLM=1 uv run orbwise serve --open       # UI demo without a model ("/tool <name> <json>" calls tools)
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the project layout and how to write a new tool.
 
 ## Disclaimer
 
-Jarvis is a hobby project, provided **"as is", without warranty of any kind** (see the [MIT license](LICENSE)).
+Orbwise is a hobby project, provided **"as is", without warranty of any kind** (see the [MIT license](LICENSE)).
 It lets a language model run shell commands, install and remove packages, control services, write files and –
-if you enter your password – act as root. Language models make mistakes and can misunderstand you. Jarvis asks
+if you enter your password – act as root. Language models make mistakes and can misunderstand you. Orbwise asks
 for confirmation before changing anything, but that only protects you if you read what you approve.
 
 - Read every confirmation dialog before clicking **Allow**.
-- Keep backups, and do not run Jarvis on production systems or computers that are not yours.
-- Keep `host: 127.0.0.1` – never expose Jarvis to a network or the internet (see [SECURITY.md](SECURITY.md)).
+- Keep backups, and do not run Orbwise on production systems or computers that are not yours.
+- Keep `host: 127.0.0.1` – never expose Orbwise to a network or the internet (see [SECURITY.md](SECURITY.md)).
 - Check answers that matter (health, money, legal, security) against reliable sources.
 
-You use Jarvis at your own risk; the authors are not liable for any damage, data loss or costs resulting from
+You use Orbwise at your own risk; the authors are not liable for any damage, data loss or costs resulting from
 its use, to the extent permitted by applicable law.
 
 ## Third-party components & licenses
 
-Jarvis's own code is MIT-licensed. It does not ship third-party models or voices; the installer downloads them
+Orbwise's own code is MIT-licensed. It does not ship third-party models or voices; the installer downloads them
 from their original sources, and their licenses apply:
 
 | Component | Used for | License |
@@ -471,7 +482,7 @@ from their original sources, and their licenses apply:
 | Language models via Ollama / Bonsai-demo (Qwen, Llama, Mistral, gpt-oss, Bonsai, …) | chat | per model – see its model card |
 | [ddgs](https://pypi.org/project/ddgs/), [trafilatura](https://github.com/adbar/trafilatura), [caldav](https://github.com/python-caldav/caldav) | web search, page text, calendar | MIT · Apache-2.0 · GPL-3.0-or-later OR Apache-2.0 |
 
-If you redistribute Jarvis together with these components (e.g. as a package or image), you must comply with
+If you redistribute Orbwise together with these components (e.g. as a package or image), you must comply with
 their licenses as well. Using the "Hey Jarvis" wake word model commercially is not allowed by its license.
 
 ## License

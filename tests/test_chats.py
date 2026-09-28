@@ -4,8 +4,8 @@ import pytest
 from conftest import run
 from fastapi.testclient import TestClient
 
-from jarvis.agent import Agent
-from jarvis.memory import Memory
+from orbwise.agent import Agent
+from orbwise.memory import Memory
 
 
 async def noop(e):
@@ -117,9 +117,9 @@ def test_migration_from_session_json(cfg, llm):
 
 @pytest.fixture
 def client(cfg, monkeypatch):
-    monkeypatch.setenv("JARVIS_FAKE_LLM", "1")
-    monkeypatch.setenv("JARVIS_SKIP_WARMUP", "1")
-    from jarvis.server import create_app
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    from orbwise.server import create_app
     return TestClient(create_app(cfg), base_url="http://localhost:8765")
 
 

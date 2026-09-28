@@ -3,8 +3,8 @@ import json
 import httpx
 from conftest import run
 
-from jarvis.config import LLMConfig
-from jarvis.llm import LLMError, OllamaLLM
+from orbwise.config import LLMConfig
+from orbwise.llm import LLMError, OllamaLLM
 
 
 def make_llm(handler) -> OllamaLLM:

@@ -32,6 +32,6 @@ jobs:
           test -s notes.md || echo "See CHANGELOG.md" > notes.md
       - uses: softprops/action-gh-release@v2
         with:
-          name: JARVIS ${{ github.ref_name }}
+          name: Orbwise ${{ github.ref_name }}
           body_path: notes.md
           files: dist/*

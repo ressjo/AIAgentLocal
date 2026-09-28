@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Orbwise launcher (installed to ~/.local/bin/orbwise by scripts/install.sh).
+# Self-healing: if the Python environment is missing (e.g. after a fresh download) it is recreated.
+ORBWISE_HOME="${ORBWISE_HOME:-@ORBWISE_HOME@}"
+
+if [ ! -f "$ORBWISE_HOME/pyproject.toml" ]; then
+  echo "Orbwise was not found in '$ORBWISE_HOME'." >&2
+  echo "Reinstall:  git clone -b @ORBWISE_BRANCH@ @ORBWISE_REPO@ ~/orbwise && ~/orbwise/scripts/install.sh" >&2
+  exit 1
+fi
+
+if [ ! -x "$ORBWISE_HOME/.venv/bin/orbwise" ]; then
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "uv is missing – please run '$ORBWISE_HOME/scripts/install.sh'." >&2
+    exit 1
+  fi
+  echo "Python environment missing – recreating it (one-off, takes a moment) …" >&2
+  (cd "$ORBWISE_HOME" && uv sync --extra voice --quiet) || exit 1
+fi
+
+exec "$ORBWISE_HOME/.venv/bin/orbwise" "$@"

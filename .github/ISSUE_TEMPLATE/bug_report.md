@@ -15,7 +15,7 @@ labels: bug
 **Environment**
 - Distribution: (e.g. Arch, EndeavourOS, Ubuntu 24.04)
 - GPU / model: (e.g. RX 6650 XT, qwen3:8b via Ollama)
-- `jarvis version`:
-- Relevant part of `jarvis doctor`:
+- `orbwise version`:
+- Relevant part of `orbwise doctor`:
 
-**Logs** (`~/.local/state/jarvis.log`, `~/.local/state/jarvis-llm.log` – remove passwords/tokens!)
+**Logs** (`~/.local/state/orbwise.log`, `~/.local/state/orbwise-llm.log` – remove passwords/tokens!)

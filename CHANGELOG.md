@@ -7,9 +7,13 @@ All notable changes to this project are documented here. The format follows
 
 First public release.
 
+> The project was developed as **Jarvis** and renamed to **Orbwise** for this release. The assistant's default
+> persona is still "Jarvis" ("Hey Jarvis"). Earlier installations are migrated automatically; the old `jarvis`
+> command and `JARVIS_*` environment variables keep working as aliases and will be removed in 0.2.
+
 ### Assistant
 - Local LLM via **Ollama** (Qwen 3 recommended) or any **OpenAI-compatible server** (llama.cpp `llama-server`,
-  e.g. Bonsai 27B); switchable **model profiles**, Jarvis can start/stop the model server itself.
+  e.g. Bonsai 27B); switchable **model profiles**, Orbwise can start/stop the model server itself.
 - Native tool calling with a **confirmation step** for anything that changes the system, a blocklist for
   destructive commands and root access through a **password field in the dashboard** (`sudo -A`).
 - **Thinking mode** button: the model's reasoning is shown live inside the orb.
@@ -45,13 +49,13 @@ First public release.
 ### Installation
 - Installer for Arch-based and Debian/Ubuntu-based systems that asks for the language, the GPU (NVIDIA/AMD/CPU,
   pre-selected from detection, ROCm override for RX 6600/6700/7600) and the model from a VRAM-aware preset list.
-- Add models later with `jarvis model add` or **+ ADD MODEL** in the web UI (download progress, fit marks).
-- **Bonsai 2 27B** is set up automatically when chosen in the installer or with `jarvis model add bonsai`
+- Add models later with `orbwise model add` or **+ ADD MODEL** in the web UI (download progress, fit marks).
+- **Bonsai 2 27B** is set up automatically when chosen in the installer or with `orbwise model add bonsai`
   (Bonsai-demo checkout, llama.cpp binaries, model, GPU-specific server profile). On NVIDIA the CUDA runtime
   libraries are fetched automatically when the system has none.
 - Web search via the official **Brave Search API** (key asked for by the installer) – no scraping of result
   pages and no bot blocking; SearXNG and ddgs remain as alternatives.
-- `jarvis doctor`, `jarvis update`.
+- `orbwise doctor`, `orbwise update`.
 
 ### Project
 - MIT license, security policy, disclaimer and an overview of third-party components and their licenses.

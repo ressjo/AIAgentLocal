@@ -8,12 +8,12 @@ import pytest
 from conftest import run
 from fastapi.testclient import TestClient
 
-from jarvis import askpass
-from jarvis.tools import power as pw
-from jarvis.tools import proc
-from jarvis.tools.packages import helper_cmd, privileged
-from jarvis.tools.registry import CONFIRM, SAFE, ToolContext
-from jarvis.tools.safety import apply_privilege
+from orbwise import askpass
+from orbwise.tools import power as pw
+from orbwise.tools import proc
+from orbwise.tools.packages import helper_cmd, privileged
+from orbwise.tools.registry import CONFIRM, SAFE, ToolContext
+from orbwise.tools.safety import apply_privilege
 
 
 def ctx(cfg):
@@ -30,12 +30,12 @@ def ctx(cfg):
     ("pkexec systemctl restart sshd", "sudo -A systemctl restart sshd"),
     ("ls -la", "ls -la"),
 ])
-def test_apply_privilege_jarvis(cmd, expected):
-    assert apply_privilege(cmd, "jarvis") == expected
+def test_apply_privilege_dashboard(cmd, expected):
+    assert apply_privilege(cmd, "dashboard") == expected
 
 
 def test_default_mode_and_package_helpers(cfg):
-    assert cfg.tools.privilege_cmd == "jarvis"
+    assert cfg.tools.privilege_cmd == "dashboard"
     assert privileged(ctx(cfg), ["pacman", "-Syu"]) == ["sudo", "-A", "pacman", "-Syu"]
     assert helper_cmd(ctx(cfg), "yay", "-Sua")[1:3] == ["--sudoflags", "-A"]
     cfg.tools.privilege_cmd = "pkexec"
@@ -45,15 +45,15 @@ def test_default_mode_and_package_helpers(cfg):
 # ---------------------------------------------------------------- Umgebung & Token-Lebensdauer
 
 def test_proc_run_grants_token_only_for_sudo_a(cfg, tmp_path, monkeypatch):
-    helper = askpass.write_helper(tmp_path / "rt" / "jarvis" / "askpass")
+    helper = askpass.write_helper(tmp_path / "rt" / "orbwise" / "askpass")
     assert oct(helper.stat().st_mode)[-3:] == "700"
     broker = askpass.AskpassBroker(8765, helper=helper)
     monkeypatch.setattr(askpass, "BROKER", broker)
-    rc, out = run(proc.run(ctx(cfg), ': sudo -A ; echo "$SUDO_ASKPASS|${JARVIS_ASKPASS_TOKEN:+token}"',
+    rc, out = run(proc.run(ctx(cfg), ': sudo -A ; echo "$SUDO_ASKPASS|${ORBWISE_ASKPASS_TOKEN:+token}"',
                            timeout=10, stream=False))
     assert out.strip() == f"{helper}|token"
     assert broker.tokens == {}  # nach dem Befehl verfallen
-    rc, out = run(proc.run(ctx(cfg), 'echo "${JARVIS_ASKPASS_TOKEN:-keins}"', timeout=10, stream=False))
+    rc, out = run(proc.run(ctx(cfg), 'echo "${ORBWISE_ASKPASS_TOKEN:-keins}"', timeout=10, stream=False))
     assert out.strip() == "keins"
 
 
@@ -74,7 +74,7 @@ def test_helper_script_prints_password_and_ignores_proxy(tmp_path):
             pass
 
         def do_POST(self):
-            seen["token"] = self.headers.get("X-Jarvis-Askpass")
+            seen["token"] = self.headers.get("X-Orbwise-Askpass")
             seen["body"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             body = json.dumps({"password": "geh eim!"}).encode()
             self.send_response(200)
@@ -86,14 +86,14 @@ def test_helper_script_prints_password_and_ignores_proxy(tmp_path):
     srv = HTTPServer(("127.0.0.1", 0), H)
     threading.Thread(target=srv.handle_request, daemon=True).start()
     helper = askpass.write_helper(tmp_path / "askpass")
-    env = {**os.environ, "JARVIS_ASKPASS_URL": f"http://127.0.0.1:{srv.server_port}/api/askpass",
-           "JARVIS_ASKPASS_TOKEN": "tok123", "http_proxy": "http://proxy.invalid:1", "HTTP_PROXY": "http://proxy.invalid:1"}
+    env = {**os.environ, "ORBWISE_ASKPASS_URL": f"http://127.0.0.1:{srv.server_port}/api/askpass",
+           "ORBWISE_ASKPASS_TOKEN": "tok123", "http_proxy": "http://proxy.invalid:1", "HTTP_PROXY": "http://proxy.invalid:1"}
     res = subprocess.run([str(helper), "[sudo] Passwort für alex: "], env=env, capture_output=True, text=True,
                          timeout=20)
     assert res.returncode == 0 and res.stdout == "geh eim!\n"
     assert seen == {"token": "tok123", "body": {"prompt": "[sudo] Passwort für alex: "}}
     # ohne Token: sofort Fehler (sudo bricht dann ab)
-    env.pop("JARVIS_ASKPASS_TOKEN")
+    env.pop("ORBWISE_ASKPASS_TOKEN")
     assert subprocess.run([str(helper)], env=env, capture_output=True, timeout=20).returncode == 1
 
 
@@ -101,10 +101,10 @@ def test_helper_script_prints_password_and_ignores_proxy(tmp_path):
 
 @pytest.fixture
 def app_client(cfg, monkeypatch, tmp_path):
-    monkeypatch.setenv("JARVIS_FAKE_LLM", "1")
-    monkeypatch.setenv("JARVIS_SKIP_WARMUP", "1")
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
-    from jarvis.server import create_app
+    from orbwise.server import create_app
     return TestClient(create_app(cfg), base_url="http://localhost:8765")
 
 
@@ -119,19 +119,19 @@ def _next(ws, kind):
 def test_password_roundtrip_via_ui(app_client, caplog, tmp_path):
     with app_client as client:
         broker = askpass.BROKER
-        assert broker.ready() and broker.helper == tmp_path / "run" / "jarvis" / "askpass"
+        assert broker.ready() and broker.helper == tmp_path / "run" / "orbwise" / "askpass"
         # falsches Token → abgelehnt, ohne die Oberfläche zu fragen
-        r = client.post("/api/askpass", json={"prompt": "x"}, headers={"X-Jarvis-Askpass": "falsch"})
+        r = client.post("/api/askpass", json={"prompt": "x"}, headers={"X-Orbwise-Askpass": "falsch"})
         assert r.status_code == 403
         with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
             ws.receive_json()  # hello
             with broker.grant("sudo -A systemctl poweroff") as env:
-                token = env["JARVIS_ASKPASS_TOKEN"]
+                token = env["ORBWISE_ASKPASS_TOKEN"]
                 result = {}
 
                 def helper_call():
                     result["r"] = client.post("/api/askpass", json={"prompt": "[sudo] Passwort"},
-                                              headers={"X-Jarvis-Askpass": token})
+                                              headers={"X-Orbwise-Askpass": token})
 
                 t = threading.Thread(target=helper_call)
                 t.start()
@@ -152,7 +152,7 @@ def test_password_roundtrip_via_ui(app_client, caplog, tmp_path):
                 t.join(10)
                 assert result["r"].status_code == 403
             # nach Befehlsende ist das Token ungültig
-            r = client.post("/api/askpass", json={}, headers={"X-Jarvis-Askpass": token})
+            r = client.post("/api/askpass", json={}, headers={"X-Orbwise-Askpass": token})
             assert r.status_code == 403
     assert "Sehr-Geheim-42" not in caplog.text
     hist = json.dumps(client.app.state.memory.conversation.history)
@@ -162,7 +162,7 @@ def test_password_roundtrip_via_ui(app_client, caplog, tmp_path):
 def test_no_ui_open_means_denied(app_client):
     with app_client as client:
         with askpass.BROKER.grant("sudo -A ls") as env:
-            r = client.post("/api/askpass", json={}, headers={"X-Jarvis-Askpass": env["JARVIS_ASKPASS_TOKEN"]})
+            r = client.post("/api/askpass", json={}, headers={"X-Orbwise-Askpass": env["ORBWISE_ASKPASS_TOKEN"]})
             assert r.status_code == 403
 
 

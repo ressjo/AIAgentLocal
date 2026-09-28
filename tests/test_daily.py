@@ -5,9 +5,9 @@ import pytest
 from conftest import run
 from fastapi.testclient import TestClient
 
-from jarvis.reminders import ReminderStore, parse_when
-from jarvis.tools import briefing, proc, reminder_tools, weather, web
-from jarvis.tools.registry import ToolContext
+from orbwise.reminders import ReminderStore, parse_when
+from orbwise.tools import briefing, proc, reminder_tools, weather, web
+from orbwise.tools.registry import ToolContext
 
 
 def ctx(cfg):
@@ -39,9 +39,9 @@ def test_open_website_uses_launch(cfg, monkeypatch):
 
     monkeypatch.setattr(proc, "launch", fake_launch)
     monkeypatch.setattr(web.shutil, "which", lambda n: f"/usr/bin/{n}")
-    out = run(web.open_website(ctx(cfg), "youtube", "jarvis"))
-    assert out == "Geöffnet: https://www.youtube.com/results?search_query=jarvis"
-    assert calls == [["xdg-open", "https://www.youtube.com/results?search_query=jarvis"]]
+    out = run(web.open_website(ctx(cfg), "youtube", "orbwise"))
+    assert out == "Geöffnet: https://www.youtube.com/results?search_query=orbwise"
+    assert calls == [["xdg-open", "https://www.youtube.com/results?search_query=orbwise"]]
 
 
 # ---------------------------------------------------------------- Wetter
@@ -147,9 +147,9 @@ def test_reminder_tools(cfg):
 
 @pytest.fixture
 def app_client(cfg, monkeypatch):
-    monkeypatch.setenv("JARVIS_FAKE_LLM", "1")
-    monkeypatch.setenv("JARVIS_SKIP_WARMUP", "1")
-    from jarvis.server import create_app
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    from orbwise.server import create_app
     return TestClient(create_app(cfg), base_url="http://localhost:8765")
 
 
@@ -270,7 +270,7 @@ def test_brave_errors_do_not_scrape(cfg, monkeypatch, status, body, text):
 
 
 def test_brave_fallback_when_enabled(cfg, monkeypatch):
-    monkeypatch.setenv("JARVIS_BRAVE_API_KEY", "from-env")
+    monkeypatch.setenv("ORBWISE_BRAVE_API_KEY", "from-env")
     cfg.tools.search_fallback = True
     assert cfg.tools.brave_key == "from-env"
     monkeypatch.setattr(web, "TRANSPORT", httpx.MockTransport(lambda r: httpx.Response(429)))

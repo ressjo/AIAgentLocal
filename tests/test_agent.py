@@ -2,7 +2,7 @@ import asyncio
 
 from conftest import run
 
-from jarvis.agent import Agent, ThinkFilter
+from orbwise.agent import Agent, ThinkFilter
 
 
 def make_agent(cfg, llm, memory):
@@ -82,7 +82,7 @@ def test_history_consistent_after_cancel(cfg, llm, memory):
             await asyncio.sleep(10)
             return True
 
-        task = asyncio.create_task(agent.run('/tool run_shell {"command": "touch /tmp/jarvis-x"}', emit, confirm))
+        task = asyncio.create_task(agent.run('/tool run_shell {"command": "touch /tmp/orbwise-x"}', emit, confirm))
         await asyncio.sleep(0.2)
         task.cancel()
         try:
@@ -129,7 +129,7 @@ def _run_with(cfg, memory, llm):
 
 
 def test_step_limit_from_config_ends_with_summary(cfg, memory, monkeypatch):
-    from jarvis.agent import Agent as A
+    from orbwise.agent import Agent as A
     executed = []
 
     async def fake_exec(self, call, emit, confirm):
@@ -159,7 +159,7 @@ def test_step_limit_from_config_ends_with_summary(cfg, memory, monkeypatch):
 
 
 def test_repeated_identical_calls_are_skipped_and_stopped(cfg, memory, monkeypatch):
-    from jarvis.agent import Agent as A
+    from orbwise.agent import Agent as A
     executed = []
 
     async def fake_exec(self, call, emit, confirm):

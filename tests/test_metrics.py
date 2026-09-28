@@ -4,10 +4,10 @@ import subprocess
 import httpx
 from conftest import run
 
-from jarvis import metrics
-from jarvis.agent import Agent
-from jarvis.config import LLMConfig
-from jarvis.llm import OllamaLLM
+from orbwise import metrics
+from orbwise.agent import Agent
+from orbwise.config import LLMConfig
+from orbwise.llm import OllamaLLM
 
 
 def make_amd(root, total=8 * 1024**3, used=3 * 1024**3, busy=57, power_uw=123_000_000, temp=64000):

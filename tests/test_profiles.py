@@ -7,10 +7,10 @@ import httpx
 import pytest
 from conftest import run
 
-from jarvis.agent import Agent
-from jarvis.config import Config, LLMConfig, ProfileConfig, ServerConfig
-from jarvis.llm import LLMError, OpenAICompatLLM, to_openai_messages
-from jarvis.llm_router import LLMRouter, ManagedServer
+from orbwise.agent import Agent
+from orbwise.config import Config, LLMConfig, ProfileConfig, ServerConfig
+from orbwise.llm import LLMError, OpenAICompatLLM, to_openai_messages
+from orbwise.llm_router import LLMRouter, ManagedServer
 
 HERE = Path(__file__).parent
 
@@ -49,7 +49,7 @@ def test_profiles_config():
 
 def test_example_config_profiles_parse():
     import yaml
-    data = yaml.safe_load((HERE.parent / "jarvis" / "config.example.yaml").read_text())
+    data = yaml.safe_load((HERE.parent / "orbwise" / "config.example.yaml").read_text())
     Config.model_validate(data).llm.resolved_profiles()
 
 
@@ -275,7 +275,7 @@ def test_commented_example_profile_is_valid():
     import re
 
     import yaml
-    text = (HERE.parent / "jarvis" / "config.example.yaml").read_text()
+    text = (HERE.parent / "orbwise" / "config.example.yaml").read_text()
     block = text[text.index("  # active: bonsai"):text.index("memory:")]
     enabled = text.replace(block, re.sub(r"^  # ?", "  ", block, flags=re.M))
     cfg = Config.model_validate(yaml.safe_load(enabled))
@@ -377,7 +377,7 @@ def test_inline_think_tags_become_reasoning(cfg, memory):
 
 
 def test_context_overflow_detected_and_agent_retries_smaller(cfg, memory):
-    from jarvis.llm import ContextOverflow
+    from orbwise.llm import ContextOverflow
 
     body = json.dumps({"error": {"code": 400, "message": "the request exceeds the available context size",
                                  "type": "exceed_context_size_error", "n_prompt_tokens": 9000, "n_ctx": 8192}})
@@ -412,7 +412,7 @@ def test_context_overflow_detected_and_agent_retries_smaller(cfg, memory):
 
 
 def test_prompt_total_includes_cache():
-    from jarvis.llm import openai_stats
+    from orbwise.llm import openai_stats
     st = openai_stats({"predicted_n": 5, "predicted_per_second": 20, "prompt_n": 120, "cache_n": 4800}, {}, None, 0)
     assert st["prompt_total"] == 4920 and st["prompt_tokens"] == 120
     assert openai_stats({}, {"prompt_tokens": 777, "completion_tokens": 3}, None, 0)["prompt_total"] == 777

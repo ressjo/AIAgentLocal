@@ -1,7 +1,7 @@
 import pytest
 
-from jarvis.tools.registry import BLOCKED, CONFIRM, SAFE
-from jarvis.tools.safety import apply_privilege, classify_command
+from orbwise.tools.registry import BLOCKED, CONFIRM, SAFE
+from orbwise.tools.safety import apply_privilege, classify_command
 
 
 @pytest.mark.parametrize("cmd", [

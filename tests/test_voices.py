@@ -5,8 +5,8 @@ import pytest
 from conftest import run
 from fastapi.testclient import TestClient
 
-from jarvis.voice import catalog
-from jarvis.voice.tts import PiperTTS
+from orbwise.voice import catalog
+from orbwise.voice.tts import PiperTTS
 
 
 def test_catalog_urls():
@@ -57,11 +57,11 @@ def test_piper_select_rate_and_speaker(cfg, tmp_path):
 
 @pytest.fixture
 def client(cfg, tmp_path, monkeypatch):
-    monkeypatch.setenv("JARVIS_FAKE_LLM", "1")
-    monkeypatch.setenv("JARVIS_SKIP_WARMUP", "1")
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     cfg.voice.enabled = True
     cfg.voice.tts_voice = tmp_path / "voices" / "de_DE-thorsten-high.onnx"
-    from jarvis.server import create_app
+    from orbwise.server import create_app
     return TestClient(create_app(cfg), base_url="http://localhost:8765")
 
 

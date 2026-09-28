@@ -1,0 +1,17 @@
+# Optional: run Orbwise as a systemd user service instead of the desktop autostart.
+# Root actions keep working through the password field in the dashboard (tools.privilege_cmd: dashboard).
+# Opening files/apps on your desktop works best when Orbwise runs inside the desktop session (autostart).
+#
+#   cp scripts/orbwise.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now orbwise
+[Unit]
+Description=Orbwise local AI assistant
+After=network-online.target ollama.service
+
+[Service]
+ExecStart=%h/.local/bin/orbwise serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

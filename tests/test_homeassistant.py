@@ -3,8 +3,8 @@ import pytest
 from conftest import run
 from fake_homeassistant import TOKEN, FakeHA
 
-from jarvis.tools import homeassistant as ha
-from jarvis.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
+from orbwise.tools import homeassistant as ha
+from orbwise.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
 
 TOOLS = {"ha_find", "ha_state", "ha_control"}
 
@@ -23,7 +23,7 @@ def ctx(cfg):
 
 
 def test_only_when_configured(cfg, monkeypatch):
-    monkeypatch.delenv("JARVIS_HA_TOKEN", raising=False)
+    monkeypatch.delenv("ORBWISE_HA_TOKEN", raising=False)
     load_all_tools()
     assert not TOOLS & {s["function"]["name"] for s in tool_schemas(cfg)}
     cfg.homeassistant.url, cfg.homeassistant.token = "http://ha", "t"

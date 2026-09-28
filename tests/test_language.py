@@ -1,11 +1,11 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from jarvis import prompts
-from jarvis.agent import Agent
-from jarvis.config import Config
-from jarvis.server import CALL_TEXTS, describe_call, parse_yes_no
-from jarvis.web_i18n import HTML_EN, translate_index
+from orbwise import prompts
+from orbwise.agent import Agent
+from orbwise.config import Config
+from orbwise.server import CALL_TEXTS, describe_call, parse_yes_no
+from orbwise.web_i18n import HTML_EN, translate_index
 
 
 def test_language_defaults():
@@ -39,7 +39,7 @@ def test_yes_no_both_languages(text, expected):
 
 def test_index_translation_complete():
     from pathlib import Path
-    html = (Path(__file__).parent.parent / "jarvis" / "web" / "index.html").read_text(encoding="utf-8")
+    html = (Path(__file__).parent.parent / "orbwise" / "web" / "index.html").read_text(encoding="utf-8")
     assert all(de in html for de, _ in HTML_EN), "index.html geändert – HTML_EN anpassen"
     en = translate_index(html, "en")
     assert '<html lang="en">' in en and "START SYSTEM" in en and "SYSTEM STARTEN" not in en
@@ -47,9 +47,9 @@ def test_index_translation_complete():
 
 
 def test_served_page_uses_language(cfg, monkeypatch):
-    monkeypatch.setenv("JARVIS_FAKE_LLM", "1")
-    monkeypatch.setenv("JARVIS_SKIP_WARMUP", "1")
-    from jarvis.server import create_app
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    from orbwise.server import create_app
     cfg.language = "en"
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         r = client.get("/")

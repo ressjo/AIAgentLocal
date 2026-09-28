@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# JARVIS – installer for Arch Linux / Manjaro / EndeavourOS and Debian / Ubuntu / Linux Mint
+# Orbwise – installer for Arch Linux / Manjaro / EndeavourOS and Debian / Ubuntu / Linux Mint
 #
 #   ./scripts/install.sh                   # asks for language, GPU and model (with recommendations)
 #   ./scripts/install.sh --lang en         # English assistant, voice and UI (default: de)
@@ -7,19 +7,19 @@
 #   ./scripts/install.sh --gpu vulkan      # force the Ollama backend: auto | cuda | rocm | vulkan | cpu (Arch)
 #   ./scripts/install.sh --yes             # no questions, use the detected/recommended defaults
 #   ./scripts/install.sh --no-autostart
-# Change or add models later with:  jarvis model add
+# Change or add models later with:  orbwise model add
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DATA="${XDG_DATA_HOME:-$HOME/.local/share}/jarvis"
-CONF="${XDG_CONFIG_HOME:-$HOME/.config}/jarvis"
+DATA="${XDG_DATA_HOME:-$HOME/.local/share}/orbwise"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/orbwise"
 MODEL=""
 GPU="auto"
 LANG_CHOICE=""
 AUTOSTART=1
 ASK=1
-REPO="${JARVIS_REPO:-https://github.com/ressjo/AIAgentLocal.git}"
-BRANCH="${JARVIS_BRANCH:-main}"
+REPO="${ORBWISE_REPO:-https://github.com/ressjo/orbwise.git}"
+BRANCH="${ORBWISE_BRANCH:-main}"
 PIPER="https://huggingface.co/rhasspy/piper-voices/resolve/main"
 
 while [[ $# -gt 0 ]]; do
@@ -47,7 +47,7 @@ if [[ -z "$LANG_CHOICE" && $ASK == 1 ]]; then
   [[ "$answer" == "2" ]] && LANG_CHOICE="en"
 fi
 [[ "$LANG_CHOICE" == "en" ]] || LANG_CHOICE="de"
-export JARVIS_LANG="$LANG_CHOICE"
+export ORBWISE_LANG="$LANG_CHOICE"
 t() { if [[ "$LANG_CHOICE" == "en" ]]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
 ask_yes() {  # ask_yes "Frage" "Question" [default y|n]
   local def="${3:-y}" answer
@@ -60,19 +60,19 @@ ask_yes() {  # ask_yes "Frage" "Question" [default y|n]
 
 if command -v pacman >/dev/null; then DISTRO="arch"
 elif command -v apt-get >/dev/null; then DISTRO="debian"
-else echo "Unsupported distribution – JARVIS supports Arch-based (pacman) and Debian/Ubuntu-based (apt) systems."; exit 1
+else echo "Unsupported distribution – Orbwise supports Arch-based (pacman) and Debian/Ubuntu-based (apt) systems."; exit 1
 fi
 
 # ---------------------------------------------------------------- Fixed location via git
-# Started from a ZIP download? A git checkout makes updates a one-liner ("jarvis update").
+# Started from a ZIP download? A git checkout makes updates a one-liner ("orbwise update").
 if [[ ! -d "$ROOT/.git" && -t 0 ]]; then
-  echo "This folder is a ZIP download. Updates are easier with a git checkout in ~/jarvis."
-  read -r -p "Install to ~/jarvis instead (recommended)? [Y/n] " answer
+  echo "This folder is a ZIP download. Updates are easier with a git checkout in ~/orbwise."
+  read -r -p "Install to ~/orbwise instead (recommended)? [Y/n] " answer
   if [[ ! "$answer" =~ ^[nN] ]]; then
     if ! command -v git >/dev/null; then
       if [[ $DISTRO == arch ]]; then sudo pacman -S --needed --noconfirm git; else sudo apt-get install -y git; fi
     fi
-    JARVIS_REPO="$REPO" JARVIS_BRANCH="$BRANCH" exec bash "$ROOT/scripts/bootstrap.sh" "$@"
+    ORBWISE_REPO="$REPO" ORBWISE_BRANCH="$BRANCH" exec bash "$ROOT/scripts/bootstrap.sh" "$@"
   fi
 fi
 
@@ -151,7 +151,8 @@ if [[ -n "$HSA" ]] && ask_yes "Deine AMD-Karte braucht für ROCm meist HSA_OVERR
                               "Your AMD card usually needs HSA_OVERRIDE_GFX_VERSION=$HSA for ROCm. Set it up for Ollama?" y; then
   sudo mkdir -p /etc/systemd/system/ollama.service.d
   printf '[Service]\nEnvironment="HSA_OVERRIDE_GFX_VERSION=%s"\n' "$HSA" | \
-    sudo tee /etc/systemd/system/ollama.service.d/jarvis-rocm.conf >/dev/null
+    sudo tee /etc/systemd/system/ollama.service.d/orbwise-rocm.conf >/dev/null
+  sudo rm -f /etc/systemd/system/ollama.service.d/jarvis-rocm.conf   # name before the project was renamed
   sudo systemctl daemon-reload && sudo systemctl restart ollama.service || true
 fi
 
@@ -159,6 +160,8 @@ fi
 say "Setting up the Python environment (uv)"
 cd "$ROOT"
 uv sync --extra voice
+# the project used to be called "Jarvis": move ~/.config/jarvis and ~/.local/share/jarvis over first
+uv run python -c "from orbwise.migrate import migrate; [print('  ' + line) for line in migrate()]"
 
 # ---------------------------------------------------------------- Model choice by VRAM
 if [[ -z "$MODEL" ]]; then
@@ -182,15 +185,15 @@ CHOICE_FILE="$(mktemp)"
 OLLAMA_MODEL=""   # Ollama-Chatmodell (leer, wenn nur Bonsai gewählt wurde)
 BONSAI=0
 choose_model() {  # Menü geht ins Terminal, die Wahl in $CHOICE_FILE
-  if (( ASK )); then uv run jarvis model choose --vram "$GB" --out "$CHOICE_FILE"
-  else uv run jarvis model choose --vram "$GB" --out "$CHOICE_FILE" </dev/null; fi
+  if (( ASK )); then uv run orbwise model choose --vram "$GB" --out "$CHOICE_FILE"
+  else uv run orbwise model choose --vram "$GB" --out "$CHOICE_FILE" </dev/null; fi
 }
 while true; do
   if [[ -z "$MODEL" ]]; then choose_model; MODEL="$(cat "$CHOICE_FILE")"; fi
   echo "→ $MODEL"
   if [[ "$MODEL" == "bonsai" ]]; then
     # Bonsai 2 27B: eigener llama-server (PrismML-Fork) – Repo, Binaries und Modell nach ~/bonsai, Profil aktiv
-    if uv run jarvis model add bonsai --yes; then
+    if uv run orbwise model add bonsai --yes; then
       BONSAI=1
       if (( ASK )) && ask_yes "Zusätzlich ein Ollama-Modell als schnelle Alternative installieren?" \
                               "Also install an Ollama model as a fast alternative?" n; then
@@ -226,9 +229,9 @@ uv run python -c "from faster_whisper import WhisperModel; WhisperModel('small',
 say "Configuration"
 BRAVE_KEY=""
 if (( ASK )); then
-  echo "$(t 'Websuche: Mit einem (kostenlosen) Brave-Search-API-Schlüssel sucht Jarvis über die offizielle API statt
+  echo "$(t 'Websuche: Mit einem (kostenlosen) Brave-Search-API-Schlüssel sucht Orbwise über die offizielle API statt
 Suchseiten auszulesen – kein Risiko, als Bot gesperrt zu werden. Schlüssel: https://api-dashboard.search.brave.com' \
-            'Web search: with a (free) Brave Search API key Jarvis uses the official API instead of scraping result
+            'Web search: with a (free) Brave Search API key Orbwise uses the official API instead of scraping result
 pages – no risk of being blocked as a bot. Get a key: https://api-dashboard.search.brave.com')"
   read -r -p "$(t 'Brave-API-Schlüssel (Enter = überspringen): ' 'Brave API key (Enter = skip): ')" BRAVE_KEY
   if [[ -n "$BRAVE_KEY" && ! "$BRAVE_KEY" =~ ^[A-Za-z0-9_-]+$ ]]; then
@@ -238,7 +241,7 @@ pages – no risk of being blocked as a bot. Get a key: https://api-dashboard.se
   fi
 fi
 if [[ ! -f "$CONF/config.yaml" ]]; then
-  uv run jarvis init-config
+  uv run orbwise init-config
   [[ -n "$OLLAMA_MODEL" ]] && sed -i "s|^  model: .*|  model: $OLLAMA_MODEL|" "$CONF/config.yaml"
   sed -i "s|^language: [a-z]*|language: $LANG_CHOICE|" "$CONF/config.yaml"
   [[ -n "$BRAVE_KEY" ]] && sed -i "s|^  brave_api_key: \"\"|  brave_api_key: \"$BRAVE_KEY\"|" "$CONF/config.yaml"
@@ -252,40 +255,49 @@ fi
 # ---------------------------------------------------------------- Launcher
 say "Setting up the launcher"
 mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
-rm -f "$HOME/.local/bin/jarvis"   # used to be a symlink into .venv
-sed -e "s|@JARVIS_HOME@|$ROOT|g" -e "s|@JARVIS_BRANCH@|$BRANCH|g" -e "s|@JARVIS_REPO@|$REPO|g" \
-  "$ROOT/scripts/jarvis-launcher" > "$HOME/.local/bin/jarvis"
-chmod 755 "$HOME/.local/bin/jarvis"
+rm -f "$HOME/.local/bin/orbwise"
+# the project used to be called "Jarvis": keep the old command names as forwarders
+for old in jarvis jarvis-open; do
+  if [[ -e "$HOME/.local/bin/$old" ]]; then
+    printf '#!/usr/bin/env bash\n# Former command name – the project is now called Orbwise.\nORBWISE_VIA_ALIAS=1 exec "$HOME/.local/bin/%s" "$@"\n' \
+      "${old/jarvis/orbwise}" > "$HOME/.local/bin/$old"
+    chmod 755 "$HOME/.local/bin/$old"
+  fi
+done
+rm -f "$HOME/.local/share/applications/jarvis.desktop" "$HOME/.config/autostart/jarvis.desktop"
+sed -e "s|@ORBWISE_HOME@|$ROOT|g" -e "s|@ORBWISE_BRANCH@|$BRANCH|g" -e "s|@ORBWISE_REPO@|$REPO|g" \
+  "$ROOT/scripts/orbwise-launcher" > "$HOME/.local/bin/orbwise"
+chmod 755 "$HOME/.local/bin/orbwise"
 
 # Put ~/.local/bin on the PATH (once)
 for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
   [[ -f "$rc" || "$rc" == "$HOME/.bashrc" ]] || continue
-  if ! grep -q "# jarvis-path" "$rc" 2>/dev/null; then
-    printf '\nexport PATH="$HOME/.local/bin:$PATH"  # jarvis-path\n' >> "$rc"
+  if ! grep -q -E "# (orbwise|jarvis)-path" "$rc" 2>/dev/null; then
+    printf '\nexport PATH="$HOME/.local/bin:$PATH"  # orbwise-path\n' >> "$rc"
   fi
 done
-install -m 755 "$ROOT/scripts/jarvis-open" "$HOME/.local/bin/jarvis-open"
-sed "s|@HOME@|$HOME|g" "$ROOT/scripts/jarvis.desktop" > "$HOME/.local/share/applications/jarvis.desktop"
+install -m 755 "$ROOT/scripts/orbwise-open" "$HOME/.local/bin/orbwise-open"
+sed "s|@HOME@|$HOME|g" "$ROOT/scripts/orbwise.desktop" > "$HOME/.local/share/applications/orbwise.desktop"
 
 if (( AUTOSTART )); then
   # Autostart inside the desktop session (needed to open files/apps on your desktop)
   mkdir -p "$HOME/.config/autostart"
-  sed "s|@HOME@|$HOME|g" "$ROOT/scripts/jarvis-autostart.desktop" > "$HOME/.config/autostart/jarvis.desktop"
-  echo "Autostart configured (~/.config/autostart/jarvis.desktop)."
+  sed "s|@HOME@|$HOME|g" "$ROOT/scripts/orbwise-autostart.desktop" > "$HOME/.config/autostart/orbwise.desktop"
+  echo "Autostart configured (~/.config/autostart/orbwise.desktop)."
 fi
 
 say "Done!"
 cat <<EOF
 Installed in: $ROOT
-Start:    jarvis serve --open      (or "JARVIS" in the application menu)
-Check:    jarvis doctor
-Update:   jarvis update
-(Open a new terminal or run "source ~/.bashrc" if "jarvis" is not found yet.)
+Start:    orbwise serve --open      (or "Orbwise" in the application menu)
+Check:    orbwise doctor
+Update:   orbwise update
+(Open a new terminal or run "source ~/.bashrc" if "orbwise" is not found yet.)
 Web UI:   http://localhost:8765
-Models:   jarvis model add        (download and switch to another model – also in the web UI: LLM menu)
+Models:   orbwise model add        (download and switch to another model – also in the web UI: LLM menu)
 EOF
 if (( BONSAI )); then
-  echo "Bonsai:   set up in ~/bonsai – Jarvis starts its llama-server automatically (log: ~/.local/state/jarvis-llm.log)"
+  echo "Bonsai:   set up in ~/bonsai – Orbwise starts its llama-server automatically (log: ~/.local/state/orbwise-llm.log)"
 fi
 if [[ -n "$BRAVE_KEY" ]]; then echo "Search:   Brave Search API"
 else echo "Search:   scraping result pages – for the official API without bot blocking set tools.brave_api_key"; fi

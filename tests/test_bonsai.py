@@ -3,10 +3,10 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from jarvis import bonsai
-from jarvis import models as mdl
-from jarvis.config import LLMConfig
-from jarvis.llm_router import LLMRouter
+from orbwise import bonsai
+from orbwise import models as mdl
+from orbwise.config import LLMConfig
+from orbwise.llm_router import LLMRouter
 
 AMD_8GB = {"vendor": "amd", "name": "Navi 23 [Radeon RX 6650 XT / 6700S / 6800S]", "vram_gb": 8.0}
 NVIDIA_16GB = {"vendor": "nvidia", "name": "NVIDIA GeForce RTX 4080 SUPER", "vram_gb": 16.0}
@@ -72,7 +72,7 @@ def test_setup_failure_and_foreign_folder(tmp_path, monkeypatch):
     foreign.mkdir()
     (foreign / "notes.txt").write_text("x")
     assert not bonsai.setup(foreign, run=lambda *a, **k: None, out=msgs.append)
-    assert "JARVIS_BONSAI_DIR" in msgs[-1]
+    assert "ORBWISE_BONSAI_DIR" in msgs[-1]
     target = tmp_path / "b2"
     failing = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1 if cmd[0] == "sh" else 0)  # noqa: E731
     assert not bonsai.setup(target, run=failing, out=msgs.append) and "fehlgeschlagen" in msgs[-1]
@@ -80,13 +80,13 @@ def test_setup_failure_and_foreign_folder(tmp_path, monkeypatch):
 
 def test_preset_and_web_pull_refuses_bonsai(cfg, monkeypatch):
     assert mdl.BY_TAG["bonsai"].kind == "bonsai"
-    monkeypatch.setenv("JARVIS_SKIP_WARMUP", "1")
-    monkeypatch.delenv("JARVIS_FAKE_LLM", raising=False)
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
     cfg.llm.base_url = "http://127.0.0.1:9"
-    from jarvis.server import create_app
+    from orbwise.server import create_app
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         r = client.post("/api/models/pull", json={"tag": "bonsai"})
-        assert r.status_code == 400 and "jarvis model add bonsai" in r.json()["detail"]
+        assert r.status_code == 400 and "orbwise model add bonsai" in r.json()["detail"]
 
 
 LDD_MISSING = """\tlinux-vdso.so.1 (0x00007ffc)
@@ -172,13 +172,13 @@ def test_reinstall_keeps_api_key_and_adds_lib_path(tmp_path, monkeypatch):
 
 
 def test_router_error_names_missing_library(tmp_path, monkeypatch):
-    from jarvis import llm_router
+    from orbwise import llm_router
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
-    log = tmp_path / "jarvis-llm.log"
+    log = tmp_path / "orbwise-llm.log"
     log.write_text("\n===== Starte: old\nerror while loading shared libraries: libold.so.1: x\n"
                    "\n===== Starte: ~/bonsai/scripts/start_llama_server.sh\n"
                    "llama-server: error while loading shared libraries: libcudart.so.12: cannot open shared object file\n")
     hint = llm_router.library_hint("~/bonsai/scripts/start_llama_server.sh -np 1")
-    assert "libcudart.so.12" in hint and "jarvis model add bonsai" in hint and "libold" not in hint
+    assert "libcudart.so.12" in hint and "orbwise model add bonsai" in hint and "libold" not in hint
     log.write_text("\n===== Starte: x\nall good\n")
     assert llm_router.library_hint("x") == ""

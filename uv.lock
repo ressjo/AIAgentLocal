@@ -619,59 +619,6 @@ wheels = [
 ]
 
 [[package]]
-name = "jarvis-local"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "caldav" },
-    { name = "ddgs" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "pydantic" },
-    { name = "pyyaml" },
-    { name = "trafilatura" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "radicale" },
-    { name = "ruff" },
-]
-voice = [
-    { name = "faster-whisper" },
-    { name = "onnxruntime" },
-    { name = "openwakeword" },
-    { name = "piper-tts" },
-    { name = "webrtcvad-wheels" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "caldav", specifier = ">=3.3.1" },
-    { name = "ddgs", specifier = ">=9.0" },
-    { name = "fastapi", specifier = ">=0.110" },
-    { name = "faster-whisper", marker = "extra == 'voice'", specifier = ">=1.0" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "onnxruntime", marker = "extra == 'voice'", specifier = ">=1.17" },
-    { name = "openwakeword", marker = "extra == 'voice'", specifier = ">=0.6" },
-    { name = "piper-tts", marker = "extra == 'voice'", specifier = ">=1.2" },
-    { name = "pydantic", specifier = ">=2.6" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "radicale", marker = "extra == 'dev'", specifier = ">=3.8.1" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
-    { name = "trafilatura", specifier = ">=1.8" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
-    { name = "webrtcvad-wheels", marker = "extra == 'voice'", specifier = ">=2.0.11" },
-]
-provides-extras = ["voice", "dev"]
-
-[[package]]
 name = "jh2"
 version = "5.0.15"
 source = { registry = "https://pypi.org/simple" }
@@ -1170,6 +1117,59 @@ sdist = { url = "https://files.pythonhosted.org/packages/b5/9b/73b7d98b07f4e1f52
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8a/33/dafd6822bebe463a9098951d06a0d88fb4f8c946ce087025bc4fa132e533/openwakeword-0.6.0-py3-none-any.whl", hash = "sha256:6f423a4e3ae9dd0e3cd12b50ff8abf69679f687b4ab349d7c82c021c0e2abc9d", size = 60690, upload-time = "2024-02-11T20:56:16.179Z" },
 ]
+
+[[package]]
+name = "orbwise"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "caldav" },
+    { name = "ddgs" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "trafilatura" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "radicale" },
+    { name = "ruff" },
+]
+voice = [
+    { name = "faster-whisper" },
+    { name = "onnxruntime" },
+    { name = "openwakeword" },
+    { name = "piper-tts" },
+    { name = "webrtcvad-wheels" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "caldav", specifier = ">=3.3.1" },
+    { name = "ddgs", specifier = ">=9.0" },
+    { name = "fastapi", specifier = ">=0.110" },
+    { name = "faster-whisper", marker = "extra == 'voice'", specifier = ">=1.0" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "onnxruntime", marker = "extra == 'voice'", specifier = ">=1.17" },
+    { name = "openwakeword", marker = "extra == 'voice'", specifier = ">=0.6" },
+    { name = "piper-tts", marker = "extra == 'voice'", specifier = ">=1.2" },
+    { name = "pydantic", specifier = ">=2.6" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "radicale", marker = "extra == 'dev'", specifier = ">=3.8.1" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
+    { name = "trafilatura", specifier = ">=1.8" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
+    { name = "webrtcvad-wheels", marker = "extra == 'voice'", specifier = ">=2.0.11" },
+]
+provides-extras = ["voice", "dev"]
 
 [[package]]
 name = "packaging"

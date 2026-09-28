@@ -1,8 +1,8 @@
 import pytest
 from conftest import run
 
-from jarvis.tools import packages as pk
-from jarvis.tools.registry import ToolContext
+from orbwise.tools import packages as pk
+from orbwise.tools.registry import ToolContext
 
 
 @pytest.fixture

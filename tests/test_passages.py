@@ -1,6 +1,6 @@
 from conftest import run
 
-from jarvis.tools.passages import rank_passages, select_passages, split_passages
+from orbwise.tools.passages import rank_passages, select_passages, split_passages
 
 
 def test_split_passages_overlap_and_coverage():

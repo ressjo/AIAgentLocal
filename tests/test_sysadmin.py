@@ -3,8 +3,8 @@ import os
 import pytest
 from conftest import run
 
-from jarvis.tools import sysadmin as sa
-from jarvis.tools.registry import BLOCKED, CONFIRM, SAFE, ToolContext, get_tool, load_all_tools
+from orbwise.tools import sysadmin as sa
+from orbwise.tools.registry import BLOCKED, CONFIRM, SAFE, ToolContext, get_tool, load_all_tools
 
 
 @pytest.fixture
@@ -101,7 +101,7 @@ def test_check_port_real_socket(cfg):
 
 
 def test_disable_tools_and_groups(cfg):
-    from jarvis.tools.registry import tool_schemas
+    from orbwise.tools.registry import tool_schemas
     load_all_tools()
     names = lambda: {s["function"]["name"] for s in tool_schemas(cfg)}  # noqa: E731
     assert {"top_processes", "ping_host", "web_search"} <= names()
@@ -113,8 +113,8 @@ def test_disable_tools_and_groups(cfg):
 def test_small_context_sends_only_relevant_tool_groups(cfg, memory):
     import json
 
-    from jarvis.agent import Agent
-    from jarvis.config import ProfileConfig
+    from orbwise.agent import Agent
+    from orbwise.config import ProfileConfig
 
     class Small:
         profile = ProfileConfig(backend="openai", base_url="http://x/v1", model="bonsai", num_ctx=8192)
