@@ -77,7 +77,7 @@ def test_ollama_token_stats():
     ]
     llm = OllamaLLM(LLMConfig())
     llm._client = httpx.AsyncClient(base_url="http://o", transport=httpx.MockTransport(
-        lambda r: httpx.Response(200, text="\n".join(json.dumps(l) for l in lines))))
+        lambda r: httpx.Response(200, text="\n".join(json.dumps(x) for x in lines))))
 
     async def go():
         return [e async for e in llm.chat_stream([{"role": "user", "content": "x"}])]

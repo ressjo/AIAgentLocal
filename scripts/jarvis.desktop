@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=JARVIS
-Comment=Lokaler KI-Sprachassistent
+Comment=Local AI voice assistant
 Exec=@HOME@/.local/bin/jarvis-open
 Icon=audio-input-microphone
 Terminal=false

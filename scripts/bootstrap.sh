@@ -1,26 +1,29 @@
 #!/usr/bin/env bash
-# JARVIS an einem festen Ort per Git installieren bzw. aktualisieren und dann install.sh starten.
+# Install or update JARVIS as a git checkout in a fixed place, then run install.sh.
 #
-#   bash bootstrap.sh            # nach ~/jarvis
+#   bash bootstrap.sh            # → ~/jarvis
 #   JARVIS_HOME=~/apps/jarvis bash bootstrap.sh
+#   bash bootstrap.sh --lang en  # all options are passed on to install.sh
 set -euo pipefail
 
 REPO="${JARVIS_REPO:-https://github.com/ressjo/AIAgentLocal.git}"
-BRANCH="${JARVIS_BRANCH:-claude/epic-volta-vyvxlk}"
+BRANCH="${JARVIS_BRANCH:-main}"
 TARGET="${JARVIS_HOME:-$HOME/jarvis}"
 
-command -v git >/dev/null || sudo pacman -S --needed --noconfirm git
+if ! command -v git >/dev/null; then
+  if command -v pacman >/dev/null; then sudo pacman -S --needed --noconfirm git; else sudo apt-get install -y git; fi
+fi
 
 if [ -d "$TARGET/.git" ]; then
-  echo "==> Aktualisiere $TARGET"
+  echo "==> Updating $TARGET"
   git -C "$TARGET" fetch origin "$BRANCH"
   git -C "$TARGET" checkout -q "$BRANCH"
   git -C "$TARGET" pull --ff-only origin "$BRANCH"
 elif [ -e "$TARGET" ] && [ -n "$(ls -A "$TARGET" 2>/dev/null)" ]; then
-  echo "$TARGET existiert bereits und ist kein Git-Checkout – bitte umbenennen oder JARVIS_HOME setzen." >&2
+  echo "$TARGET already exists and is not a git checkout – rename it or set JARVIS_HOME." >&2
   exit 1
 else
-  echo "==> Lade JARVIS nach $TARGET"
+  echo "==> Downloading JARVIS to $TARGET"
   git clone -b "$BRANCH" "$REPO" "$TARGET"
 fi
 

@@ -52,7 +52,7 @@ async def system_info(ctx: ToolContext) -> str:
              f"CPU: {_cpu_model()} ({os.cpu_count()} Threads)"]
     if shutil.which("lspci"):
         _, out = await proc.run(ctx, ["lspci"], timeout=10, stream=False)
-        gpus = [l.split(": ", 1)[-1] for l in out.splitlines() if "VGA" in l or "3D controller" in l or "Display" in l]
+        gpus = [ln.split(": ", 1)[-1] for ln in out.splitlines() if "VGA" in ln or "3D controller" in ln or "Display" in ln]
         if gpus:
             lines.append("GPU: " + "; ".join(gpus))
     try:

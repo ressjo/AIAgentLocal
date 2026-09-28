@@ -1,12 +1,11 @@
-# Optional: JARVIS als systemd-User-Dienst statt Desktop-Autostart.
-# ACHTUNG: Ein Dienst außerhalb der Desktop-Sitzung kann keinen pkexec-Dialog anzeigen.
-# Setze daher in ~/.config/jarvis/config.yaml  tools.privilege_cmd: sudo
-# und lege eine sudoers-Regel an (siehe README, Abschnitt „Root-Rechte“).
+# Optional: run JARVIS as a systemd user service instead of the desktop autostart.
+# Root actions keep working through the password field in the dashboard (tools.privilege_cmd: jarvis).
+# Opening files/apps on your desktop works best when JARVIS runs inside the desktop session (autostart).
 #
 #   cp scripts/jarvis.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload && systemctl --user enable --now jarvis
 [Unit]
-Description=JARVIS lokaler KI-Assistent
+Description=JARVIS local AI assistant
 After=network-online.target ollama.service
 
 [Service]

@@ -55,7 +55,7 @@ def test_chats_create_title_star_sort_switch(cfg, llm, memory):
 
 def test_forget_chat_removes_everything_but_facts(cfg, llm, memory):
     ask(cfg, llm, memory, "Mein geheimes Projekt heißt Falkenauge")
-    run(memory.remember("Joshua mag Kaffee"))
+    run(memory.remember("Alex mag Kaffee"))
     secret = memory.conversation.chat_id
     memory.new_chat()
     ask(cfg, llm, memory, "Wie heißt die Hauptstadt von Frankreich")
@@ -74,7 +74,7 @@ def test_forget_chat_removes_everything_but_facts(cfg, llm, memory):
     assert memory.summaries.read(day) is None  # wird aus dem Rest neu erstellt
     assert day in memory.days_needing_summary(include_today=True)
     assert not any("Falkenauge" in h.text for h in run(memory.index.search("Falkenauge Projekt", k=10)))
-    assert "Joshua mag Kaffee" in memory.facts_text()
+    assert "Alex mag Kaffee" in memory.facts_text()
     assert not memory.chats.exists(secret) and memory.conversation.chat_id == other
 
     # aktiven Chat löschen → neuer leerer Chat; letzter Eintrag des Tages weg → Tagesdatei weg
@@ -95,10 +95,10 @@ def test_other_chats_found_by_retrieval_even_if_newer(cfg, llm, memory):
     first = memory.conversation.chat_id
     ask(cfg, llm, memory, "Hallo")
     memory.new_chat()
-    ask(cfg, llm, memory, "Mein Router hat die Adresse 192.168.178.1")
+    ask(cfg, llm, memory, "Mein Router hat die Adresse 192.168.1.1")
     memory.switch_chat(first)  # älterer Chat: neuere Einträge anderer Chats dürfen nicht ausgeblendet werden
     hits = run(memory.retrieve("Router Adresse", exclude_after=memory.conversation.window_start()))
-    assert any("192.168.178.1" in h.text for h in hits)
+    assert any("192.168.1.1" in h.text for h in hits)
 
 
 def test_migration_from_session_json(cfg, llm):

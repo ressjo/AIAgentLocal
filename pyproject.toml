@@ -1,10 +1,27 @@
 [project]
 name = "jarvis-local"
 version = "0.1.0"
-description = "JARVIS – lokaler Sprach-KI-Assistent für Linux mit Ollama, persistentem Gedächtnis und animierter Weboberfläche"
+description = "JARVIS – a local, voice-controlled AI assistant for Linux: Ollama/llama.cpp, persistent memory, tool use and an animated web UI"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+authors = [{ name = "ressjo and contributors" }]
+keywords = ["assistant", "jarvis", "llm", "ollama", "llama.cpp", "voice", "agent", "linux", "home-assistant"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Natural Language :: German",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Home Automation",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
@@ -28,7 +45,13 @@ voice = [
 dev = [
     "pytest>=8.0",
     "radicale>=3.8.1",
+    "ruff>=0.6",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ressjo/AIAgentLocal"
+Issues = "https://github.com/ressjo/AIAgentLocal/issues"
+Changelog = "https://github.com/ressjo/AIAgentLocal/blob/main/CHANGELOG.md"
 
 [project.scripts]
 jarvis = "jarvis.cli:main"
@@ -44,6 +67,13 @@ packages = ["jarvis"]
 # openwakeword zieht unter Linux tflite-runtime, für das es ab Python 3.12 keine Wheels gibt.
 # Wir nutzen ausschließlich das ONNX-Backend, daher wird tflite-runtime ausgeblendet.
 override-dependencies = ["tflite-runtime; sys_platform == 'never'"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

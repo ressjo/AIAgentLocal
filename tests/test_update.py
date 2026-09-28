@@ -109,8 +109,8 @@ def test_launcher_self_heals(tmp_path):
     env.pop("JARVIS_HOME", None)
     r = subprocess.run([str(launcher), "doctor"], capture_output=True, text=True, env=env)
     assert r.returncode == 0 and r.stdout.strip() == "gestartet doctor"
-    assert "neu ein" in r.stderr
+    assert "recreating" in r.stderr
 
     r = subprocess.run([str(launcher)], capture_output=True, text=True,
                        env={**env, "JARVIS_HOME": str(tmp_path / "weg")})
-    assert r.returncode == 1 and "nicht gefunden" in r.stderr
+    assert r.returncode == 1 and "was not found" in r.stderr

@@ -25,7 +25,7 @@ def test_stream_with_tool_calls():
                 {"function": {"name": "system_update", "arguments": {}}}]}, "done": False},
             {"message": {"role": "assistant", "content": ""}, "done": True},
         ]
-        return httpx.Response(200, text="\n".join(json.dumps(l) for l in lines))
+        return httpx.Response(200, text="\n".join(json.dumps(x) for x in lines))
 
     llm = make_llm(handler)
 

@@ -4,12 +4,19 @@
 
   const $ = (id) => document.getElementById(id);
   const orb = new window.Orb($("orb"));
+  // Sprache: der Server liefert index.html bereits mit lang="de" bzw. lang="en" aus
+  const EN = document.documentElement.lang === "en";
+  const L = (de, en) => (EN ? en : de);
+  const LOCALE = EN ? "en-GB" : "de-DE";
 
   const LABELS = {
-    offline: "OFFLINE", idle: "BEREIT", listening: "HÖRE ZU", thinking: "DENKE NACH",
-    speaking: "SPRECHE", executing: "FÜHRE AUS", confirm: "WARTE AUF FREIGABE", error: "FEHLER",
+    offline: "OFFLINE", idle: L("BEREIT", "READY"), listening: L("HÖRE ZU", "LISTENING"),
+    thinking: L("DENKE NACH", "THINKING"), speaking: L("SPRECHE", "SPEAKING"), executing: L("FÜHRE AUS", "EXECUTING"),
+    confirm: L("WARTE AUF FREIGABE", "AWAITING APPROVAL"), error: L("FEHLER", "ERROR"),
   };
-  const STATUS_TEXT = { running: "läuft", waiting: "wartet", ok: "fertig", denied: "abgelehnt", blocked: "blockiert", error: "fehler" };
+  const STATUS_TEXT = EN
+    ? { running: "running", waiting: "waiting", ok: "done", denied: "denied", blocked: "blocked", error: "error" }
+    : { running: "läuft", waiting: "wartet", ok: "fertig", denied: "abgelehnt", blocked: "blockiert", error: "fehler" };
 
   const store = {
     get(k, d) { try { const v = localStorage.getItem("jarvis." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -47,7 +54,7 @@
   async function initMic() {
     if (A.micReady) return true;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      toast("Mikrofon nicht verfügbar – Seite über http://localhost öffnen.");
+      toast(L("Mikrofon nicht verfügbar – Seite über http://localhost öffnen.", "Microphone unavailable – open the page via http://localhost."));
       return false;
     }
     try {
@@ -70,7 +77,7 @@
       A.micReady = true;
       return true;
     } catch (err) {
-      toast("Kein Mikrofonzugriff: " + err.message);
+      toast(L("Kein Mikrofonzugriff: ", "No microphone access: ") + err.message);
       return false;
     }
   }
@@ -121,7 +128,7 @@
         src.start();
       } else if (window.speechSynthesis) {
         const u = new SpeechSynthesisUtterance(ev.text);
-        u.lang = "de-DE";
+        u.lang = EN ? "en-GB" : "de-DE";
         if (germanVoice) u.voice = germanVoice;
         u.rate = 1.05;
         u.pitch = S.fxOn ? 1 - 0.3 * S.fxAmount : 1;
@@ -191,12 +198,12 @@
     if (S.modelSwitching && S.connected) s = "thinking";
     orb.setState(s);
     const label = $("state-label");
-    label.textContent = S.modelSwitching && S.connected ? "LADE MODELL" : (LABELS[s] || s.toUpperCase());
+    label.textContent = S.modelSwitching && S.connected ? L("LADE MODELL", "LOADING MODEL") : (LABELS[s] || s.toUpperCase());
     label.style.color = { listening: "#4dffb8", executing: "#ffb347", confirm: "#ffb347", error: "#ff5d6c", offline: "#6d93aa", thinking: "#9aa6ff" }[s] || "";
     let sub = S.substate;
-    if (S.recording) sub = S.recordingMode === "ptt" ? "Loslassen zum Senden" : "Sprich jetzt …";
-    else if (S.transcribing) sub = "Transkribiere …";
-    else if (s === "idle" && S.wake) sub = "Sag „Hey Jarvis“";
+    if (S.recording) sub = S.recordingMode === "ptt" ? L("Loslassen zum Senden", "Release to send") : L("Sprich jetzt …", "Speak now …");
+    else if (S.transcribing) sub = L("Transkribiere …", "Transcribing …");
+    else if (s === "idle" && S.wake) sub = L("Sag „Hey Jarvis“", "Say “Hey Jarvis”");
     $("substate-label").textContent = sub || "";
     $("btn-mic").classList.toggle("recording", S.recording);
     $("btn-wake").classList.toggle("on", S.wake);
@@ -240,7 +247,7 @@
     if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(obj));
   }
 
-  const THINKING_SUB = "denkt nach …";
+  const THINKING_SUB = L("denkt nach …", "thinking …");
 
   function handle(ev) {
     switch (ev.type) {
@@ -338,14 +345,14 @@
         break;
       case "model_switching":
         S.modelSwitching = ev.label || ev.name;
-        S.substate = `Wechsle zu ${ev.label || ev.name} …`;
-        setPill("pill-llm", "warn", "lädt …");
+        S.substate = L("Wechsle zu ", "Switching to ") + `${ev.label || ev.name} …`;
+        setPill("pill-llm", "warn", L("lädt …", "loading …"));
         break;
       case "model_progress":
         S.substate = ev.text;
         break;
       case "model_active":
-        if (S.modelSwitching) addSystem(`Modell aktiv: ${S.modelSwitching}`);
+        if (S.modelSwitching) addSystem(L("Modell aktiv: ", "Model active: ") + S.modelSwitching);
         S.modelSwitching = null;
         S.substate = "";
         loadStatus();
@@ -353,7 +360,7 @@
       case "model_error":
         S.modelSwitching = null;
         S.substate = "";
-        addError("Modellwechsel fehlgeschlagen: " + ev.text);
+        addError(L("Modellwechsel fehlgeschlagen: ", "Model switch failed: ") + ev.text);
         loadStatus();
         break;
       case "metrics":
@@ -452,7 +459,7 @@
   }
 
   function addUser(text, source) {
-    addMsg("user", source === "voice" ? "DU · SPRACHE" : "DU", escapeHtml(text));
+    addMsg("user", source === "voice" ? L("DU · SPRACHE", "YOU · VOICE") : L("DU", "YOU"), escapeHtml(text));
   }
   function addSystem(text) {
     const el = document.createElement("div");
@@ -542,12 +549,13 @@
       if (text && a) {
         const d = document.createElement("details");
         d.className = "thought-log";
-        d.innerHTML = "<summary>GEDANKENGANG</summary><pre></pre>";
+        d.innerHTML = `<summary>${L("GEDANKENGANG", "THOUGHTS")}</summary><pre></pre>`;
         d.querySelector("pre").textContent = text;
         a.el.insertBefore(d, a.el.querySelector(".body"));
       } else if (!text && S.think && !this.warned) {
         this.warned = true;
-        toast("Denkmodus an, aber das Modell hat keinen Gedankengang geliefert – bei Bonsai '--reasoning-budget 0' aus dem Startbefehl entfernen.");
+        toast(L("Denkmodus an, aber das Modell hat keinen Gedankengang geliefert – bei Bonsai '--reasoning-budget 0' aus dem Startbefehl entfernen.",
+              "Thinking mode is on, but the model returned no reasoning – for llama-server remove '--reasoning-budget 0' from the start command."));
       }
     },
   };
@@ -566,7 +574,7 @@
 
   function showTranscript(text) {
     const el = $("live-transcript");
-    el.textContent = text ? `„${text}“` : "";
+    el.textContent = text ? L(`„${text}“`, `“${text}”`) : "";
     el.style.opacity = 1;
     clearTimeout(showTranscript.t);
     showTranscript.t = setTimeout(() => { el.style.opacity = 0; }, 5000);
@@ -590,9 +598,9 @@
     const status = ev.risk === "blocked" ? "blocked" : waiting ? "waiting" : "running";
     el.className = "act running";
     el.innerHTML = `<div class="act-head"><span class="act-name">${escapeHtml(ev.name)}</span>
-      <span><span class="act-time">${new Date().toLocaleTimeString("de-DE")}</span>
+      <span><span class="act-time">${new Date().toLocaleTimeString(LOCALE)}</span>
       <span class="act-status">${STATUS_TEXT[status]}</span>
-      <button class="toggle-out" title="Ausgabe ein-/ausblenden">▾</button></span></div>
+      <button class="toggle-out" title="${L("Ausgabe ein-/ausblenden", "Show/hide output")}">▾</button></span></div>
       <div class="act-args"></div><pre class="act-out"></pre>`;
     el.querySelector(".act-args").textContent = fmtArgs(ev.name, ev.args);
     el.querySelector(".toggle-out").onclick = () => el.classList.toggle("open");
@@ -634,10 +642,10 @@
   function openConfirm(ev) {
     S.confirm = ev;
     S.confirmListenSent = false;
-    $("confirm-summary").textContent = `Soll ich ${ev.summary} ausführen?`;
+    $("confirm-summary").textContent = L(`Soll ich ${ev.summary} ausführen?`, `Shall I run ${ev.summary}?`);
     $("confirm-cmd").textContent = ev.name === "run_shell" ? ev.args.command : `${ev.name}(${JSON.stringify(ev.args, null, 2)})`;
     $("confirm-reason").textContent = ev.reason ? "Grund: " + ev.reason : "";
-    $("confirm-voice").textContent = A.micReady ? "oder sag „Ja“ bzw. „Nein“" : "";
+    $("confirm-voice").textContent = A.micReady ? L("oder sag „Ja“ bzw. „Nein“", "or say “yes” or “no”") : "";
     $("confirm-voice").classList.remove("listening");
     $("confirm").classList.remove("hidden");
     const act = acts[ev.id];
@@ -702,7 +710,7 @@
     updateMicStreaming();
     send({ type: "listen" });
     if (S.confirm) {
-      $("confirm-voice").textContent = "Ich höre … sag „Ja“ oder „Nein“";
+      $("confirm-voice").textContent = L("Ich höre … sag „Ja“ oder „Nein“", "Listening … say “yes” or “no”");
       $("confirm-voice").classList.add("listening");
     }
     refresh();
@@ -717,12 +725,13 @@
   let pwId = null;
   function openPassword(ev) {
     pwId = ev.id;
-    $("pw-prompt").textContent = ev.prompt || "Root-Passwort (sudo)";
+    $("pw-prompt").textContent = ev.retry ? L("Falsches Passwort – bitte erneut eingeben", "Wrong password – please try again")
+                                       : L("Root-Passwort (sudo)", "Root password (sudo)");
     $("pw-cmd").textContent = ev.command || "";
     $("pw-input").value = "";
     $("pw-modal").classList.remove("hidden");
     setTimeout(() => $("pw-input").focus(), 30);
-    if (ev.retry) toast("Falsches Passwort – bitte erneut eingeben.");
+    if (ev.retry) toast(L("Falsches Passwort – bitte erneut eingeben.", "Wrong password – please try again."));
   }
   function closePassword(id) {
     if (id && id !== pwId) return;
@@ -774,7 +783,7 @@
     e.preventDefault();
     const text = $("input").value.trim();
     if (!text) return;
-    if (!S.connected) { toast("Keine Verbindung zum Server."); return; }
+    if (!S.connected) { toast(L("Keine Verbindung zum Server.", "No connection to the server.")); return; }
     send({ type: "user_message", text });
     $("input").value = "";
   });
@@ -783,8 +792,9 @@
     S.think = !S.think;
     store.set("think", S.think);
     send({ type: "think", enabled: S.think });
-    toast(S.think ? "Denkmodus an – Antworten dauern länger, der Gedankengang erscheint im Orb."
-                  : "Denkmodus aus – schnelle Antworten.");
+    toast(S.think ? L("Denkmodus an – Antworten dauern länger, der Gedankengang erscheint im Orb.",
+                      "Thinking mode on – answers take longer, the reasoning appears in the orb.")
+                  : L("Denkmodus aus – schnelle Antworten.", "Thinking mode off – fast answers."));
     refresh();
   };
 
@@ -799,7 +809,7 @@
   $("btn-wake").onclick = async () => {
     const enable = !S.wake;
     if (enable) {
-      if (S.status && !S.status.voice.wake) { toast(S.status.voice.wake_error || "Wake-Word ist nicht verfügbar."); return; }
+      if (S.status && !S.status.voice.wake) { toast(S.status.voice.wake_error || L("Wake-Word ist nicht verfügbar.", "Wake word is not available.")); return; }
       if (!(await initMic())) return;
     }
     S.wake = enable;
@@ -862,11 +872,11 @@
     try {
       data = await getJSON("/api/voices");
     } catch {
-      list.innerHTML = '<li class="empty">Stimmen nicht ladbar.</li>';
+      list.innerHTML = `<li class="empty">${L("Stimmen nicht ladbar.", "Could not load voices.")}</li>`;
       return;
     }
     if (!data.available) {
-      list.innerHTML = '<li class="empty">Piper-Sprachausgabe ist deaktiviert – es spricht der Browser.</li>';
+      list.innerHTML = `<li class="empty">${L("Piper-Sprachausgabe ist deaktiviert – es spricht der Browser.", "Piper speech output is disabled – the browser speaks instead.")}</li>`;
       return;
     }
     if (!S.voiceName) S.voiceName = data.current;
@@ -875,7 +885,7 @@
       const li = document.createElement("li");
       const current = v.name === data.current;
       li.className = "voice" + (current ? " current" : "");
-      li.innerHTML = `<div class="voice-head"><span class="voice-name"></span><span class="voice-tag">${current ? "AKTIV" : v.installed ? "INSTALLIERT" : v.male ? "MÄNNLICH" : "WEIBLICH"}</span></div>
+      li.innerHTML = `<div class="voice-head"><span class="voice-name"></span><span class="voice-tag">${current ? L("AKTIV", "ACTIVE") : v.installed ? L("INSTALLIERT", "INSTALLED") : v.male ? L("MÄNNLICH", "MALE") : L("WEIBLICH", "FEMALE")}</span></div>
         <div class="voice-desc"></div><div class="voice-actions"></div>`;
       li.querySelector(".voice-name").textContent = v.label;
       li.querySelector(".voice-desc").textContent = v.description;
@@ -889,20 +899,20 @@
         return b;
       };
       if (v.installed) {
-        btn("ANHÖREN", () => previewVoice(v.name));
-        if (!current) btn("AUSWÄHLEN", async () => {
+        btn(L("ANHÖREN", "PREVIEW"), () => previewVoice(v.name));
+        if (!current) btn(L("AUSWÄHLEN", "SELECT"), async () => {
           S.voiceName = v.name;
           store.set("voice", v.name);
           sendVoiceSettings();
           setTimeout(loadVoices, 150);
         });
       } else {
-        btn("INSTALLIEREN", async (b) => {
-          b.textContent = "LÄDT …";
+        btn(L("INSTALLIEREN", "INSTALL"), async (b) => {
+          b.textContent = L("LÄDT …", "LOADING …");
           const r = await fetch(`/api/voices/${encodeURIComponent(v.name)}/install`, { method: "POST" });
           if (!r.ok) {
             const err = await r.json().catch(() => ({}));
-            toast(err.detail || "Installation fehlgeschlagen");
+            toast(err.detail || L("Installation fehlgeschlagen", "Installation failed"));
           }
           loadVoices();
           loadStatus();
@@ -916,7 +926,7 @@
     await initAudio();
     sendVoiceSettings();
     const r = await fetch(`/api/voices/${encodeURIComponent(name)}/preview`);
-    if (!r.ok) { toast("Probe nicht möglich"); return; }
+    if (!r.ok) { toast(L("Probe nicht möglich", "Preview not possible")); return; }
     const buf = await A.ctx.decodeAudioData(await r.arrayBuffer());
     stopSpeech(true);
     const src = A.ctx.createBufferSource();
@@ -945,12 +955,15 @@
     setTile("ctx", c.used / 1000, {
       pct,
       digits: 1,
-      sub: `${Math.round(pct)} %` + (c.trimmed ? " · gekürzt" : ""),
+      sub: `${Math.round(pct)} %` + (c.trimmed ? L(" · gekürzt", " · trimmed") : ""),
       title: [
-        `Prompt ca. ${c.used} von ${c.budget} Token Budget (Fenster ${c.window}, Rest bleibt für die Antwort)`,
-        `System ${p.system ?? "?"} · Tools ${p.tools ?? "?"} · Gedächtnis ${p.memory ?? "?"} · Verlauf ${p.history ?? "?"}`,
-        c.real ? `Laut Modell-Server: ${c.real} Token` : "",
-        c.trimmed ? "Ältere Teile/lange Tool-Ergebnisse wurden gekürzt, damit alles passt." : "",
+        L(`Prompt ca. ${c.used} von ${c.budget} Token Budget (Fenster ${c.window}, Rest bleibt für die Antwort)`,
+          `Prompt approx. ${c.used} of ${c.budget} token budget (window ${c.window}, the rest is kept for the answer)`),
+        `System ${p.system ?? "?"} · Tools ${p.tools ?? "?"} · ${L("Gedächtnis", "Memory")} ${p.memory ?? "?"} · `
+          + `${L("Verlauf", "History")} ${p.history ?? "?"}`,
+        c.real ? L("Laut Modell-Server: ", "According to the model server: ") + `${c.real} Token` : "",
+        c.trimmed ? L("Ältere Teile/lange Tool-Ergebnisse wurden gekürzt, damit alles passt.",
+                      "Older parts/long tool results were trimmed so everything fits.") : "",
       ].filter(Boolean).join("\n"),
     });
     $("tele-ctx").querySelector(".tele-num").textContent = kTok(c.used);
@@ -960,7 +973,7 @@
   }
 
   function fmt(v, digits = 1) {
-    return v === null || v === undefined || Number.isNaN(v) ? "–" : Number(v).toLocaleString("de-DE", {
+    return v === null || v === undefined || Number.isNaN(v) ? "–" : Number(v).toLocaleString(LOCALE, {
       minimumFractionDigits: digits, maximumFractionDigits: digits });
   }
 
@@ -1011,19 +1024,19 @@
     if (g) {
       setTile("gpu", g.util, { pct: g.util, digits: 0, sub: g.temp !== null && g.temp !== undefined ? `${fmt(g.temp, 0)} °C` : "", title: g.name });
       const vp = g.vram_total ? (100 * g.vram_used) / g.vram_total : null;
-      setTile("vram", gb(g.vram_used), { pct: vp, sub: `von ${fmt(gb(g.vram_total))} GB`, title: g.name });
+      setTile("vram", gb(g.vram_used), { pct: vp, sub: `${L("von", "of")} ${fmt(gb(g.vram_total))} GB`, title: g.name });
       setTile("power", g.power, { digits: 0, sub: g.name ? g.name.replace(/^(NVIDIA|AMD)\s+/i, "") : "", title: g.name });
       pushSpark("gpu", g.util);
       pushSpark("vram", gb(g.vram_used));
       pushSpark("power", g.power);
     } else {
-      setTile("gpu", null, { sub: "keine GPU erkannt" });
+      setTile("gpu", null, { sub: L("keine GPU erkannt", "no GPU detected") });
       setTile("vram", null);
       setTile("power", null);
     }
     if (m.ram) {
       setTile("ram", gb(m.ram.used), { pct: (100 * m.ram.used) / m.ram.total,
-        sub: `von ${fmt(gb(m.ram.total))} GB` + (m.cpu !== null && m.cpu !== undefined ? ` · CPU ${fmt(m.cpu, 0)} %` : "") });
+        sub: `${L("von", "of")} ${fmt(gb(m.ram.total))} GB` + (m.cpu !== null && m.cpu !== undefined ? ` · CPU ${fmt(m.cpu, 0)} %` : "") });
       pushSpark("ram", gb(m.ram.used));
     }
   }
@@ -1039,14 +1052,14 @@
       setTile("tps", live, { sub: "live" });
     }
   }, 500);
-  setTile("tps", null, { sub: "wartet auf Antwort" });
+  setTile("tps", null, { sub: L("wartet auf Antwort", "waiting for an answer") });
 
   // ---------------------------------------------------------------- Modellauswahl
   const modelMenu = $("model-menu");
   async function openModelMenu() {
     let data;
-    try { data = await getJSON("/api/models"); } catch { toast("Modelle nicht ladbar"); return; }
-    modelMenu.innerHTML = '<div class="mm-title">MODELL WÄHLEN</div>';
+    try { data = await getJSON("/api/models"); } catch { toast(L("Modelle nicht ladbar", "Could not load models")); return; }
+    modelMenu.innerHTML = `<div class="mm-title">${L("MODELL WÄHLEN", "CHOOSE MODEL")}</div>`;
     for (const p of data.profiles) {
       const b = document.createElement("button");
       b.className = "model-item" + (p.active ? " active" : "");
@@ -1059,7 +1072,7 @@
         closeModelMenu();
         if (p.active) return;
         const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/activate`, { method: "POST" });
-        if (!r.ok && r.status !== 502) toast("Umschalten fehlgeschlagen");
+        if (!r.ok && r.status !== 502) toast(L("Umschalten fehlgeschlagen", "Switching failed"));
       };
       modelMenu.appendChild(b);
     }
@@ -1106,11 +1119,11 @@
       const name = l.label && l.label !== l.model ? `${l.label} · ${l.model}` : l.model;
       if (l.switching) { S.modelSwitching = S.modelSwitching || l.switching; refresh(); }
       setPill("pill-llm", l.switching ? "warn" : !l.online ? "bad" : l.model_available ? "ok" : "warn",
-        l.switching ? "lädt …" : !l.online ? `${l.label || l.model} offline` : l.model_available ? name : l.model + " fehlt");
+        l.switching ? L("lädt …", "loading …") : !l.online ? `${l.label || l.model} offline` : l.model_available ? name : l.model + L(" fehlt", " missing"));
       const v = st.voice;
       const vCls = v.stt && v.tts ? "ok" : v.stt || v.tts ? "warn" : "bad";
       setPill("pill-voice", vCls, [v.stt ? "STT" : null, v.tts ? "TTS" : "TTS(Browser)", v.wake ? "WAKE" : null].filter(Boolean).join(" · "));
-      setPill("pill-mem", "ok", `${st.memory.days} Tage · ${st.memory.facts} Fakten`);
+      setPill("pill-mem", "ok", `${st.memory.days} ${L("Tage", "days")} · ${st.memory.facts} ${L("Fakten", "facts")}`);
       return st;
     } catch {
       setPill("pill-llm", "bad", "?");
@@ -1124,7 +1137,7 @@
     const r = await fetch(url, { method, headers: body ? { "Content-Type": "application/json" } : {},
                                  body: body ? JSON.stringify(body) : undefined });
     if (!r.ok) {
-      let msg = `Fehler ${r.status}`;
+      let msg = `${L("Fehler", "Error")} ${r.status}`;
       try { msg = (await r.json()).detail || msg; } catch { /* egal */ }
       toast(msg);
       throw new Error(msg);
@@ -1136,10 +1149,10 @@
     if (!ts) return "";
     const d = new Date(ts * 1000);
     const today = new Date();
-    const time = d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-    if (d.toDateString() === today.toDateString()) return `heute ${time}`;
-    if (d.toDateString() === new Date(Date.now() - 86400000).toDateString()) return `gestern ${time}`;
-    return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" }) + " " + time;
+    const time = d.toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" });
+    if (d.toDateString() === today.toDateString()) return `${L("heute", "today")} ${time}`;
+    if (d.toDateString() === new Date(Date.now() - 86400000).toDateString()) return `${L("gestern", "yesterday")} ${time}`;
+    return d.toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit", year: "2-digit" }) + " " + time;
   }
 
   let chatSearchTimer = null;
@@ -1150,22 +1163,22 @@
     const ul = $("chat-list");
     ul.innerHTML = "";
     if (!list.length) {
-      ul.innerHTML = `<li class="empty">${q ? "Nichts gefunden." : "Noch keine Chats."}</li>`;
+      ul.innerHTML = `<li class="empty">${q ? L("Nichts gefunden.", "Nothing found.") : L("Noch keine Chats.", "No chats yet.")}</li>`;
       return;
     }
     for (const c of list) {
       const li = document.createElement("li");
       li.className = "chat-item" + (c.active ? " active" : "");
-      li.innerHTML = `<button class="star${c.starred ? " on" : ""}" title="${c.starred ? "Markierung entfernen" : "Als wichtig markieren"}">${c.starred ? "★" : "☆"}</button>
+      li.innerHTML = `<button class="star${c.starred ? " on" : ""}" title="${c.starred ? L("Markierung entfernen", "Remove mark") : L("Als wichtig markieren", "Mark as important")}">${c.starred ? "★" : "☆"}</button>
         <div><div class="t"></div><div class="m"></div><div class="p"></div></div>
-        <button class="del" title="Chat löschen (auch aus dem Gedächtnis)">✕</button>`;
+        <button class="del" title="${L("Chat löschen (auch aus dem Gedächtnis)", "Delete chat (also from memory)")}">✕</button>`;
       li.querySelector(".t").textContent = c.title;
-      li.querySelector(".m").textContent = `${chatWhen(c.updated)} · ${c.messages} Nachr.` + (c.active ? " · AKTIV" : "");
+      li.querySelector(".m").textContent = `${chatWhen(c.updated)} · ${c.messages} ${L("Nachr.", "msgs")}` + (c.active ? L(" · AKTIV", " · ACTIVE") : "");
       li.querySelector(".p").textContent = c.preview || "";
       li.onclick = () => { if (!c.active) api("POST", `/api/chats/${c.id}/activate`).catch(() => {}); };
       li.querySelector(".t").ondblclick = (e) => {
         e.stopPropagation();
-        const title = prompt("Neuer Titel:", c.title);
+        const title = prompt(L("Neuer Titel:", "New title:"), c.title);
         if (title && title.trim()) api("PATCH", `/api/chats/${c.id}`, { title }).then(loadChats).catch(() => {});
       };
       li.querySelector(".star").onclick = (e) => {
@@ -1174,11 +1187,13 @@
       };
       li.querySelector(".del").onclick = (e) => {
         e.stopPropagation();
-        const extra = c.legacy ? "\n\nHinweis: Dieser Chat stammt von vor der Chat-Historie – ältere Tagebuch-Einträge "
-          + "daraus lassen sich nicht zuordnen und bleiben im Gedächtnis." : "";
-        if (confirm(`„${c.title}“ löschen?\n\nDer Chat wird auch aus Jarvis' Gedächtnis entfernt (Tagebuch, Suche, `
-            + `Tageszusammenfassung). Gelernte Fakten bleiben.${extra}`)) {
-          api("DELETE", `/api/chats/${c.id}`).then(() => { toast("Chat gelöscht."); loadChats(); }).catch(() => {});
+        const extra = c.legacy ? L("\n\nHinweis: Dieser Chat stammt von vor der Chat-Historie – ältere Tagebuch-Einträge "
+          + "daraus lassen sich nicht zuordnen und bleiben im Gedächtnis.",
+          "\n\nNote: this chat predates the chat history – older journal entries from it cannot be attributed and stay in memory.") : "";
+        if (confirm(L(`„${c.title}“ löschen?\n\nDer Chat wird auch aus Jarvis' Gedächtnis entfernt (Tagebuch, Suche, `
+            + `Tageszusammenfassung). Gelernte Fakten bleiben.`, `Delete “${c.title}”?\n\nThe chat is also removed from `
+            + `Jarvis' memory (journal, search, daily summary). Learned facts are kept.`) + extra)) {
+          api("DELETE", `/api/chats/${c.id}`).then(() => { toast(L("Chat gelöscht.", "Chat deleted.")); loadChats(); }).catch(() => {});
         }
       };
       ul.appendChild(li);
@@ -1199,7 +1214,7 @@
     $("chat").innerHTML = "";
     $("chat-title").textContent = ev.title ? "· " + ev.title : "";
     loadHistory().then(() => {
-      if (!$("chat").children.length) addSystem("Neuer Chat – frühere Chats findest du unter VERLAUF.");
+      if (!$("chat").children.length) addSystem(L("Neuer Chat – frühere Chats findest du unter VERLAUF.", "New chat – earlier chats are under HISTORY."));
     });
     if (!$("tab-chats").classList.contains("hidden")) loadChats();
   }
@@ -1209,7 +1224,7 @@
       const h = await getJSON("/api/history");
       S.historyLoaded = true;
       $("chat-title").textContent = h.chat && h.chat.title ? "· " + h.chat.title : "";
-      if (h.summary) addSystem("Frühere Gesprächsteile sind im Gedächtnis zusammengefasst.");
+      if (h.summary) addSystem(L("Frühere Gesprächsteile sind im Gedächtnis zusammengefasst.", "Earlier parts of this chat are summarised in memory."));
       for (const m of h.messages) {
         if (m.role === "user") addUser(m.content);
         else addMsg("assistant", "JARVIS", renderMarkdown(m.content));
@@ -1222,20 +1237,20 @@
     const d = new Date(iso);
     const today = new Date();
     const tomorrow = new Date(Date.now() + 86400000);
-    const time = d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-    if (d.toDateString() === today.toDateString()) return `heute ${time}`;
-    if (d.toDateString() === tomorrow.toDateString()) return `morgen ${time}`;
-    return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" }) + " " + time;
+    const time = d.toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" });
+    if (d.toDateString() === today.toDateString()) return `${L("heute", "today")} ${time}`;
+    if (d.toDateString() === tomorrow.toDateString()) return `${L("morgen", "tomorrow")} ${time}`;
+    return d.toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit" }) + " " + time;
   }
 
   async function loadReminders() {
     const list = $("reminders");
     try {
       const items = await getJSON("/api/reminders");
-      list.innerHTML = items.length ? "" : '<li class="empty">Keine anstehenden Erinnerungen.</li>';
+      list.innerHTML = items.length ? "" : `<li class="empty">${L("Keine anstehenden Erinnerungen.", "No upcoming reminders.")}</li>`;
       for (const r of items) {
         const li = document.createElement("li");
-        li.innerHTML = `<span class="rem-when"></span><span class="rem-text"></span><button class="ghost small" title="Löschen">✕</button>`;
+        li.innerHTML = `<span class="rem-when"></span><span class="rem-text"></span><button class="ghost small" title="${L("Löschen", "Delete")}">✕</button>`;
         li.querySelector(".rem-when").textContent = (r.kind === "timer" ? "⏱ " : "") + reminderWhen(r.due);
         li.querySelector(".rem-text").textContent = r.text;
         li.querySelector("button").onclick = async () => {
@@ -1245,7 +1260,7 @@
         list.appendChild(li);
       }
     } catch {
-      list.innerHTML = '<li class="empty">Erinnerungen nicht ladbar.</li>';
+      list.innerHTML = `<li class="empty">${L("Erinnerungen nicht ladbar.", "Could not load reminders.")}</li>`;
     }
   }
 
@@ -1268,7 +1283,8 @@
   }
 
   function showReminder(ev) {
-    $("reminder-kind").textContent = ev.late ? "VERPASSTE ERINNERUNG" : ev.kind === "timer" ? "TIMER ABGELAUFEN" : "ERINNERUNG";
+    $("reminder-kind").textContent = ev.late ? L("VERPASSTE ERINNERUNG", "MISSED REMINDER")
+      : ev.kind === "timer" ? L("TIMER ABGELAUFEN", "TIMER FINISHED") : L("ERINNERUNG", "REMINDER");
     $("reminder-text").textContent = ev.text;
     $("reminder-banner").classList.remove("hidden");
     chime();
@@ -1283,28 +1299,28 @@
       const [facts, days] = await Promise.all([getJSON("/api/memory/facts"), getJSON("/api/memory/days")]);
       $("facts").innerHTML = facts.length
         ? facts.map((f) => `<li>${escapeHtml(f.fact)}<small>${f.day}</small></li>`).join("")
-        : '<li class="empty">Noch keine Fakten gespeichert.</li>';
+        : `<li class="empty">${L("Noch keine Fakten gespeichert.", "No facts stored yet.")}</li>`;
       $("days").innerHTML = days.length
-        ? days.map((d) => `<li><button data-day="${d.day}">${formatDay(d.day)}<span>${d.summary ? "ZUSAMMENFASSUNG" : "PROTOKOLL"}</span></button></li>`).join("")
-        : '<li class="empty">Noch keine Einträge.</li>';
+        ? days.map((d) => `<li><button data-day="${d.day}">${formatDay(d.day)}<span>${d.summary ? L("ZUSAMMENFASSUNG", "SUMMARY") : L("PROTOKOLL", "LOG")}</span></button></li>`).join("")
+        : `<li class="empty">${L("Noch keine Einträge.", "No entries yet.")}</li>`;
       $("days").querySelectorAll("button").forEach((b) => (b.onclick = () => openDay(b.dataset.day)));
     } catch (err) {
-      toast("Gedächtnis nicht ladbar: " + err.message);
+      toast(L("Gedächtnis nicht ladbar: ", "Could not load memory: ") + err.message);
     }
   }
 
   function formatDay(day) {
     const d = new Date(day + "T12:00:00");
-    return d.toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" });
+    return d.toLocaleDateString(LOCALE, { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" });
   }
 
   async function openDay(day) {
     const d = await getJSON("/api/memory/day/" + day);
     $("day-title").textContent = formatDay(day).toUpperCase();
     let html = "";
-    if (d.summary) html += `<h3>ZUSAMMENFASSUNG</h3><div class="body">${renderMarkdown(d.summary.replace(/^# .*\n/, ""))}</div>`;
-    if (d.journal) html += `<h3>PROTOKOLL</h3><pre>${escapeHtml(d.journal.replace(/^# .*\n/, ""))}</pre>`;
-    $("day-body").innerHTML = html || "Keine Einträge.";
+    if (d.summary) html += `<h3>${L("ZUSAMMENFASSUNG", "SUMMARY")}</h3><div class="body">${renderMarkdown(d.summary.replace(/^# .*\n/, ""))}</div>`;
+    if (d.journal) html += `<h3>${L("PROTOKOLL", "LOG")}</h3><pre>${escapeHtml(d.journal.replace(/^# .*\n/, ""))}</pre>`;
+    $("day-body").innerHTML = html || L("Keine Einträge.", "No entries.");
     $("day-modal").classList.remove("hidden");
   }
   $("day-close").onclick = () => $("day-modal").classList.add("hidden");
@@ -1312,8 +1328,8 @@
   // ---------------------------------------------------------------- Uhr
   function tick() {
     const now = new Date();
-    $("clock-time").textContent = now.toLocaleTimeString("de-DE");
-    $("clock-date").textContent = now.toLocaleDateString("de-DE", { weekday: "long", day: "2-digit", month: "long", year: "numeric" }).toUpperCase();
+    $("clock-time").textContent = now.toLocaleTimeString(LOCALE);
+    $("clock-date").textContent = now.toLocaleDateString(LOCALE, { weekday: "long", day: "2-digit", month: "long", year: "numeric" }).toUpperCase();
   }
   setInterval(tick, 1000);
   tick();
@@ -1328,21 +1344,23 @@
   }
 
   async function bootSequence() {
-    const steps = ["> Initialisiere neuronale Schnittstelle …", "> Lade Gedächtnismatrix …", "> Prüfe Subsysteme …"];
+    const steps = EN ? ["> Initialising neural interface …", "> Loading memory matrix …", "> Checking subsystems …"]
+      : ["> Initialisiere neuronale Schnittstelle …", "> Lade Gedächtnismatrix …", "> Prüfe Subsysteme …"];
     for (const s of steps) { bootLine(s); await new Promise((r) => setTimeout(r, 220)); }
     const st = await loadStatus();
-    if (!st) { bootLine("  ✘ Server nicht erreichbar", "bad"); return; }
+    if (!st) { bootLine(L("  ✘ Server nicht erreichbar", "  ✘ Server unreachable"), "bad"); return; }
     const l = st.llm;
-    bootLine(`  ${l.online && l.model_available ? "✔" : "✘"} Sprachmodell ${l.model}${l.online ? (l.model_available ? "" : " (nicht geladen – ollama pull)") : " (Server offline)"}`,
+    bootLine(`  ${l.online && l.model_available ? "✔" : "✘"} ${L("Sprachmodell", "Language model")} ${l.model}${l.online ? (l.model_available ? "" : L(" (nicht geladen – ollama pull)", " (not loaded – ollama pull)")) : " (Server offline)"}`,
       l.online && l.model_available ? "ok" : "bad");
-    bootLine(`  ${st.voice.stt ? "✔" : "✘"} Spracherkennung`, st.voice.stt ? "ok" : "bad");
-    bootLine(`  ${st.voice.tts ? "✔ Sprachausgabe (Piper)" : "~ Sprachausgabe über Browser"}`, st.voice.tts ? "ok" : "bad");
-    bootLine(`  ${st.voice.wake ? "✔" : "✘"} Wake-Word „Hey Jarvis“`, st.voice.wake ? "ok" : "bad");
+    bootLine(`  ${st.voice.stt ? "✔" : "✘"} ${L("Spracherkennung", "Speech recognition")}`, st.voice.stt ? "ok" : "bad");
+    bootLine(`  ${st.voice.tts ? L("✔ Sprachausgabe (Piper)", "✔ Speech output (Piper)") : L("~ Sprachausgabe über Browser", "~ Speech output via browser")}`, st.voice.tts ? "ok" : "bad");
+    bootLine(`  ${st.voice.wake ? "✔" : "✘"} Wake-Word ${L("„Hey Jarvis“", "“Hey Jarvis”")}`, st.voice.wake ? "ok" : "bad");
     if (st.trilium && st.trilium.enabled) {
-      bootLine(`  ${st.trilium.online ? "✔ Trilium verbunden (v" + st.trilium.version + ")" : "✘ Trilium: " + (st.trilium.error || "offline")}`,
+      bootLine(`  ${st.trilium.online ? L("✔ Trilium verbunden (v", "✔ Trilium connected (v") + st.trilium.version + ")" : "✘ Trilium: " + (st.trilium.error || "offline")}`,
         st.trilium.online ? "ok" : "bad");
     }
-    bootLine(`  ✔ Gedächtnis: ${st.memory.days} Tage, ${st.memory.facts} Fakten, ${st.memory.chunks} Einträge`, "ok");
+    bootLine(L(`  ✔ Gedächtnis: ${st.memory.days} Tage, ${st.memory.facts} Fakten, ${st.memory.chunks} Einträge`,
+               `  ✔ Memory: ${st.memory.days} days, ${st.memory.facts} facts, ${st.memory.chunks} entries`), "ok");
   }
 
   $("boot-btn").onclick = async () => {

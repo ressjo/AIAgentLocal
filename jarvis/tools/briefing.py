@@ -9,8 +9,8 @@ from pathlib import Path
 
 from ..memory.files import german_date
 from . import proc
-from .registry import ToolContext, tool
 from .calendar_tools import CalendarError, events_between
+from .registry import ToolContext, tool
 from .reminder_tools import store_for
 from .weather import WeatherError, weather_report
 

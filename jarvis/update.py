@@ -17,6 +17,8 @@ from pathlib import Path
 
 import httpx
 
+from .lang import T
+
 Runner = Callable[..., subprocess.CompletedProcess]
 
 
@@ -31,9 +33,9 @@ def _git(root: Path, *args: str, runner: Runner = subprocess.run) -> subprocess.
 def version(root: Path | None = None, runner: Runner = subprocess.run) -> str:
     root = root or project_root()
     if not (root / ".git").exists() or not shutil.which("git"):
-        return "unbekannt (kein Git-Checkout)"
+        return T("unbekannt (kein Git-Checkout)", "unknown (not a git checkout)")
     r = _git(root, "log", "-1", "--format=%h %s (%cd)", "--date=format:%d.%m.%Y", runner=runner)
-    return r.stdout.strip() or "unbekannt"
+    return r.stdout.strip() or T("unbekannt", "unknown")
 
 
 def server_running(port: int) -> bool:
@@ -66,67 +68,70 @@ def restart_server(port: int, root: Path, out: Callable[[str], None] = print) ->
                          start_new_session=True, cwd=str(Path.home()))
     for _ in range(60):
         if server_running(port):
-            out("✔ Server neu gestartet – Browser-Seite neu laden.")
+            out(T("✔ Server neu gestartet – Browser-Seite neu laden.", "✔ Server restarted – reload the browser page."))
             return
         time.sleep(0.5)
-    out(f"Server startet noch … (Log: {log_dir / 'jarvis.log'})")
+    out(T("Server startet noch …", "Server is still starting …") + f" (Log: {log_dir / 'jarvis.log'})")
 
 
 def update(root: Path | None = None, port: int = 8765, runner: Runner = subprocess.run,
            restart: Callable[[int, Path], None] | None = None, out: Callable[[str], None] = print) -> int:
     root = root or project_root()
     if not (root / ".git").exists():
-        out(f"{root} ist kein Git-Checkout (vermutlich ein ZIP-Download) – automatische Updates gehen so nicht.")
-        out("Einmalig umziehen:  bash scripts/bootstrap.sh   (legt ~/jarvis per Git an und installiert)")
+        out(f"{root} " + T("ist kein Git-Checkout (vermutlich ein ZIP-Download) – automatische Updates gehen so nicht.",
+                           "is not a git checkout (probably a ZIP download) – automatic updates are not possible."))
+        out(T("Einmalig umziehen:  bash scripts/bootstrap.sh   (legt ~/jarvis per Git an und installiert)",
+              "Move once:  bash scripts/bootstrap.sh   (creates ~/jarvis via git and installs)"))
         return 1
     if not shutil.which("git"):
-        out("git ist nicht installiert:  sudo pacman -S git")
+        out(T("git ist nicht installiert", "git is not installed") + ":  sudo pacman -S git  /  sudo apt install git")
         return 1
 
     dirty = _git(root, "status", "--porcelain", "--untracked-files=no", runner=runner).stdout.strip()
     if dirty:
-        out("Im Projektordner gibt es lokale Änderungen – ich überschreibe nichts:")
+        out(T("Im Projektordner gibt es lokale Änderungen – ich überschreibe nichts:",
+              "The project folder has local changes – I won't overwrite anything:"))
         out(dirty)
-        out(f"Sichern mit:  git -C {root} stash   (danach erneut jarvis update)")
+        out(T("Sichern mit", "Save them with") + f":  git -C {root} stash   " + T("(danach erneut jarvis update)", "(then run jarvis update again)"))
         return 1
 
     before = _git(root, "rev-parse", "HEAD", runner=runner).stdout.strip()
     branch = _git(root, "rev-parse", "--abbrev-ref", "HEAD", runner=runner).stdout.strip() or "HEAD"
-    out(f"Aktueller Stand: {version(root, runner)}")
-    out(f"Hole Updates ({branch}) …")
+    out(T("Aktueller Stand: ", "Current version: ") + version(root, runner))
+    out(T("Hole Updates", "Fetching updates") + f" ({branch}) …")
     pulled = _git(root, "pull", "--ff-only", "origin", branch, runner=runner)
     if pulled.returncode != 0:
-        out("Update fehlgeschlagen:")
+        out(T("Update fehlgeschlagen:", "Update failed:"))
         out((pulled.stderr or pulled.stdout).strip())
         return 1
     after = _git(root, "rev-parse", "HEAD", runner=runner).stdout.strip()
 
     venv_ok = (root / ".venv/bin/jarvis").exists()
     if before == after:
-        out("✔ Bereits auf dem neuesten Stand.")
+        out(T("✔ Bereits auf dem neuesten Stand.", "✔ Already up to date."))
         if venv_ok:
             return 0
     else:
         log = _git(root, "log", "--format=  • %s", f"{before}..{after}", runner=runner).stdout.rstrip()
-        out("Neu:")
-        out(log or "  (keine Beschreibung)")
+        out(T("Neu:", "New:"))
+        out(log or T("  (keine Beschreibung)", "  (no description)"))
 
     uv = shutil.which("uv")
     if not uv:
-        out("uv fehlt – bitte scripts/install.sh ausführen.")
+        out(T("uv fehlt – bitte scripts/install.sh ausführen.", "uv is missing – please run scripts/install.sh."))
         return 1
-    out("Aktualisiere Python-Abhängigkeiten …")
+    out(T("Aktualisiere Python-Abhängigkeiten …", "Updating Python dependencies …"))
     synced = runner([uv, "sync", "--extra", "voice", "--quiet"], cwd=str(root))
     if synced.returncode != 0:
-        out("uv sync ist fehlgeschlagen – Details siehe oben.")
+        out(T("uv sync ist fehlgeschlagen – Details siehe oben.", "uv sync failed – see the details above."))
         return 1
-    out(f"✔ Aktualisiert auf: {version(root, runner)}")
+    out(T("✔ Aktualisiert auf: ", "✔ Updated to: ") + version(root, runner))
 
     if server_running(port):
-        out("Starte laufenden JARVIS-Server neu …")
+        out(T("Starte laufenden JARVIS-Server neu …", "Restarting the running JARVIS server …"))
         (restart or restart_server)(port, root)
     else:
-        out("Starten mit:  jarvis serve --open")
+        out(T("Starten mit:  jarvis serve --open", "Start with:  jarvis serve --open"))
     return 0
 
 

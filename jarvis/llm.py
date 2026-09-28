@@ -384,7 +384,8 @@ class FakeLLM:
     - nach einem Tool-Ergebnis wird dieses kurz zusammengefasst
     """
 
-    def __init__(self, delay: float = 0.02):
+    def __init__(self, delay: float = 0.02, language: str = "de"):
+        self.en = language == "en"
         self.delay = delay
         self.calls: list[list[dict]] = []
 
@@ -394,7 +395,8 @@ class FakeLLM:
     def _decide(self, messages: list[dict]) -> dict:
         last = messages[-1]
         if last["role"] == "tool":
-            return {"role": "assistant", "content": f"Erledigt. Ergebnis: {last['content'][:200]}"}
+            done = "Done. Result" if self.en else "Erledigt. Ergebnis"
+            return {"role": "assistant", "content": f"{done}: {last['content'][:200]}"}
         text = last.get("content", "")
         if text.startswith("/tool "):
             parts = text.split(" ", 2)
@@ -409,7 +411,8 @@ class FakeLLM:
             return {"role": "assistant", "content": "",
                     "tool_calls": [{"function": {"name": "find_files", "arguments": {"query": text.split()[-1]}}}]}
         return {"role": "assistant",
-                "content": f"Sehr wohl. Sie sagten: {text}. Wie kann ich sonst behilflich sein?"}
+                "content": f"Certainly. You said: {text}. How else may I help?" if self.en
+                else f"Sehr wohl. Sie sagten: {text}. Wie kann ich sonst behilflich sein?"}
 
     async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
                           think: bool | None = None) -> AsyncIterator[dict]:

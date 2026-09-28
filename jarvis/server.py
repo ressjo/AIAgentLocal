@@ -13,24 +13,24 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import askpass, prompts
+from . import askpass, metrics, prompts
 from .agent import Agent
 from .config import Config
 from .llm import FakeLLM, LLMError
 from .llm_router import LLMRouter
 from .memory import Memory
-from . import metrics
 from .memory.files import valid_day
 from .reminders import ReminderStore
 from .tools import proc
 from .tools.calendar_tools import calendar_status
 from .tools.trilium import trilium_status
-from .voice.listen import AudioSession, WakeWordFactory, WhisperSTT
 from .voice import catalog
+from .voice.listen import AudioSession, WakeWordFactory, WhisperSTT
 from .voice.tts import PiperTTS, Speaker
+from .web_i18n import translate_index
 
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).parent / "web"
@@ -183,7 +183,7 @@ def check_host(host: str | None, port: int) -> bool:
 
 def create_app(cfg: Config) -> FastAPI:
     fake = os.environ.get("JARVIS_FAKE_LLM") == "1"
-    llm = FakeLLM() if fake else LLMRouter(cfg.llm, state_path=cfg.memory.dir.parent / "state.json")
+    llm = FakeLLM(language=cfg.language) if fake else LLMRouter(cfg.llm, state_path=cfg.memory.dir.parent / "state.json")
     memory = Memory(cfg.memory, llm)
     agent = Agent(cfg, llm, memory)
     reminders = ReminderStore(cfg.memory.dir.parent / "reminders.json")
@@ -309,7 +309,8 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/")
     async def index():
-        return FileResponse(WEB_DIR / "index.html")
+        html = translate_index((WEB_DIR / "index.html").read_text(encoding="utf-8"), cfg.language)
+        return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/status")
     async def status():

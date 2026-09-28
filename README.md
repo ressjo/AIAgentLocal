@@ -1,224 +1,162 @@
-# J.A.R.V.I.S. – lokaler KI-Sprachassistent für Linux
+# J.A.R.V.I.S. – a local AI voice assistant for Linux
 
-Ein Jarvis-artiger Assistent, der **komplett lokal** auf deinem Linux-PC läuft:
-animierte HUD-Weboberfläche, Spracheingabe per Wake-Word („Hey Jarvis“) oder Push-to-talk,
-Sprachausgabe, lokales LLM (Qwen über Ollama), **persistentes Gedächtnis in Tagesdateien** und
-echte Systemsteuerung – Updates, Pakete, Dateien, NAS, Programme, Websuche, Shell-Befehle.
+A Jarvis-style assistant that runs **entirely on your own Linux PC**: an animated HUD web interface, voice input
+via wake word ("Hey Jarvis") or push-to-talk, spoken answers, a local LLM (Ollama or llama.cpp), **persistent
+memory in plain Markdown files** and real control over your system – updates, packages, files, NAS, apps,
+services, network, smart home, documents, notes and calendar.
+
+German and English are supported (`language: de|en`).
+
+![Jarvis web interface](docs/screenshot.png)
+<sub>Screenshot in demo mode (`JARVIS_FAKE_LLM=1`, no real model attached).</sub>
 
 ```
-Browser (localhost:8765)                          Python-Backend (FastAPI, nur 127.0.0.1)
- ├─ Neuronen-Orb (Canvas)              ◄──WS──►  Agent ── Tool-Schleife ──► Tools
- ├─ Chat · Aktivität · Gedächtnis                  │
- ├─ Mikrofon → 16 kHz PCM               ──WS──►   Wake-Word (openWakeWord) → VAD → Whisper
- └─ Wiedergabe + Pegel → Orb            ◄──────   Piper-TTS (satzweise, deutsche Stimme)
+Browser (localhost:8765)                          Python backend (FastAPI, 127.0.0.1 only)
+ ├─ neural-network orb (canvas)         ◄──WS──►  Agent ── tool loop ──► tools (confirm dangerous ones)
+ ├─ chat · activity · history · memory             │
+ ├─ microphone → 16 kHz PCM             ──WS──►   wake word (openWakeWord) → VAD → Whisper
+ └─ playback + level → orb              ◄──────   Piper TTS (sentence by sentence)
                                                    │
-                                     Ollama (qwen3 + bge-m3)   ~/.local/share/jarvis/memory/
+                         Ollama / llama-server (LLM + bge-m3)   ~/.local/share/jarvis/memory/
 ```
 
-## Funktionen
+> Jarvis is an independent hobby project. It is not affiliated with or endorsed by Marvel or Disney; it does not
+> ship the film voice or any other copyrighted material.
 
-| Bereich | Was Jarvis kann |
+## Features
+
+| Area | What Jarvis can do |
 |---|---|
-| **Sprechen & Zuhören** | „Hey Jarvis“ (Wake-Word), Mikrofon-Taste bzw. **Leertaste halten** (Push-to-talk), kurz tippen = zuhören bis Stille. Antworten werden Satz für Satz vorgelesen, während das LLM noch schreibt. Unterbrechen jederzeit möglich. |
-| **System** | Systemupdate (`pacman -Syu` + AUR via yay/paru), verfügbare Updates anzeigen, Pakete suchen/installieren/entfernen, Systeminfos (CPU, GPU, RAM, Speicher) |
-| **Dateien** | Dateien nach Name finden (plocate/fd), Inhalte durchsuchen (ripgrep), Ordner auflisten, Textdateien lesen/schreiben, Dateien & URLs öffnen (`xdg-open`) |
-| **NAS** | Durchsucht gemountete NAS-Pfade nach Namen oder Inhalt |
-| **Programme** | Startet installierte Anwendungen über ihre `.desktop`-Einträge („öffne Firefox“, „starte den Dateimanager“) |
-| **Web** | Websuche (DuckDuckGo oder eigene SearXNG-Instanz) und Abruf/Extraktion von Webseiten |
-| **Shell** | Beliebige Bash-Befehle – lesende laufen sofort, verändernde nur nach Bestätigung, zerstörerische nie |
-| **Trilium** | Notizen durchsuchen und vorlesen, neue Notizen in der Inbox anlegen, an Notizen anhängen (siehe unten) |
-| **Paperless** | Dokumente (Rechnungen, Verträge, Briefe) suchen, Fragen zum Inhalt beantworten, als PDF öffnen – nur lesend (siehe unten) |
-| **Gedächtnis** | Merkt sich alles dauerhaft (siehe unten), `remember` / `recall` / `forget` |
+| **Voice** | "Hey Jarvis" wake word, microphone button or **hold the space bar** (push-to-talk). Answers are spoken sentence by sentence while the model is still writing; interrupt at any time. |
+| **System** | Full system update (Arch: `pacman -Syu` + AUR via yay/paru, Debian/Ubuntu: `apt`), list/search/install/remove packages, system info, shutdown/reboot/suspend/lock |
+| **System & network** | Top processes and killing them, systemd services (status, start/stop/restart, logs), IP/gateway/DNS/Wi-Fi, ping, open ports, port checks, disk usage and clean-up |
+| **Files** | Find files by name (plocate/fd) or content (ripgrep), list folders, read/write text files, open files and URLs – also on a mounted **NAS** |
+| **Apps & web** | Start installed applications, open websites (with your own shortcuts), web search (DuckDuckGo or your own SearXNG), read web pages |
+| **Shell** | Any bash command – read-only ones run directly, changing ones only after confirmation, destructive ones never |
+| **Everyday** | Weather (Open-Meteo), reminders and timers, morning briefing |
+| **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
+| **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF (read-only) |
+| **Trilium** | Search and read notes, create notes in the inbox, append to notes |
+| **Calendar** | iCloud or any CalDAV server: list events, find free time, create/change/delete events |
+| **Memory** | Remembers everything permanently (see below), `remember` / `recall` / `forget`, **chat history** |
 
-## Installation (Arch / Manjaro / EndeavourOS)
+## Requirements
+
+- Linux: **Arch-based** (Arch, Manjaro, EndeavourOS, CachyOS) or **Debian/Ubuntu-based** (Debian 12+, Ubuntu 22.04+, Mint)
+- A GPU helps a lot: NVIDIA (CUDA) or AMD (ROCm/Vulkan) with ≥ 8 GB VRAM; CPU-only works with small models
+- A desktop session (KDE, GNOME, …) for opening files and apps; a Chromium-based browser or Firefox
+
+## Installation
 
 ```bash
+# Arch-based
 sudo pacman -S --needed git
-git clone -b claude/epic-volta-vyvxlk https://github.com/ressjo/AIAgentLocal.git ~/jarvis
-~/jarvis/scripts/install.sh     # Optionen: --model qwen3:8b · --vulkan · --cpu · --no-autostart
+# Debian/Ubuntu-based
+sudo apt install git
+
+git clone https://github.com/ressjo/AIAgentLocal.git ~/jarvis
+~/jarvis/scripts/install.sh --lang en      # --lang de for German
 ```
 
-> Bitte per **Git** installieren, nicht als ZIP – dann gehen Updates mit einem Befehl (`jarvis update`).
-> Startest du `install.sh` doch aus einem ZIP-Ordner, bietet es an, nach `~/jarvis` umzuziehen.
+Options: `--model qwen3:8b` (choose the model), `--gpu auto|cuda|rocm|vulkan|cpu`, `--no-autostart`.
 
-Das Skript
-1. installiert `ollama-rocm`, `uv`, `fd`, `ripgrep`, `plocate`, `xdg-utils`, `polkit`, `pacman-contrib`,
-2. richtet die Python-Umgebung ein (`uv sync --extra voice`, Python 3.12),
-3. wählt das Modell passend zum Grafikspeicher (≥15 GB → `qwen3:14b`, ≥7 GB → `qwen3:8b`, sonst `qwen3:4b`) und lädt es plus `bge-m3` (Embeddings),
-4. lädt die deutsche Piper-Stimme *Thorsten*, das Wake-Word-Modell und Whisper,
-5. legt `~/.config/jarvis/config.yaml` an, einen Starter „JARVIS“ im Anwendungsmenü und einen Autostart.
+> Please install with **git**, not as a ZIP – then updates are a single command (`jarvis update`).
+> If you start `install.sh` from a ZIP folder it offers to move to `~/jarvis`.
 
-Danach:
+The installer
+
+1. installs the system packages (Ollama with the right GPU backend, `uv`, `fd`, `ripgrep`, `plocate`, `xdg-utils`, …),
+2. sets up the Python environment (`uv sync --extra voice`),
+3. picks a model for your VRAM (≥ 15 GB → `qwen3:14b`, ≥ 7 GB → `qwen3:8b`, otherwise `qwen3:4b`) and pulls it together with `bge-m3` (embeddings),
+4. downloads a Piper voice (English: *Alan*, German: *Thorsten*), the wake word model and Whisper,
+5. creates `~/.config/jarvis/config.yaml`, a **JARVIS** entry in the application menu and an autostart entry.
+
+Then:
 
 ```bash
-jarvis doctor        # prüft Ollama, Modelle, Stimme, Wake-Word, Werkzeuge, NAS
-jarvis serve --open  # startet den Server und öffnet http://localhost:8765
+jarvis doctor        # checks Ollama, models, voice, wake word, tools, integrations, NAS
+jarvis serve --open  # starts the server and opens http://localhost:8765
 ```
 
-Oder im Anwendungsmenü **JARVIS** anklicken – öffnet die Oberfläche als eigenes App-Fenster.
+Or click **JARVIS** in the application menu – it opens the UI in its own app window.
 
-> **Wichtig:** Trage dein NAS in `~/.config/jarvis/config.yaml` ein:
-> ```yaml
-> tools:
->   nas_paths: [/mnt/nas]
-> ```
-
-## Aktualisieren
+### Updating
 
 ```bash
 jarvis update
 ```
 
-holt den neuesten Stand (`git pull`), aktualisiert die Python-Abhängigkeiten und startet einen laufenden
-Jarvis-Server automatisch neu – danach nur die Browser-Seite neu laden. `jarvis version` zeigt den installierten Stand.
+pulls the latest version (`git pull`), updates the Python dependencies and restarts a running Jarvis server –
+then just reload the browser page. `jarvis version` shows what is installed. Your **configuration**
+(`~/.config/jarvis/`), **voices** and **memory** (`~/.local/share/jarvis/`) live outside the project folder and
+are never touched by updates.
 
-Deine **Konfiguration** (`~/.config/jarvis/`), **Stimmen** und das **Gedächtnis** (`~/.local/share/jarvis/`)
-liegen außerhalb des Projektordners und bleiben bei Updates immer erhalten.
+## Using Jarvis
 
-Der Befehl `jarvis` (`~/.local/bin/jarvis`) ist ein kleiner Starter, der auf den Projektordner zeigt. Fehlt
-dort die Python-Umgebung (z. B. nach einem neuen Download), richtet er sie beim nächsten Aufruf selbst neu ein.
+- **Start:** click **START SYSTEM** once (browsers only allow audio/microphone after a click).
+- **WAKE** on → say "Hey Jarvis, …". The microphone is only streamed to your own local server.
+- **Hold the microphone button / space bar** → speak → release. Tap once to listen until silence.
+- **SOUND** toggles speech output, **STOP** (or `Esc`) cancels the current task,
+  **THINK** lets the model reason before answering (see [Thinking mode](#thinking-mode)).
+- Side panel: **ACTIVITY** (live tool output), **HISTORY** (chats), **MEMORY** (reminders, facts, journal),
+  **VOICE** (voices and the Jarvis effect).
 
-## Bedienung
+Examples:
 
-- **Start:** Beim Öffnen „SYSTEM STARTEN“ klicken (Browser erlauben Audio/Mikrofon erst nach einem Klick).
-- **WAKE** aktivieren → „Hey Jarvis, …“ sagen. Das Mikrofon wird dabei nur lokal an den eigenen Server gestreamt.
-- **Mikrofon-Taste / Leertaste halten** → sprechen → loslassen.
-- **TON** schaltet die Sprachausgabe, **STOP** (oder `Esc`) bricht die aktuelle Aufgabe ab.
-- Reiter **GEDÄCHTNIS** zeigt gespeicherte Fakten und alle Tage (Zusammenfassung + Protokoll).
+- "Hey Jarvis, run a system update." → confirmation dialog → live output in the activity panel
+- "Install htop and fastfetch." · "How much disk space is left?" · "What's eating my CPU?"
+- "Find the newest PDF with *invoice* in its name on the NAS and open it."
+- "Restart the Docker service." · "Is my NAS reachable?" · "Show me the last errors of sshd."
+- "Turn the living room lights to 40 percent." · "Set the bathroom heating to 22 degrees."
+- "When can I cancel my phone contract?" (Paperless) · "What's in my note about Docker?" (Trilium)
+- "Remind me in 20 minutes to check the oven." · "Good morning, Jarvis."
+- "Remember that my server is at 192.168.1.10." · "What did we do last Tuesday?"
 
-Beispiele:
+## Memory – without context-window problems
 
-- „Hey Jarvis, mach ein Systemupdate.“ → Bestätigungsdialog → Live-Ausgabe im Aktivitäts-Panel
-- „Installier mir bitte htop und neofetch.“
-- „Such die neueste PDF mit Rechnung im Namen auf dem NAS und öffne sie.“
-- „Welche Dateien in Downloads sind größer als ein Gigabyte?“
-- „Öffne Steam.“ · „Wie viel Speicher ist noch frei?“
-- „Such im Internet nach den Neuerungen in Kernel 6.18.“
-- „Merk dir, dass mein Server unter 192.168.1.10 erreichbar ist.“
-- „Was haben wir letzten Dienstag gemacht?“
+Everything is stored as readable files in `~/.local/share/jarvis/memory/`:
 
-## Das Gedächtnis – ohne Context-Window-Probleme
-
-Alles liegt als lesbare Dateien in `~/.local/share/jarvis/memory/`:
-
-| Datei | Inhalt |
+| File | Content |
 |---|---|
-| `journal/2026-09-27.md` | Vollständiges Protokoll des Tages – jede Frage, jede Antwort, jeder Tool-Aufruf |
-| `summaries/2026-09-27.md` | Tageszusammenfassung, automatisch erzeugt (Tageswechsel bzw. 15 min Leerlauf) |
-| `facts.md` | Dauerhafte Fakten („Das NAS ist unter /mnt/nas gemountet“) – auch von Hand editierbar |
-| `chats/<id>.json` | Ein Chat: Verlauf, laufende Zusammenfassung, Titel, Stern (`chats/active` = aktueller Chat) |
-| `index.sqlite` | Suchindex (Volltext + Embeddings) – nur Cache, mit `jarvis reindex` neu aufbaubar |
+| `journal/2026-09-27.md` | Complete log of the day – every question, answer and tool call |
+| `summaries/2026-09-27.md` | Daily summary, generated automatically (day change or 15 min idle) |
+| `facts.md` | Permanent facts ("The NAS is mounted at /mnt/nas") – editable by hand |
+| `chats/<id>.json` | One chat: messages, running summary, title, star (`chats/active` = current chat) |
+| `index.sqlite` | Search index (full text + embeddings) – just a cache, rebuild with `jarvis reindex` |
 
-**So bleibt der Kontext klein:** Jeder Prompt hat ein festes Budget (Standard 11 000 Tokens) aus
-System-Prompt, Fakten, den **relevantesten Erinnerungen** (hybride Suche: BM25-Volltext + bge-m3-Embeddings,
-leichte Bevorzugung aktueller Einträge), der laufenden Zusammenfassung und den letzten Nachrichten.
-Wird der Verlauf zu lang, faltet Jarvis die ältesten Nachrichten per LLM in die laufende Zusammenfassung –
-im Journal und im Index bleiben sie vollständig erhalten und werden bei Bedarf wieder hervorgeholt.
-So kann Jarvis sich über Monate „an alles erinnern“, ohne dass das Kontextfenster je überläuft.
+**How the context stays small:** every prompt has a budget derived from the model's real context window (minus
+room for the answer). It is filled with the system prompt, facts, the **most relevant memories** (hybrid search:
+BM25 full text + bge-m3 embeddings, slight preference for recent entries), the running summary and the latest
+messages. When a chat gets long, the oldest messages are folded into the running summary by the LLM – they stay
+complete in the journal and index and are retrieved again when relevant. Long tool results are trimmed instead of
+overflowing the model. The **CONTEXT** tile shows how full the prompt is.
 
-### Chat-Historie
+### Chat history
 
-Im Reiter **VERLAUF** stehen alle Chats (gesternte oben, sonst neueste zuerst) mit Suche über Titel und Inhalt.
-**NEU** beginnt einen neuen Chat, der bisherige bleibt erhalten. Ein Klick öffnet einen alten Chat, und du kannst
-dort direkt weiterreden. Jarvis erinnert sich dabei weiterhin an alles aus den anderen Chats.
+The **HISTORY** tab lists all chats (starred first, then newest) with search across titles and content.
+**NEW** starts a new chat; the old one is kept. Click a chat to open and continue it – Jarvis still remembers
+everything from the other chats.
 
-- **★** markiert wichtige Chats. Automatisch gelöscht wird nichts.
-- **Doppelklick auf den Titel** benennt um. Der Titel entsteht sonst aus der ersten Frage.
-- **✕** löscht einen Chat **komplett**: Er verschwindet aus der Liste, aus dem Tagebuch und aus dem Suchindex.
-  Betroffene Tageszusammenfassungen werden aus dem Rest neu erstellt. Gelernte Fakten bleiben erhalten
-  (die löschst du im Reiter GEDÄCHTNIS bzw. mit „vergiss …“).
+- **★** marks important chats. Nothing is deleted automatically.
+- **Double-click the title** to rename it (otherwise it is taken from the first question).
+- **✕** deletes a chat **completely**: from the list, the journal and the search index; affected daily summaries
+  are rebuilt from the rest. Learned facts are kept (delete them in the MEMORY tab or say "forget …").
 
-Das bisherige Gespräch (`session.json`) wird beim Update automatisch zum ersten Chat. Tagebuch-Einträge aus der
-Zeit davor lassen sich keinem Chat zuordnen und bleiben beim Löschen im Gedächtnis.
+## Models & profiles
 
-## Alltag: Websites, Wetter, Erinnerungen, Briefing
+Jarvis can know several language models and switch between them – click the **LLM pill** at the top or run
+`jarvis model <name>` (`jarvis model` lists all profiles). The choice is remembered.
 
-**Websites** – „Öffne YouTube“, „Such auf Amazon nach 120-mm-Lüftern“, „Öffne heise.de“.
-Bekannt sind u. a. YouTube, Google, Wikipedia, Amazon, eBay, Kleinanzeigen, idealo, GitHub, Reddit, Google Maps,
-Netflix, Twitch, Spotify, Chefkoch, LEO, DeepL, Arch-Wiki und AUR. Eigene Seiten in der Config:
+- `backend: ollama` – models from Ollama (Qwen 3 recommended for tool use)
+- `backend: openai` – any OpenAI-compatible server: **llama-server** from llama.cpp, LM Studio, vLLM, …
+- With `server:` Jarvis starts the model server itself when the profile is activated, waits until it is ready and
+  stops it again when switching back or quitting (log: `~/.local/state/jarvis-llm.log`). The real context size
+  is read from the server.
+- `unload_ollama: true` evicts Ollama models from VRAM first, `embed_on_cpu: true` runs the memory embeddings on
+  the CPU – useful with 8 GB of VRAM.
 
-```yaml
-websites:
-  nas: http://192.168.1.10:5000          # „Öffne das NAS“
-  geizhals: https://geizhals.de/?fs={q}  # {q} = Suchbegriff
-```
-
-**Wetter** (Open-Meteo, kostenlos, ohne Anmeldung) – „Wie wird das Wetter morgen?“, „Regnet es am Wochenende
-in Berlin?“. Standardort in der Config: `weather: {location: "Freiburg im Breisgau"}`.
-
-**Erinnerungen & Timer** – „Erinnere mich in 20 Minuten an die Pizza“, „Stell einen Timer auf 10 Minuten“,
-„Erinnere mich morgen um 9 an den Zahnarzt“, „Welche Erinnerungen habe ich?“, „Lösch die Zahnarzt-Erinnerung“.
-Zur fälligen Zeit gibt es eine Sprachansage, ein Banner mit Gong in der Oberfläche und eine Desktop-Benachrichtigung
-(auch wenn die Oberfläche geschlossen ist). Verpasste Erinnerungen (PC war aus) werden beim nächsten Start gemeldet.
-Anstehende Einträge stehen im Reiter **GEDÄCHTNIS** und lassen sich dort löschen.
-
-**Morgen-Briefing** – „Guten Morgen, Jarvis“ oder „Was steht heute an?“: Datum, Wetter, heutige Erinnerungen,
-verfügbare Systemupdates und Warnungen zu knappem Speicherplatz bzw. nicht gemountetem NAS.
-
-*Geplant:* Spotify-Steuerung.
-
-## Kalender (iCloud / iPhone)
-
-Jarvis greift per **CalDAV** direkt auf deinen iCloud-Kalender zu – keine Synchronisation auf Linux nötig.
-Neue Termine erscheinen nach wenigen Sekunden auf dem iPhone.
-
-1. **App-spezifisches Passwort** erstellen (nötig wegen 2FA): [appleid.apple.com](https://appleid.apple.com) →
-   *Anmeldung und Sicherheit* → *App-spezifische Passwörter* → „+“ → Name „Jarvis“ → Passwort notieren.
-2. In `~/.config/jarvis/config.yaml` eintragen:
-   ```yaml
-   calendar:
-     url: https://caldav.icloud.com
-     username: deine-apple-id@icloud.com
-     password: "xxxx-xxxx-xxxx-xxxx"     # oder Umgebungsvariable JARVIS_CALENDAR_PASSWORD
-     calendars: [Privat]                 # welche Kalender Jarvis liest (leer = alle)
-     default_calendar: Privat            # hierhin kommen neue Termine
-   ```
-3. `jarvis doctor` zeigt unter „Kalender“ die gefundenen Kalender, danach Jarvis neu starten.
-
-| Beispiel | Tool | Bestätigung |
-|---|---|---|
-| „Was steht morgen an?“ · „Was hab ich nächste Woche?“ | `calendar_events` | – |
-| „Hab ich Freitag Nachmittag Zeit?“ | `calendar_free` | – |
-| „Trag Zahnarzt am Dienstag um 10 Uhr für 45 Minuten ein“ · „Urlaub vom 3. bis 7. Oktober“ | `calendar_add` | – |
-| „Verschieb den Friseur auf 15 Uhr“ | `calendar_update` | **ja** |
-| „Lösch das Training am Donnerstag“ | `calendar_delete` | **ja** |
-
-Die heutigen Termine erscheinen außerdem im **Morgen-Briefing**. Sommer-/Winterzeit wird korrekt berücksichtigt.
-Serientermine ändert Jarvis nicht einzeln (damit die Serie intakt bleibt) – die bitte am iPhone anpassen.
-Das Passwort lässt sich bei Apple jederzeit einzeln widerrufen. Funktioniert genauso mit Nextcloud oder anderen
-CalDAV-Servern.
-
-## Telemetrie
-
-Oben über dem Orb zeigt eine HUD-Leiste live (alle 2 s, mit Verlaufskurve):
-
-| Kachel | Quelle |
-|---|---|
-| **TOK/S** | Live geschätzt während Jarvis schreibt, danach der exakte Wert von Ollama (+ Prompt-Verarbeitung) |
-| **KONTEXT** | Wie voll der Prompt ist: genutzte / verfügbare Token (Kontextfenster minus Reserve für die Antwort). Tooltip: Aufteilung System · Tools · Gedächtnis · Verlauf und die echte Zahl laut Modell-Server; „gekürzt“ = ältere Teile oder lange Tool-Ergebnisse mussten weichen |
-| **GPU** | Auslastung in % und Temperatur |
-| **VRAM** | Belegter / gesamter Grafikspeicher |
-| **RAM** | Belegter / gesamter Arbeitsspeicher, dazu CPU-Last |
-| **LEISTUNG** | Leistungsaufnahme der Grafikkarte in Watt |
-
-NVIDIA wird über `nvidia-smi` gelesen, AMD direkt über den `amdgpu`-Treiber (sysfs) – es sind keine
-Zusatzprogramme nötig. Ab 80 % färben sich die Balken orange, ab 95 % rot.
-
-## Modelle & Profile (z. B. Bonsai 2 27B)
-
-Jarvis kann mehrere Sprachmodelle nebeneinander kennen und zwischen ihnen umschalten – per Klick auf die
-**LLM-Anzeige oben** oder mit `jarvis model <name>` (`jarvis model` listet alle Profile). Die Auswahl wird gemerkt.
-
-- `backend: ollama` – Modelle aus Ollama (Qwen & Co.)
-- `backend: openai` – jeder OpenAI-kompatible Server: **llama-server** aus llama.cpp (z. B. der PrismML-Fork für
-  Bonsai), LM Studio, vLLM …
-- Mit `server:` startet Jarvis den Modell-Server beim Aktivieren selbst, wartet bis er bereit ist, und beendet ihn
-  beim Zurückschalten bzw. beim Beenden von Jarvis wieder (Log: `~/.local/state/jarvis-llm.log`).
-- `unload_ollama: true` wirft vorher alle Ollama-Modelle aus dem Grafikspeicher, `embed_on_cpu: true` rechnet die
-  Gedächtnis-Embeddings (bge-m3) auf der CPU – wichtig bei 8 GB VRAM.
-
-Fertiges Beispiel für **Bonsai 2 27B auf einer RX 6650 XT (8 GB, ROCm)**, eingerichtet mit dem
-[Bonsai-demo](https://github.com/PrismML-Eng/Bonsai-demo)-Setup unter `~/bonsai`:
+Example: **Bonsai 2 27B on an RX 6650 XT (8 GB, ROCm)** using the
+[Bonsai-demo](https://github.com/PrismML-Eng/Bonsai-demo) setup in `~/bonsai`:
 
 ```yaml
 llm:
@@ -232,137 +170,144 @@ llm:
       backend: openai
       base_url: http://127.0.0.1:8080/v1
       model: bonsai
-      api_key: "ein-langes-zufaelliges-passwort"
-      num_ctx: 16384                          # optional – Jarvis liest die echte Größe vom Server
+      api_key: "a-long-random-password"
       embed_on_cpu: true
       unload_ollama: true
       server:
-        command: ~/bonsai/scripts/start_llama_server.sh -np 1 --api-key ein-langes-zufaelliges-passwort
+        command: ~/bonsai/scripts/start_llama_server.sh -np 1 --api-key a-long-random-password
         env:
-          HSA_OVERRIDE_GFX_VERSION: "10.3.0"   # RX 6600/6650/6700 (gfx103x) als unterstütztes gfx1030 ausgeben
-          BONSAI_CTX: "16384"                 # Kontextfenster (bei VRAM-Mangel zurück auf 8192)
-          BONSAI_KV4: "1"                     # komprimierter KV-Cache
-          BONSAI_MMPROJ_CPU: "1"              # Bildmodul in den RAM (Jarvis braucht es nicht)
+          HSA_OVERRIDE_GFX_VERSION: "10.3.0"   # RX 6600/6650/6700 (gfx103x) → report as supported gfx1030
+          BONSAI_CTX: "16384"                 # context window (fall back to 8192 if VRAM runs out)
+          BONSAI_KV4: "1"                     # compressed KV cache
+          BONSAI_MMPROJ_CPU: "1"              # keep the vision module in RAM (Jarvis doesn't need it)
         startup_timeout: 240
 ```
 
-Der `api_key` schützt den llama-server davor, von Webseiten im Browser angesprochen zu werden. `jarvis doctor`
-prüft alle Profile. Token/s erscheinen wie gewohnt in der Telemetrie.
+The `api_key` keeps websites in your browser from talking to the llama-server.
 
-**Denkmodus:** Standardmäßig antwortet das Modell direkt (`think: false`) – schnell. Über den Knopf **DENKEN**
-unten rechts lässt sich das Nachdenken pro Anfrage einschalten: Der Orb zoomt hinein und zeigt den Gedankengang
-live, sobald die Antwort beginnt, zoomt er wieder heraus; an der Antwort ist der Gedankengang aufklappbar. Das
-kostet Zeit (bei ~19 Token/s oft 10–60 s pro Schritt), die Anzeige selbst dagegen praktisch nichts. Vorgelesen
-wird der Gedankengang nie. Damit der Knopf bei Bonsai wirkt, darf **kein** `--reasoning-budget 0` im Startbefehl
-stehen (das würde das Denken im Server grundsätzlich abschalten).
+**Small context windows** (e.g. 8k): Jarvis then sends only the core tools plus the tool groups that match the
+request (e.g. Home Assistant tools only when you talk about lights or heating). You can also switch tools or whole
+groups off: `tools: {disabled: [sysadmin, paperless]}`.
 
-## Stimme & Jarvis-Effekt
+### Thinking mode
 
-Im Reiter **STIMME** der Oberfläche:
+By default the model answers directly (`think: false`) – fast. The **THINK** button turns reasoning on per
+request: the orb zooms in and shows the thoughts live, then zooms out when the answer starts; the reasoning can be
+expanded under the answer and is never read aloud. It costs time (often 10–60 s per step on smaller GPUs). For
+llama-server, **don't** pass `--reasoning-budget 0`, which disables reasoning server-side.
 
-- **Deutsche Stimmen** per Klick installieren, **anhören** und **auswählen**: Thorsten (hoch/mittel/ruhig),
-  Pavoque (tiefer, sehr butlerhaft), Karlsson sowie zwei Frauenstimmen. Sie landen in
-  `~/.local/share/jarvis/voices/` – eigene Piper-Stimmen (`.onnx` + `.onnx.json`) dort ablegen, dann erscheinen sie ebenfalls.
-- **Jarvis-Effekt** (an/aus + Stärke): etwas tiefere, sonore Stimme, leichter Raumhall, dezenter Chorus und
-  „digitaler“ Schimmer. Das Sprechtempo bleibt gleich – Jarvis synthetisiert passend schneller.
+## Voice & Jarvis effect
 
-Die Originalstimme aus den Filmen (bzw. der deutschen Synchronfassung) ist nicht enthalten: Stimme und Aufnahmen
-gehören den Sprechern bzw. dem Studio.
+In the **VOICE** tab you can install, preview and select Piper voices with one click – English (Alan, Northern
+English male, Ryan, Joe, Jenny, Amy) or German (Thorsten, Pavoque, Karlsson, Kerstin, Ramona). They are stored
+in `~/.local/share/jarvis/voices/`; drop your own Piper voices (`.onnx` + `.onnx.json`) there and they appear too.
 
-## Trilium-Notizen
+The **Jarvis effect** (on/off + strength) adds a slightly deeper, sonorous tone, a light room reverb, a subtle
+chorus and a "digital" shimmer.
 
-Jarvis kann auf deine [Trilium](https://github.com/TriliumNext/Trilium)-Notizen zugreifen (lokal oder auf dem NAS):
+Speech recognition uses faster-whisper: on NVIDIA set `voice.stt_device: cuda` and `stt_compute_type: float16`;
+on AMD it runs on the CPU (`small`/`int8` takes about 1–2 s per sentence).
 
-1. In Trilium: **Optionen → ETAPI → „Neuen ETAPI-Token erstellen“**, Token kopieren.
-2. In `~/.config/jarvis/config.yaml` eintragen:
+## Integrations
+
+All integrations are optional – their tools are only offered to the model once URL and token are set.
+`jarvis doctor` checks each one. HTTPS with a self-signed certificate: add `verify_ssl: false` (or the path to
+your CA file). Home-network services are always contacted directly, never through a system proxy.
+
+### Home Assistant
+
+1. Home Assistant → your profile → **Security** → **Long-lived access tokens** → create token.
+2. Config:
    ```yaml
-   trilium:
-     url: http://localhost:8080      # bzw. http://nas.local:8080
-     token: "dein-etapi-token"       # oder Umgebungsvariable JARVIS_TRILIUM_TOKEN
+   homeassistant:
+     url: http://homeassistant.local:8123
+     token: "your-token"          # or $JARVIS_HA_TOKEN
    ```
-3. `jarvis doctor` zeigt „✔ … (Version x.y)“, danach Jarvis neu starten.
 
-| Tool | Was passiert | Bestätigung |
-|---|---|---|
-| `trilium_search` | Volltextsuche (neueste zuerst) mit Vorschau; Triliums Suchsyntax wie `#label` geht auch | – |
-| `trilium_read` | Liest eine Notiz komplett (per Titel oder ID) | – |
-| `trilium_create_note` | Neue Notiz, standardmäßig in der **Inbox**, auf Wunsch unter einer genannten Notiz. Markdown (`##`, Listen, `- [ ]`-Aufgaben, Codeblöcke) wird zu Trilium-Formatierung | – |
-| `trilium_append` | Hängt Text an eine bestehende Notiz an | – |
-| `trilium_update_note` | Ersetzt den Inhalt (und optional den Titel) | **ja** |
+Tools: `ha_find` (by name, room or type, with state), `ha_state`, `ha_control` (on/off/toggle, brightness,
+colour, temperature, open/close/position for covers, scenes/scripts/buttons, lock/unlock, set values).
+Locks, alarm panels and garage doors/gates always require confirmation.
 
-Beispiele: „Was steht in meiner Notiz über Docker?“ · „Notier dir: Router-Passwort liegt im Tresor.“ ·
-„Häng an die Einkaufsliste Milch und Eier an.“ · „Leg eine Notiz ‚Server-Wartung‘ mit den Befehlen von eben an.“
+### Paperless-ngx
 
-Die Trilium-Tools werden dem Sprachmodell nur angeboten, wenn `url` und Token gesetzt sind.
-
-## Paperless-Dokumente
-
-Jarvis durchsucht deine [Paperless-ngx](https://docs.paperless-ngx.com/)-Dokumente, beantwortet Fragen zum Inhalt
-und öffnet sie als PDF – **nur lesend**, in Paperless wird nichts verändert.
-
-1. In Paperless oben rechts auf dein Profil → **„API-Auth-Token“** erzeugen und kopieren.
-2. In `~/.config/jarvis/config.yaml`:
+1. Paperless → your profile (top right) → **API auth token**.
+2. Config:
    ```yaml
    paperless:
-     url: http://nas.local:8000      # Adresse deiner Paperless-Instanz
-     token: "dein-api-token"         # oder Umgebungsvariable JARVIS_PAPERLESS_TOKEN
+     url: http://nas.local:8000
+     token: "your-token"          # or $JARVIS_PAPERLESS_TOKEN
    ```
-3. `jarvis doctor` zeigt „✔ … – N Dokumente“, danach Jarvis neu starten.
 
-Läuft Paperless (oder Trilium) per **HTTPS mit selbstsigniertem Zertifikat**, z. B. `https://192.168.178.79:8444`,
-zusätzlich `verify_ssl: false` eintragen – oder sicherer den Pfad zur CA-/Zertifikatsdatei:
-`verify_ssl: ~/certs/nas-ca.pem`. Heimnetz-Dienste spricht Jarvis immer direkt an, nie über einen System-Proxy.
-Kann Jarvis einen Dienst nicht erreichen, nennt die Meldung Adresse, Grund und Lösungstipp.
+Search (full text incl. OCR, filter by correspondent/tag/type/date), **ask questions about a document** (short
+documents are read completely, long ones only the most relevant passages), read, and open as PDF (cached in
+`~/.cache/jarvis/paperless/`). Read-only – nothing is changed in Paperless.
 
-Beispiele: „Such mir die letzte Stromrechnung“, „Wann kann ich meinen Handyvertrag kündigen?“,
-„Was steht in der Garantie vom Geschirrspüler?“, „Öffne das Dokument“, „Welche Dokumente kamen diese Woche?“.
+### Trilium notes
 
-Zum Befragen holt Jarvis den OCR-Text aus Paperless. Kurze Dokumente gehen komplett ans Modell, bei langen nur
-die passendsten Textstellen (Stichworte + Embeddings) – so reicht auch das kleinere Kontextfenster von Bonsai.
-Geöffnete PDFs liegen zwischengespeichert in `~/.cache/jarvis/paperless/`.
+1. Trilium → **Options → ETAPI → create new ETAPI token**.
+2. Config: `trilium: {url: http://localhost:8080, token: "…"}` (or `$JARVIS_TRILIUM_TOKEN`).
 
-## Sicherheit
+Search, read, create notes (Markdown is converted), append; overwriting a note requires confirmation.
 
-Jarvis kann Befehle auf deinem System ausführen – deshalb:
+### Calendar (iCloud / CalDAV)
 
-- **Bestätigungspflicht:** Alles, was etwas verändert (Installationen, Updates, `rm`, Schreiben in Dateien,
-  `sudo`, unbekannte Programme, Befehlsersetzung `$(…)`), erscheint als Dialog mit dem exakten Befehl.
-  Bestätigen per Klick, `Enter`/`Esc` oder per Stimme („Ja“ / „Nein“).
-- **Nur lesende Befehle** (`ls`, `df`, `pacman -Q…`, `systemctl status`, `grep`, …) laufen direkt.
-- **Blockliste:** `rm -rf /` bzw. `~`/`*`, `mkfs`, `dd` auf Datenträger, Fork-Bomben, `chmod -R … /` usw.
-  werden nie ausgeführt – auch nicht nach Bestätigung.
-- **Nur lokal:** Der Server lauscht ausschließlich auf `127.0.0.1`, prüft den `Host`-Header (Schutz vor
-  DNS-Rebinding) und die `Origin` jeder WebSocket-Verbindung – fremde Webseiten können Jarvis keine Befehle schicken.
+1. iCloud: create an **app-specific password** at [appleid.apple.com](https://appleid.apple.com) → *Sign-In and Security*.
+2. Config:
+   ```yaml
+   calendar:
+     url: https://caldav.icloud.com   # or your Nextcloud/Radicale/… CalDAV URL
+     username: you@icloud.com
+     password: "xxxx-xxxx-xxxx-xxxx"  # or $JARVIS_CALENDAR_PASSWORD
+     calendars: []                    # which calendars to read (empty = all)
+     default_calendar: ""             # where new events go
+   ```
 
-### Root-Rechte
+List events, find free time and create events directly; changing and deleting events requires confirmation.
+Today's events are part of the morning briefing.
 
-Standard ist `privilege_cmd: jarvis`: Braucht eine Aktion Root-Rechte (nach deiner Bestätigung), erscheint im
-**Dashboard ein Passwortfeld** mit dem genauen Befehl; bei Sprachbedienung sagt Jarvis Bescheid. Technisch
-läuft das über `sudo -A` mit einem kleinen Helfer (`$XDG_RUNTIME_DIR/jarvis/askpass`), der mit einem
-Einmal-Token nur für genau diesen Befehl beim lokalen Jarvis-Server nachfragt. Das Passwort geht direkt an
-sudo – es wird weder gespeichert noch geloggt und erreicht nie das Sprachmodell. Abbrechen (oder STOP) lässt
-den Befehl scheitern; Jarvis probiert dann nicht auf eigene Faust weiter. Funktioniert unabhängig davon, wie
-Jarvis gestartet wurde (Terminal, Autostart, Dienst).
+### Websites, weather, reminders
 
-**Herunterfahren, Neustart, Standby, Sperren** erledigt das Tool `power` über systemd/logind – für die aktive
-Sitzung ganz ohne Passwort (nur nach Bestätigung). „Fahr in 30 Minuten herunter“ und „Abbrechen“ gehen auch.
-
-Andere Varianten: `privilege_cmd: pkexec` (Polkit-Dialog des Desktops – nur wenn Jarvis in der
-Desktop-Sitzung läuft) oder ganz ohne Passwort per NOPASSWD-Regel:
-
-```bash
-# config.yaml → tools.privilege_cmd: sudo
-sudo visudo -f /etc/sudoers.d/jarvis
-#   DEINNAME ALL=(root) NOPASSWD: /usr/bin/pacman
+```yaml
+websites:
+  nas: http://192.168.1.10:5000            # "open the NAS"
+  shop: https://example.com/search?q={q}   # {q} = search term
+weather:
+  location: "Berlin"
 ```
 
-> Hinweis: NOPASSWD für pacman bedeutet praktisch Root-Zugriff für deinen Benutzer. Die
-> Bestätigungsdialoge von Jarvis bleiben trotzdem aktiv.
+Reminders and timers are announced by voice, with a banner and chime in the UI and a desktop notification (even
+when the UI is closed); missed reminders are reported at the next start.
 
-## AMD-GPU
+## Telemetry
 
-- `ollama-rocm` nutzt ROCm. Prüfen mit `ollama ps` während einer Anfrage – dort sollte `100% GPU` stehen.
-- Wird deine Karte nicht offiziell unterstützt (z. B. RX 6600/6700 oder RX 7600), hilft meist ein Override:
+The HUD bar above the orb shows (every 2 s, with a sparkline): **TOK/S** (generation speed), **CONTEXT** (prompt
+usage vs. budget, with a breakdown in the tooltip), **GPU** load and temperature, **VRAM**, **RAM**/CPU and
+**POWER** draw. NVIDIA is read via `nvidia-smi`, AMD directly from the `amdgpu` driver.
+
+## Security
+
+Jarvis can run commands on your system, so:
+
+- **Confirmation required:** everything that changes something (installs, updates, `rm`, writing files, service
+  control, killing processes, unknown programs, command substitution `$(…)`) shows a dialog with the exact
+  command. Confirm by click, `Enter`/`Esc` or voice ("yes"/"no").
+- **Read-only commands** (`ls`, `df`, `systemctl status`, `grep`, …) run directly.
+- **Blocklist:** `rm -rf /`, formatting or overwriting disks, fork bombs, `chmod -R … /` and similar are never run –
+  not even after confirmation.
+- **Local only:** the server listens on `127.0.0.1` and checks the `Host` header and `Origin` – other websites
+  cannot send commands.
+- **Root privileges** (`privilege_cmd: jarvis`, default): after your confirmation a **password field** appears
+  in the dashboard. It works through `sudo -A` with a small helper that uses a one-time token for exactly that
+  command; the password goes straight to sudo and is never stored, logged or shown to the model. Alternatives:
+  `pkexec` (desktop polkit dialog) or `sudo` with a NOPASSWD rule.
+- **Shutdown, reboot, suspend, lock** go through systemd/logind and need no password for the active session.
+
+See [SECURITY.md](SECURITY.md) for details and how to report vulnerabilities.
+
+## AMD GPUs
+
+- Check with `ollama ps` during a request – it should say `100% GPU`.
+- Cards that ROCm doesn't officially support (e.g. RX 6600/6700, RX 7600) usually work with an override:
   ```bash
   sudo systemctl edit ollama
   # [Service]
@@ -370,75 +315,69 @@ sudo visudo -f /etc/sudoers.d/jarvis
   # Environment="HSA_OVERRIDE_GFX_VERSION=11.0.0"   # RDNA3 (RX 7000)
   sudo systemctl restart ollama
   ```
-- Klappt ROCm gar nicht: `./scripts/install.sh --vulkan` (Vulkan-Backend).
-- Whisper (faster-whisper/CTranslate2) läuft auf AMD über die **CPU** – mit `small`/`int8` dauert ein
-  Satz typischerweise 1–2 Sekunden. Zu langsam? `voice.stt_model: base`. Genauer? `medium`.
+- If ROCm doesn't work at all: `./scripts/install.sh --gpu vulkan` (Arch).
 
-## Konfiguration
+## Configuration
 
-Alle Optionen mit Erklärung: [`jarvis/config.example.yaml`](jarvis/config.example.yaml)
-(aktiv: `~/.config/jarvis/config.yaml`). Die wichtigsten:
+All options with explanations: [`jarvis/config.example.yaml`](jarvis/config.example.yaml)
+(active file: `~/.config/jarvis/config.yaml`). The most important ones:
 
-| Option | Bedeutung |
+| Option | Meaning |
 |---|---|
-| `llm.model` | Ollama-Modell, z. B. `qwen3:14b`, `qwen3:8b`, `qwen2.5:14b` |
-| `llm.think` | Qwen3-Denkmodus (langsamer, bei kniffligen Aufgaben genauer) |
-| `memory.context_budget_tokens` | Optionale Obergrenze der Prompt-Größe – Standard: automatisch (Kontextfenster des Modells minus Reserve für die Antwort) |
-| `voice.stt_model` | Whisper-Größe: `base`, `small`, `medium`, `large-v3` |
-| `voice.wakeword_threshold` | Empfindlichkeit des Wake-Words (niedriger = empfindlicher) |
-| `tools.nas_paths` | Liste der gemounteten NAS-Verzeichnisse |
-| `tools.privilege_cmd` | `jarvis` (Passwortfeld im Dashboard, Standard), `pkexec` oder `sudo` (NOPASSWD) |
-| `tools.max_steps` | Max. Einzelschritte (Tool-Runden) pro Auftrag, Standard 25 – danach fasst Jarvis zusammen und macht auf „mach weiter“ fort |
-| `user_name`, `persona_extra` | Anrede und zusätzliche Persönlichkeit |
+| `language` | `de` or `en` – assistant, speech recognition, default voice, UI and CLI |
+| `llm.model` | Ollama model, e.g. `qwen3:14b`, `qwen3:8b` |
+| `llm.profiles`, `llm.active` | Several models, see [Models & profiles](#models--profiles) |
+| `memory.context_budget_tokens` | Optional cap for the prompt size (default: automatic from the context window) |
+| `voice.stt_model` | Whisper size: `base`, `small`, `medium`, `large-v3` |
+| `voice.wakeword_threshold` | Wake word sensitivity (lower = more sensitive) |
+| `tools.nas_paths` | Mounted NAS folders |
+| `tools.privilege_cmd` | `jarvis` (password field, default), `pkexec` or `sudo` (NOPASSWD) |
+| `tools.package_manager` | `auto`, `pacman` or `apt` |
+| `tools.max_steps` | Max. tool rounds per request (default 25), then Jarvis summarises and offers to continue |
+| `tools.disabled` | Tools or groups to switch off, e.g. `[sysadmin, open_ports]` |
+| `user_name`, `persona_extra` | How Jarvis addresses you and extra personality instructions |
 
-## Kommandos
+## Commands
 
 ```bash
-jarvis serve [--open] [-v]   # Server starten
-jarvis doctor                # Installation prüfen
-jarvis reindex               # Suchindex aus den Markdown-Dateien neu aufbauen
-jarvis summarize [YYYY-MM-DD]# Tageszusammenfassungen erzeugen
-jarvis init-config           # Beispielkonfiguration anlegen
+jarvis serve [--open] [-v]    # start the server
+jarvis doctor                 # check the installation
+jarvis model [name]           # list or switch model profiles
+jarvis update                 # update (git pull, dependencies, restart)
+jarvis version                # show the installed version
+jarvis reindex                # rebuild the search index from the Markdown files
+jarvis summarize [YYYY-MM-DD] # create daily summaries
+jarvis init-config            # create the example configuration
 ```
 
-## Fehlerbehebung
+## Troubleshooting
 
-| Problem | Lösung |
+| Problem | Solution |
 |---|---|
-| `jarvis: Kommando nicht gefunden` | Neues Terminal öffnen (PATH wurde ergänzt) oder `~/jarvis/scripts/install.sh` erneut ausführen |
-| Orb bleibt „OFFLINE“ | Läuft `jarvis serve`? Log: `~/.local/state/jarvis.log` |
-| „Ollama nicht erreichbar“ | `sudo systemctl enable --now ollama` |
-| Keine Sprachausgabe (Piper) | `jarvis doctor` → Stimme fehlt? Dann spricht der Browser als Ersatz |
-| Mikrofon geht nicht | Seite über `http://localhost:8765` öffnen (nicht über die IP), Mikrofonrechte im Browser prüfen |
-| Wake-Word löst zu oft/selten aus | `voice.wakeword_threshold` anpassen (0.3–0.7) |
-| `pkexec`: „Not authorized“ | Jarvis läuft außerhalb der Desktop-Sitzung → `privilege_cmd: jarvis` (Passwortfeld im Dashboard) |
-| Kein Passwortfeld erscheint | Dashboard muss offen sein; `jarvis doctor` prüft den Askpass-Helfer; `privilege_cmd: jarvis` gesetzt? |
-| Datei/Programm öffnet sich nicht | `jarvis doctor` → Abschnitt „Desktop“: grafische Sitzung + Standardprogramme prüfen. Fehlt ein Standardprogramm: `xdg-mime default org.kde.kate.desktop text/plain`. Oder direkt sagen: „öffne X mit Kate“ |
-| Websuche: SearXNG meldet `403 Forbidden` | Öffentliche SearXNG-Instanzen sperren die JSON-Schnittstelle. `tools.searxng_url` leer lassen (dann DuckDuckGo) oder eine eigene Instanz mit `search: formats: [html, json]` in deren `settings.yml` nutzen. Jarvis weicht automatisch auf DuckDuckGo aus. |
-| Kalender: Abfragen schlägt fehl, Anlegen klappt | `jarvis update` (Kalender nutzt jetzt klassisches HTTPS statt HTTP/3 und versucht es bei Abbrüchen erneut); Details im Log `~/.local/state/jarvis.log` |
-| Dateisuche findet neue Dateien nicht | `sudo updatedb` (plocate-Index wird täglich aktualisiert) |
+| `jarvis: command not found` | Open a new terminal (PATH was extended) or run `~/jarvis/scripts/install.sh` again |
+| The orb stays "OFFLINE" | Is `jarvis serve` running? Log: `~/.local/state/jarvis.log` |
+| "Ollama not reachable" | `sudo systemctl enable --now ollama` |
+| No Piper speech | `jarvis doctor` → voice missing? The browser speaks as a fallback |
+| Microphone doesn't work | Open `http://localhost:8765` (not the IP), check the browser's microphone permission |
+| Wake word triggers too often/rarely | Adjust `voice.wakeword_threshold` (0.3–0.7) |
+| No password field appears | The dashboard must be open; `jarvis doctor` checks the askpass helper |
+| A file/app doesn't open | `jarvis doctor` → "Desktop": graphical session and default apps; set one with `xdg-mime default org.kde.kate.desktop text/plain`, or say "open X with Kate" |
+| Integration "unreachable" | The message names the address, reason and a tip (certificate → `verify_ssl: false`, wrong port, http vs https, …); check with `jarvis doctor` |
+| Web search: SearXNG `403 Forbidden` | Public SearXNG instances block the JSON API – leave `tools.searxng_url` empty (DuckDuckGo) or use your own instance |
+| File search misses new files | `sudo updatedb` |
+| Answers get cut off / "context too small" | Increase the model's context window; watch the CONTEXT tile |
 
-## Entwicklung
+## Development
 
 ```bash
 uv sync --extra voice --extra dev
-uv run pytest                                   # Tests (Safety, Gedächtnis, Agent, Tools, LLM-Client)
-JARVIS_FAKE_LLM=1 uv run jarvis serve --open    # UI-Demo ohne Ollama ("/tool <name> <json>" ruft Tools direkt)
+uv run pytest -q                                   # all tests run offline, no GPU/Ollama needed
+uv run ruff check jarvis tests
+JARVIS_FAKE_LLM=1 uv run jarvis serve --open       # UI demo without a model ("/tool <name> <json>" calls tools)
 ```
 
-Projektstruktur:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the project layout and how to write a new tool.
 
-```
-jarvis/
-  agent.py            Kontextaufbau, Tool-Schleife, Bestätigungen
-  llm.py              Ollama-Client (Streaming, Tool-Calls, Embeddings) + FakeLLM
-  server.py           FastAPI, WebSocket, REST, Sprachausgabe-Verteilung
-  memory/             Journal/Fakten/Zusammenfassungen, SQLite-Index, Kontextbudget
-  tools/              registry, safety (Befehlsbewertung), shell, packages, files, apps, web, system
-  voice/              listen (Wake-Word, VAD, Whisper), tts (Piper, Satz-Streaming)
-  web/                index.html, style.css, orb.js (Animation), app.js, mic-worklet.js
-scripts/              install.sh, jarvis-open, Desktop-Einträge, systemd-Unit
-```
+## License
 
-Neue Tools hinzufügen: Funktion in `jarvis/tools/` mit `@tool("Beschreibung", risk=...)` dekorieren –
-das JSON-Schema für das LLM wird automatisch aus den `Annotated`-Typen erzeugt.
+[MIT](LICENSE)

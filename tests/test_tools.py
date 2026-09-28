@@ -1,7 +1,7 @@
+from jarvis.server import check_host, parse_yes_no
 from jarvis.tools.apps import App, match_app
 from jarvis.tools.registry import coerce_args, get_tool, load_all_tools
 from jarvis.voice.tts import SentenceSplitter, clean_for_speech
-from jarvis.server import check_host, parse_yes_no
 
 
 def test_schemas_valid():

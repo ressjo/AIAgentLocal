@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Startet JARVIS (falls nötig) und öffnet die Oberfläche als eigenes App-Fenster.
+# Starts JARVIS (if needed) and opens the web UI in its own app window.
 PORT="${JARVIS_PORT:-8765}"
 URL="http://localhost:$PORT"
 

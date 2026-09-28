@@ -88,10 +88,10 @@ def test_helper_script_prints_password_and_ignores_proxy(tmp_path):
     helper = askpass.write_helper(tmp_path / "askpass")
     env = {**os.environ, "JARVIS_ASKPASS_URL": f"http://127.0.0.1:{srv.server_port}/api/askpass",
            "JARVIS_ASKPASS_TOKEN": "tok123", "http_proxy": "http://proxy.invalid:1", "HTTP_PROXY": "http://proxy.invalid:1"}
-    res = subprocess.run([str(helper), "[sudo] Passwort für joshua: "], env=env, capture_output=True, text=True,
+    res = subprocess.run([str(helper), "[sudo] Passwort für alex: "], env=env, capture_output=True, text=True,
                          timeout=20)
     assert res.returncode == 0 and res.stdout == "geh eim!\n"
-    assert seen == {"token": "tok123", "body": {"prompt": "[sudo] Passwort für joshua: "}}
+    assert seen == {"token": "tok123", "body": {"prompt": "[sudo] Passwort für alex: "}}
     # ohne Token: sofort Fehler (sudo bricht dann ab)
     env.pop("JARVIS_ASKPASS_TOKEN")
     assert subprocess.run([str(helper)], env=env, capture_output=True, timeout=20).returncode == 1

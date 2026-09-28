@@ -1,95 +1,103 @@
-# JARVIS-Konfiguration – kopieren nach ~/.config/jarvis/config.yaml (oder: jarvis init-config)
-# Alle Werte sind optional; nicht gesetzte Werte nutzen die Standardwerte.
+# JARVIS configuration – copy to ~/.config/jarvis/config.yaml (or run: jarvis init-config)
+# Every value is optional; anything not set uses the built-in default.
 
-host: 127.0.0.1          # NUR lokal erreichbar lassen – Jarvis kann Befehle ausführen!
+language: de             # de (Deutsch) | en (English) – assistant, speech recognition, voice and UI
+host: 127.0.0.1          # keep it local only – Jarvis can run commands on your machine!
 port: 8765
 assistant_name: Jarvis
-user_name: ""            # wie Jarvis dich nennen soll, z. B. "Joshua"
-persona_extra: ""        # z. B. "Sprich mich mit 'Chef' an."
+user_name: ""            # how Jarvis should address you, e.g. "Alex"
+persona_extra: ""        # extra personality instructions, e.g. "Call me 'boss'."
 
 llm:
-  base_url: http://localhost:11434   # Ollama (auch für die Embeddings des Gedächtnisses)
-  # ≥16 GB VRAM: qwen3:14b · 8–12 GB: qwen3:8b · wenig VRAM/CPU: qwen3:4b
+  base_url: http://localhost:11434   # Ollama (always used for the memory embeddings, too)
+  # ≥16 GB VRAM: qwen3:14b · 8–12 GB: qwen3:8b · little VRAM / CPU only: qwen3:4b
   model: qwen3:14b
-  embed_model: bge-m3    # mehrsprachige Embeddings für das Gedächtnis
+  embed_model: bge-m3    # multilingual embeddings for the memory search
   temperature: 0.6
-  num_ctx: 16384         # Kontextfenster des Modells
-  think: false           # Qwen3-"Denkmodus" (langsamer, manchmal genauer)
+  num_ctx: 16384         # the model's context window
+  think: false           # Qwen3 "thinking" by default (slower); the THINK button toggles it per request
 
-  # Optional: mehrere Modell-Profile. Umschalten per Klick auf die LLM-Anzeige oder `jarvis model <name>`.
-  # Ohne profiles gilt ein Profil "standard" mit den Werten oben.
+  # Optional: several model profiles. Switch by clicking the LLM pill or with `jarvis model <name>`.
+  # Without profiles there is a single profile "standard" built from the values above.
   # active: bonsai
   # profiles:
   #   qwen:
   #     backend: ollama
   #     model: qwen3:8b
-  #   bonsai:                          # Bonsai 2 27B über llama-server (PrismML-Fork), z. B. RX 6650 XT (8 GB)
+  #   bonsai:                          # e.g. Bonsai 2 27B via llama-server on an 8 GB AMD card
   #     label: Bonsai 27B
-  #     backend: openai
+  #     backend: openai                # any OpenAI-compatible server (llama-server, vLLM, LM Studio …)
   #     base_url: http://127.0.0.1:8080/v1
   #     model: bonsai
-  #     api_key: "ein-langes-zufaelliges-passwort"   # gleicher Wert wie --api-key unten
-  #     num_ctx: 16384                 # optional – Jarvis liest die echte Größe vom Server
-  #     embed_on_cpu: true             # Gedächtnis-Embeddings auf der CPU (VRAM ist knapp)
-  #     unload_ollama: true            # Ollama-Modelle vorher aus dem VRAM entladen
-  #     server:                        # Jarvis startet/stoppt den Server selbst
-  #       command: ~/bonsai/scripts/start_llama_server.sh -np 1 --api-key ein-langes-zufaelliges-passwort
+  #     api_key: "a-long-random-password"   # same value as --api-key below
+  #     num_ctx: 16384                 # optional – Jarvis reads the real size from the server
+  #     embed_on_cpu: true             # run memory embeddings on the CPU (VRAM is scarce)
+  #     unload_ollama: true            # unload Ollama models from VRAM first
+  #     server:                        # Jarvis starts/stops the server itself
+  #       command: ~/bonsai/scripts/start_llama_server.sh -np 1 --api-key a-long-random-password
   #       env:
-  #         HSA_OVERRIDE_GFX_VERSION: "10.3.0"
-  #         BONSAI_CTX: "16384"          # Kontextfenster; startet der Server nicht (VRAM), zurück auf 8192
+  #         HSA_OVERRIDE_GFX_VERSION: "10.3.0"   # RX 6600/6650/6700 (gfx103x) → report as gfx1030
+  #         BONSAI_CTX: "16384"          # context window; fall back to 8192 if the server runs out of VRAM
   #         BONSAI_KV4: "1"
   #         BONSAI_MMPROJ_CPU: "1"
   #       startup_timeout: 240
 
 memory:
   dir: ~/.local/share/jarvis/memory
-  # context_budget_tokens: 11000  # nur zum Begrenzen – Standard: automatisch nach Kontextfenster des Modells
+  # context_budget_tokens: 11000  # only to cap the prompt – default: automatic from the model's context window
   retrieval_top_k: 6
   summarize_idle_minutes: 15
 
 voice:
   enabled: true
-  language: de
-  stt_model: small       # tiny | base | small | medium | large-v3 (größer = genauer, langsamer)
-  stt_device: cpu        # faster-whisper nutzt CUDA; auf AMD-GPUs läuft es auf der CPU
-  stt_compute_type: int8
-  tts_voice: ~/.local/share/jarvis/voices/de_DE-thorsten-high.onnx
+  # language: de           # speech recognition language – default: same as "language" above
+  stt_model: small         # tiny | base | small | medium | large-v3 (bigger = more accurate, slower)
+  stt_device: cpu          # cuda on NVIDIA (faster-whisper); AMD GPUs: stay on cpu
+  stt_compute_type: int8   # int8 on CPU, float16 on CUDA
+  # tts_voice: ~/.local/share/jarvis/voices/de_DE-thorsten-high.onnx   # default depends on "language"
   wakeword_model: hey_jarvis
   wakeword_threshold: 0.5
-  silence_ms: 900        # so lange Stille beendet die Aufnahme
+  silence_ms: 900          # this much silence ends a recording
 
 tools:
   search_paths:
-    - "~"                # in YAML muss ~ in Anführungszeichen stehen
-  nas_paths: []          # z. B. [/mnt/nas, /mnt/nas-media]
-  privilege_cmd: jarvis  # jarvis = Passwortfeld im Dashboard · pkexec = Polkit-Dialog · sudo = nur mit NOPASSWD-Regel
-  aur_helper: auto       # auto | yay | paru | none
+    - "~"                  # in YAML a bare ~ must be quoted
+  nas_paths: []            # e.g. [/mnt/nas, /mnt/nas-media]
+  privilege_cmd: jarvis    # jarvis = password field in the dashboard · pkexec = polkit dialog · sudo = NOPASSWD rule only
+  package_manager: auto    # auto | pacman (Arch, Manjaro, EndeavourOS) | apt (Debian, Ubuntu, Mint)
+  aur_helper: auto         # auto | yay | paru | none (Arch only)
   shell_timeout: 120
-  max_steps: 25          # max. Einzelschritte (Tool-Runden) pro Auftrag; danach Zwischenbilanz + „mach weiter“
-  searxng_url: null      # leer = DuckDuckGo. Nur EIGENE SearXNG-Instanz eintragen (öffentliche sperren die JSON-API)
+  max_steps: 25            # max. model steps (tool rounds) per request; then a summary + "continue"
+  disabled: []             # switch off tools or whole groups, e.g. [sysadmin, open_ports] – saves context
+  searxng_url: null        # empty = DuckDuckGo. Only use your OWN SearXNG instance (public ones block the JSON API)
 
-trilium:
-  url: ""                # z. B. http://localhost:8080 – leer lassen, um Trilium zu deaktivieren
-  token: ""              # Trilium → Optionen → ETAPI → Token erstellen (oder $JARVIS_TRILIUM_TOKEN)
-  verify_ssl: true       # HTTPS mit selbstsigniertem Zertifikat: false (oder Pfad zur CA-Datei)
+trilium:                   # Trilium / TriliumNext notes
+  url: ""                  # e.g. http://localhost:8080 – leave empty to disable
+  token: ""                # Trilium → Options → ETAPI → create token (or $JARVIS_TRILIUM_TOKEN)
+  verify_ssl: true         # HTTPS with a self-signed certificate: false (or the path to your CA file)
 
-paperless:               # Paperless-ngx: Dokumente suchen, befragen, öffnen (nur lesend)
-  url: ""                # z. B. http://nas.local:8000 – leer lassen, um Paperless zu deaktivieren
-  token: ""              # Paperless → Profil (oben rechts) → API-Auth-Token (oder $JARVIS_PAPERLESS_TOKEN)
-  verify_ssl: true       # HTTPS mit selbstsigniertem Zertifikat: false (oder Pfad zur CA-Datei)
+paperless:                 # Paperless-ngx: search, ask and open documents (read-only)
+  url: ""                  # e.g. http://nas.local:8000 – leave empty to disable
+  token: ""                # Paperless → profile (top right) → API auth token (or $JARVIS_PAPERLESS_TOKEN)
+  verify_ssl: true
+
+homeassistant:             # Home Assistant: lights, switches, heating, covers, scenes, sensors
+  url: ""                  # e.g. http://homeassistant.local:8123 – leave empty to disable
+  token: ""                # profile → Security → Long-lived access tokens (or $JARVIS_HA_TOKEN)
+  verify_ssl: true
 
 weather:
-  location: ""           # Standardort für Wetter und Briefing, z. B. "Freiburg im Breisgau"
+  location: ""             # default place for weather and the morning briefing, e.g. "Berlin"
 
-websites: {}             # eigene Seiten für „öffne …“, z. B.:
+websites: {}               # your own shortcuts for "open …", e.g.:
 #  nas: http://192.168.1.10:5000
 #  proxmox: https://pve.local:8006
-#  geizhals: https://geizhals.de/?fs={q}      # {q} = Suchbegriff
+#  shop: https://example.com/search?q={q}   # {q} = search term
 
-calendar:                # iCloud-Kalender (oder jeder andere CalDAV-Server)
-  url: ""                # iCloud: https://caldav.icloud.com
-  username: ""           # E-Mail-Adresse deiner Apple-ID
-  password: ""           # APP-SPEZIFISCHES Passwort (appleid.apple.com → Anmeldung und Sicherheit)
-                         # oder stattdessen Umgebungsvariable JARVIS_CALENDAR_PASSWORD
-  calendars: [Privat]    # welche Kalender gelesen werden (leer = alle)
-  default_calendar: Privat   # hierhin kommen neue Termine
+calendar:                  # iCloud calendar (or any other CalDAV server: Nextcloud, Radicale, …)
+  url: ""                  # iCloud: https://caldav.icloud.com
+  username: ""             # your Apple ID e-mail address
+  password: ""             # an APP-SPECIFIC password (appleid.apple.com → Sign-In and Security)
+                           # or use the environment variable JARVIS_CALENDAR_PASSWORD instead
+  calendars: []            # which calendars to read (empty = all)
+  default_calendar: ""     # where new events go (empty = the first one)

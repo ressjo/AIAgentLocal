@@ -66,9 +66,9 @@ def test_blocked_command_never_runs(cfg, llm, memory):
 
 def test_remember_tool_and_context(cfg, llm, memory):
     agent = make_agent(cfg, llm, memory)
-    run(collect(agent, '/tool remember {"fact": "Der Nutzer heißt Joshua."}'))
+    run(collect(agent, '/tool remember {"fact": "Der Nutzer heißt Alex."}'))
     msgs = agent.build_messages([])
-    assert "Der Nutzer heißt Joshua." in msgs[0]["content"]
+    assert "Der Nutzer heißt Alex." in msgs[0]["content"]
 
 
 def test_history_consistent_after_cancel(cfg, llm, memory):

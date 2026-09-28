@@ -9,10 +9,11 @@ from datetime import date, datetime, timedelta
 import pytest
 from conftest import run
 
-from jarvis.tools import briefing, calendar_tools as cal
+from jarvis.tools import briefing
+from jarvis.tools import calendar_tools as cal
 from jarvis.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools
 
-USER, PASSWORD = "joshua", "app-pass-1234"
+USER, PASSWORD = "alex", "app-pass-1234"
 
 
 def free_port() -> int:

@@ -12,6 +12,7 @@ import webbrowser
 from pathlib import Path
 
 from .config import config_path, load_config
+from .lang import T, set_lang
 
 EXAMPLE_CONFIG = Path(__file__).parent / "config.example.yaml"
 
@@ -24,7 +25,7 @@ def cmd_serve(args) -> None:
     cfg = load_config()
     app = create_app(cfg)
     url = f"http://localhost:{cfg.port}"
-    print(f"JARVIS läuft auf {url}")
+    print(T("JARVIS läuft auf ", "JARVIS is running at ") + url)
     if args.open:
         webbrowser.open(url)
     uvicorn.run(app, host=cfg.host, port=cfg.port, log_level="info" if args.verbose else "warning")
@@ -33,11 +34,11 @@ def cmd_serve(args) -> None:
 def cmd_init_config(args) -> None:
     path = config_path()
     if path.exists() and not args.force:
-        print(f"{path} existiert bereits (--force zum Überschreiben).")
+        print(f"{path} " + T("existiert bereits (--force zum Überschreiben).", "already exists (--force to overwrite)."))
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(EXAMPLE_CONFIG, path)
-    print(f"Konfiguration angelegt: {path}")
+    print(T("Konfiguration angelegt: ", "Configuration created: ") + str(path))
 
 
 def cmd_doctor(args) -> None:
@@ -48,124 +49,141 @@ def cmd_doctor(args) -> None:
 
     from .update import version
     print(f"Version: {version()}")
-    print(f"Konfiguration: {config_path()} ({'vorhanden' if config_path().exists() else 'Standardwerte'})")
+    print(T("Konfiguration: ", "Configuration: ") + f"{config_path()} ("
+          + (T("vorhanden", "found") if config_path().exists() else T("Standardwerte", "defaults")) + ")")
+    print(T("Sprache: ", "Language: ") + cfg.language)
     print("LLM:")
     from .llm import OllamaLLM, OpenAICompatLLM
     from .llm_router import LLMRouter
     router = LLMRouter(cfg.llm, state_path=cfg.memory.dir.parent / "state.json")
     ollama = OllamaLLM(cfg.llm)
     st = asyncio.run(ollama.status())
-    line(st["online"], f"Ollama unter {cfg.llm.base_url}", "sudo systemctl enable --now ollama")
+    line(st["online"], f"Ollama {T('unter', 'at')} {cfg.llm.base_url}", "sudo systemctl enable --now ollama")
     if st["online"]:
-        line(st["embed_available"], f"Embedding-Modell {cfg.llm.embed_model}", f"ollama pull {cfg.llm.embed_model}")
+        line(st["embed_available"], f"{T('Embedding-Modell', 'Embedding model')} {cfg.llm.embed_model}", f"ollama pull {cfg.llm.embed_model}")
     for name, p in router.profiles.items():
-        mark = " (aktiv)" if name == router.active else ""
-        print(f"  Profil {name}{mark}: {p.backend} · {p.model} · {p.base_url}")
+        mark = T(" (aktiv)", " (active)") if name == router.active else ""
+        print(f"  {T('Profil', 'Profile')} {name}{mark}: {p.backend} · {p.model} · {p.base_url}")
         if p.backend == "ollama":
             ps = asyncio.run(OllamaLLM(cfg.llm.model_copy(update={"base_url": p.base_url, "model": p.model})).status())
             if ps["online"]:
-                line(ps["model_available"], f"    Modell {p.model}", f"ollama pull {p.model}")
+                line(ps["model_available"], f"    {T('Modell', 'Model')} {p.model}", f"ollama pull {p.model}")
         else:
             ps = asyncio.run(OpenAICompatLLM(p).status())
             if p.server:
                 script = os.path.expanduser(p.server.command.split()[0])
-                line(os.path.exists(script) or bool(shutil.which(script)), f"    Startbefehl {script}",
-                     "Pfad in llm.profiles.<name>.server.command prüfen")
-            line(ps["online"], "    Server erreichbar" if ps["online"] else "    Server läuft gerade nicht",
-                 "startet automatisch beim Aktivieren" if p.server else "Server von Hand starten")
+                line(os.path.exists(script) or bool(shutil.which(script)), f"    {T('Startbefehl', 'Start command')} {script}",
+                     T("Pfad in llm.profiles.<name>.server.command prüfen", "check the path in llm.profiles.<name>.server.command"))
+            line(ps["online"], T("    Server erreichbar", "    Server reachable") if ps["online"]
+                 else T("    Server läuft gerade nicht", "    Server is not running"),
+                 T("startet automatisch beim Aktivieren", "starts automatically when activated") if p.server
+                 else T("Server von Hand starten", "start the server manually"))
             if ps["online"]:
                 n_ctx = asyncio.run(OpenAICompatLLM(p).server_context())
                 if n_ctx:
-                    print(f"    ℹ Kontextfenster laut Server: {n_ctx} Token")
-    print("Sprache:")
+                    print(f"    ℹ {T('Kontextfenster laut Server', 'Context window reported by server')}: {n_ctx} Token")
+    print(T("Sprache:", "Voice:"))
     from .voice.listen import WakeWordFactory, WhisperSTT
     from .voice.tts import PiperTTS
     stt = WhisperSTT(cfg.voice)
-    line(stt.available(), "faster-whisper (Spracherkennung)", "uv sync --extra voice")
+    line(stt.available(), T("faster-whisper (Spracherkennung)", "faster-whisper (speech recognition)"), "uv sync --extra voice")
     tts = PiperTTS(cfg.voice)
-    line(tts.available(), f"Piper-Stimme {cfg.voice.tts_voice.name}", tts.error or "")
+    line(tts.available(), f"{T('Piper-Stimme', 'Piper voice')} {cfg.voice.tts_voice.name}", tts.error or "")
     wake = WakeWordFactory(cfg.voice)
     line(wake.available(), f"Wake-Word '{cfg.voice.wakeword_model}'", wake.error or "")
-    print("Desktop (Dateien/Programme öffnen):")
+    print(T("Desktop (Dateien/Programme öffnen):", "Desktop (opening files/apps):"))
     from .tools.proc import desktop_env
     env = desktop_env()
     session = env.get("WAYLAND_DISPLAY") or env.get("DISPLAY")
-    line(bool(session), f"Grafische Sitzung: {session or 'nicht gefunden'}",
-         "Jarvis aus der Desktop-Sitzung starten (Autostart/Terminal)")
-    line(bool(env.get("DBUS_SESSION_BUS_ADDRESS")), "D-Bus-Sitzung", "Jarvis aus der Desktop-Sitzung starten")
+    line(bool(session), f"{T('Grafische Sitzung', 'Graphical session')}: {session or T('nicht gefunden', 'not found')}",
+         T("Jarvis aus der Desktop-Sitzung starten (Autostart/Terminal)", "start Jarvis from the desktop session (autostart/terminal)"))
+    line(bool(env.get("DBUS_SESSION_BUS_ADDRESS")), T("D-Bus-Sitzung", "D-Bus session"),
+         T("Jarvis aus der Desktop-Sitzung starten", "start Jarvis from the desktop session"))
     if shutil.which("xdg-mime"):
         import subprocess
-        for mime, label in (("text/plain", "Texteditor"), ("application/pdf", "PDF"), ("inode/directory", "Ordner")):
+        for mime, label in (("text/plain", T("Texteditor", "Text editor")), ("application/pdf", "PDF"),
+                            ("inode/directory", T("Ordner", "Folder"))):
             app = subprocess.run(["xdg-mime", "query", "default", mime], capture_output=True, text=True,
                                  env=env).stdout.strip()
-            line(bool(app), f"Standardprogramm {label}: {app or 'keins'}",
-                 f"xdg-mime default <programm>.desktop {mime}")
-    print("Werkzeuge:")
-    for tool, pkg in [("fd", "fd"), ("rg", "ripgrep"), ("plocate", "plocate"), ("xdg-open", "xdg-utils"),
-                      ("gtk-launch", "gtk3"), ("sudo", "sudo"), ("pkexec", "polkit"), ("checkupdates", "pacman-contrib"),
-                      ("yay", "yay (AUR, optional)")]:
-        line(bool(shutil.which(tool)), tool, f"sudo pacman -S {pkg}" if "optional" not in pkg else pkg)
+            line(bool(app), f"{T('Standardprogramm', 'Default app')} {label}: {app or T('keins', 'none')}",
+                 f"xdg-mime default <app>.desktop {mime}")
+    print(T("Werkzeuge:", "Tools:"))
+    arch = bool(shutil.which("pacman"))
+    tools = [("rg", "ripgrep", "ripgrep"), ("plocate", "plocate", "plocate"), ("xdg-open", "xdg-utils", "xdg-utils"),
+             ("gtk-launch", "gtk3", "libgtk-3-bin"), ("sudo", "sudo", "sudo"), ("ip", "iproute2", "iproute2"),
+             ("ping", "iputils", "iputils-ping")]
+    tools += [("fd", "fd", "")] if arch else [("fdfind", "", "fd-find")]
+    tools += [("checkupdates", "pacman-contrib", "")] if arch else []
+    for tool, arch_pkg, deb_pkg in tools:
+        line(bool(shutil.which(tool)), tool, f"sudo pacman -S {arch_pkg}" if arch else f"sudo apt install {deb_pkg}")
+    if arch:
+        print(f"  {'✔' if shutil.which('yay') or shutil.which('paru') else '–'} AUR helper (yay/paru, "
+              + T("optional", "optional") + ")")
     if cfg.tools.privilege_cmd == "jarvis":
         from .askpass import helper_path, write_helper
         try:
             write_helper()
-            line(True, f"Root-Rechte: Passwortfeld in der Oberfläche (sudo -A, Helfer {helper_path()})")
+            line(True, T("Root-Rechte: Passwortfeld in der Oberfläche", "Root privileges: password field in the web UI")
+                 + f" (sudo -A, {helper_path()})")
         except OSError as e:
-            line(False, "Askpass-Helfer anlegen", str(e))
+            line(False, T("Askpass-Helfer anlegen", "Create askpass helper"), str(e))
     else:
-        print(f"  ℹ Root-Rechte über {cfg.tools.privilege_cmd} (tools.privilege_cmd: jarvis = Passwortfeld im Dashboard)")
+        print(f"  ℹ {T('Root-Rechte über', 'Root privileges via')} {cfg.tools.privilege_cmd} "
+              + T("(tools.privilege_cmd: jarvis = Passwortfeld im Dashboard)", "(tools.privilege_cmd: jarvis = password field in the dashboard)"))
     print("Trilium:")
     from .tools.trilium import trilium_status
     tr = asyncio.run(trilium_status(cfg))
     if not tr["enabled"]:
-        print("  – nicht konfiguriert (trilium.url und trilium.token in der Config)")
+        print(T("  – nicht konfiguriert", "  – not configured") + " (trilium.url, trilium.token)")
     else:
         from .tools.netutil import normalize_url
         line(tr["online"], f"{normalize_url(cfg.trilium.url, '/etapi')}" + (f" (Version {tr.get('version')})" if tr["online"] else ""),
              tr.get("error", ""))
     proxies = [k for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy") if os.environ.get(k)]
     if proxies and (cfg.trilium.enabled or cfg.paperless.enabled):
-        print(f"  ℹ Proxy gesetzt ({', '.join(proxies)}) – Trilium/Paperless werden bewusst direkt angesprochen")
+        print(f"  ℹ Proxy ({', '.join(proxies)}) – " + T("Heimnetz-Dienste werden bewusst direkt angesprochen", "home network services are contacted directly on purpose"))
     print("Paperless:")
     from .tools.paperless import paperless_status
     ps_ = asyncio.run(paperless_status(cfg))
     if not ps_["enabled"]:
-        print("  – nicht konfiguriert (paperless.url und paperless.token in der Config)")
+        print(T("  – nicht konfiguriert", "  – not configured") + " (paperless.url, paperless.token)")
     else:
-        line(ps_["online"], f"{ps_.get('url') or cfg.paperless.url}" + (f" – {ps_['count']} Dokumente (Version {ps_['version']})"
+        line(ps_["online"], f"{ps_.get('url') or cfg.paperless.url}" + (f" – {ps_['count']} {T('Dokumente', 'documents')} (Version {ps_['version']})"
                                                        if ps_["online"] else ""), ps_.get("error", ""))
     print("Home Assistant:")
     from .tools.homeassistant import ha_status
     hs = asyncio.run(ha_status(cfg))
     if not hs["enabled"]:
-        print("  – nicht konfiguriert (homeassistant.url und homeassistant.token in der Config)")
+        print(T("  – nicht konfiguriert", "  – not configured") + " (homeassistant.url, homeassistant.token)")
     else:
         line(hs["online"], f"{hs.get('url') or cfg.homeassistant.url}" + (
-            f" – {hs['entities']} Entitäten (Version {hs['version']})" if hs["online"] else ""), hs.get("error", ""))
-    print("Kalender:")
+            f" – {hs['entities']} {T('Entitäten', 'entities')} (Version {hs['version']})" if hs["online"] else ""), hs.get("error", ""))
+    print(T("Kalender:", "Calendar:"))
     if not cfg.calendar.enabled:
-        print("  – nicht konfiguriert (calendar.url, username, password)")
+        print(T("  – nicht konfiguriert", "  – not configured") + " (calendar.url, username, password)")
     else:
         from .tools.calendar_tools import calendar_status
         cs = asyncio.run(calendar_status(cfg))
-        line(cs["online"], f"{cfg.calendar.url} – " + (", ".join(cs.get("calendars", [])) if cs["online"] else "Fehler"),
+        line(cs["online"], f"{cfg.calendar.url} – " + (", ".join(cs.get("calendars", [])) if cs["online"] else T("Fehler", "error")),
              cs.get("error", ""))
-    print("Wetter & Erinnerungen:")
+    print(T("Wetter & Erinnerungen:", "Weather & reminders:"))
     if cfg.weather.location:
         from .tools.weather import WeatherError, geocode
         try:
             place = asyncio.run(geocode(cfg.weather.location))
-            line(True, f"Wetter-Ort: {place.get('name')} ({place.get('admin1') or place.get('country', '')})")
+            line(True, f"{T('Wetter-Ort', 'Weather location')}: {place.get('name')} ({place.get('admin1') or place.get('country', '')})")
         except WeatherError as e:
-            line(False, f"Wetter-Ort '{cfg.weather.location}'", str(e))
+            line(False, f"{T('Wetter-Ort', 'Weather location')} '{cfg.weather.location}'", str(e))
     else:
-        print("  – kein Standardort (weather.location) – Wetter fragt dann nach dem Ort")
-    line(bool(shutil.which("notify-send")), "Desktop-Benachrichtigungen (notify-send)", "sudo pacman -S libnotify")
+        print(T("  – kein Standardort (weather.location) – Wetter fragt dann nach dem Ort",
+                "  – no default location (weather.location) – weather will ask for a place"))
+    line(bool(shutil.which("notify-send")), T("Desktop-Benachrichtigungen (notify-send)", "Desktop notifications (notify-send)"),
+         "sudo pacman -S libnotify" if shutil.which("pacman") else "sudo apt install libnotify-bin")
     print("NAS:")
     if not cfg.tools.nas_paths:
-        print("  – kein NAS-Pfad konfiguriert (tools.nas_paths)")
+        print(T("  – kein NAS-Pfad konfiguriert", "  – no NAS path configured") + " (tools.nas_paths)")
     for p in cfg.tools.nas_paths:
-        line(p.exists() and p.is_dir() and any(p.iterdir()), f"{p} gemountet", "Mount prüfen")
+        line(p.exists() and p.is_dir() and any(p.iterdir()), f"{p} " + T("gemountet", "mounted"), T("Mount prüfen", "check the mount"))
 
 
 def cmd_reindex(args) -> None:
@@ -182,7 +200,7 @@ def cmd_reindex(args) -> None:
         mem.close()
         return n
 
-    print(f"Index neu aufgebaut: {asyncio.run(run())} Einträge")
+    print(T("Index neu aufgebaut: ", "Index rebuilt: ") + f"{asyncio.run(run())} " + T("Einträge", "entries"))
 
 
 def cmd_summarize(args) -> None:
@@ -196,7 +214,7 @@ def cmd_summarize(args) -> None:
         mem = Memory(cfg.memory, llm)
         days = [args.day] if args.day else mem.days_needing_summary(include_today=True)
         for d in days:
-            print(f"Fasse {d} zusammen …")
+            print(T("Fasse zusammen: ", "Summarising: ") + f"{d} …")
             print(await mem.summarize_day(d))
         await llm.close()
         mem.close()
@@ -218,24 +236,27 @@ def cmd_model(args) -> None:
     if not args.name:
         for info in router.describe():
             star = "▶" if info["active"] else " "
-            extra = " · startet Server selbst" if info["managed"] else ""
+            extra = T(" · startet Server selbst", " · starts its own server") if info["managed"] else ""
             print(f"{star} {info['name']:<12} {info['backend']:<7} {info['model']}  ({info['base_url']}){extra}")
-        print("\nUmschalten: jarvis model <name>   ·   Profile in ~/.config/jarvis/config.yaml unter llm.profiles")
+        print(T("\nUmschalten: jarvis model <name>   ·   Profile in ~/.config/jarvis/config.yaml unter llm.profiles",
+                "\nSwitch: jarvis model <name>   ·   profiles live in ~/.config/jarvis/config.yaml under llm.profiles"))
         return
     if args.name not in router.profiles:
-        print(f"Unbekanntes Profil '{args.name}'. Vorhanden: {', '.join(router.profiles)}")
+        print(T("Unbekanntes Profil", "Unknown profile") + f" '{args.name}'. " + T("Vorhanden: ", "Available: ")
+              + ", ".join(router.profiles))
         sys.exit(1)
     try:
         r = httpx.post(f"{base}/api/models/{args.name}/activate", headers=headers, timeout=600)
         if r.status_code == 200:
-            print(f"✔ Aktiv: {args.name}")
+            print(f"✔ {T('Aktiv', 'Active')}: {args.name}")
             return
-        print(f"✘ Umschalten fehlgeschlagen: {r.json().get('detail', r.text)}")
+        print(f"✘ {T('Umschalten fehlgeschlagen', 'Switching failed')}: {r.json().get('detail', r.text)}")
         sys.exit(1)
     except httpx.ConnectError:
         router.active = args.name
         router._write_state()
-        print(f"Jarvis läuft gerade nicht – '{args.name}' wird beim nächsten Start verwendet.")
+        print(T(f"Jarvis läuft gerade nicht – '{args.name}' wird beim nächsten Start verwendet.",
+                f"Jarvis is not running – '{args.name}' will be used on the next start."))
 
 
 def cmd_update(args) -> None:
@@ -249,20 +270,27 @@ def cmd_version(args) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="jarvis", description="JARVIS – lokaler KI-Assistent")
+    try:
+        set_lang(load_config().language)
+    except Exception:  # noqa: BLE001 – kaputte Config: doctor/serve melden das selbst
+        pass
+    parser = argparse.ArgumentParser(prog="jarvis", description=T("JARVIS – lokaler KI-Assistent",
+                                                                  "JARVIS – local AI assistant"))
     sub = parser.add_subparsers(dest="cmd")
-    p = sub.add_parser("serve", help="Server starten (Standard)")
-    p.add_argument("--open", action="store_true", help="Browser öffnen")
+    p = sub.add_parser("serve", help=T("Server starten (Standard)", "start the server (default)"))
+    p.add_argument("--open", action="store_true", help=T("Browser öffnen", "open the browser"))
     p.add_argument("-v", "--verbose", action="store_true")
-    sub.add_parser("doctor", help="Installation prüfen")
-    p = sub.add_parser("model", help="Modell-Profile anzeigen oder umschalten")
-    p.add_argument("name", nargs="?", help="Profilname zum Umschalten")
-    sub.add_parser("update", help="Auf den neuesten Stand bringen (git pull, Abhängigkeiten, Neustart)")
-    sub.add_parser("version", help="Installierte Version anzeigen")
-    sub.add_parser("reindex", help="Gedächtnis-Suchindex aus den Markdown-Dateien neu aufbauen")
-    p = sub.add_parser("summarize", help="Tageszusammenfassungen erzeugen")
-    p.add_argument("day", nargs="?", help="YYYY-MM-DD (Standard: alle fälligen Tage)")
-    p = sub.add_parser("init-config", help="Beispielkonfiguration anlegen")
+    sub.add_parser("doctor", help=T("Installation prüfen", "check the installation"))
+    p = sub.add_parser("model", help=T("Modell-Profile anzeigen oder umschalten", "list or switch model profiles"))
+    p.add_argument("name", nargs="?", help=T("Profilname zum Umschalten", "profile to switch to"))
+    sub.add_parser("update", help=T("Auf den neuesten Stand bringen (git pull, Abhängigkeiten, Neustart)",
+                                    "update (git pull, dependencies, restart)"))
+    sub.add_parser("version", help=T("Installierte Version anzeigen", "show the installed version"))
+    sub.add_parser("reindex", help=T("Gedächtnis-Suchindex aus den Markdown-Dateien neu aufbauen",
+                                     "rebuild the memory search index from the Markdown files"))
+    p = sub.add_parser("summarize", help=T("Tageszusammenfassungen erzeugen", "create daily summaries"))
+    p.add_argument("day", nargs="?", help=T("YYYY-MM-DD (Standard: alle fälligen Tage)", "YYYY-MM-DD (default: all due days)"))
+    p = sub.add_parser("init-config", help=T("Beispielkonfiguration anlegen", "create the example configuration"))
     p.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
 

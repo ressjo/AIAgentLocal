@@ -36,7 +36,7 @@ def test_retrieval_finds_old_conversation(memory):
 
 def test_rebuild_index(memory):
     run(memory.log_exchange("Suche meine Steuererklärung", "Gefunden in ~/Dokumente.", ["find_files → 1 Treffer"]))
-    run(memory.remember("Der Nutzer heißt Joshua."))
+    run(memory.remember("Der Nutzer heißt Alex."))
     n = run(memory.rebuild_index())
     assert n >= 2
     assert run(memory.retrieve("Steuererklärung"))

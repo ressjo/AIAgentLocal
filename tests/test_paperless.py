@@ -126,7 +126,7 @@ def test_split_passages_overlap_and_coverage():
 
 def test_url_normalization():
     from jarvis.tools.netutil import normalize_url
-    assert normalize_url("https:///192.168.178.79:8444") == "https://192.168.178.79:8444"
+    assert normalize_url("https:///192.168.1.20:8444") == "https://192.168.1.20:8444"
     assert normalize_url("https://nas:8444/api/", "/api") == "https://nas:8444"
     assert normalize_url("nas.local:8000") == "http://nas.local:8000"
     assert normalize_url("HTTP:/nas:1/") == "HTTP://nas:1"
@@ -136,9 +136,9 @@ def test_url_normalization():
 def test_client_uses_normalized_url_no_proxy_and_verify_option(cfg, monkeypatch):
     import ssl
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
-    cfg.paperless.url, cfg.paperless.token = "https:///192.168.178.79:8444/", "t"
+    cfg.paperless.url, cfg.paperless.token = "https:///192.168.1.20:8444/", "t"
     pc = pl.PaperlessClient(cfg)
-    assert str(pc.client.base_url) == "https://192.168.178.79:8444/api/"
+    assert str(pc.client.base_url) == "https://192.168.1.20:8444/api/"
     assert pc.client._trust_env is False
     cfg.paperless.verify_ssl = False
     from jarvis.tools.netutil import verify_arg

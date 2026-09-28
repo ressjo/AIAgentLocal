@@ -19,7 +19,16 @@ from .llm import ContextOverflow, LLMError, strip_think
 from .memory import Memory, est_tokens
 from .memory.context import TRIM_NOTE, msg_tokens
 from .tools.proc import clip
-from .tools.registry import BLOCKED, CONFIRM, ToolContext, coerce_args, get_tool, load_all_tools, missing_args, tool_schemas
+from .tools.registry import (
+    BLOCKED,
+    CONFIRM,
+    ToolContext,
+    coerce_args,
+    get_tool,
+    load_all_tools,
+    missing_args,
+    tool_schemas,
+)
 from .tools.system import _os_name
 
 log = logging.getLogger(__name__)

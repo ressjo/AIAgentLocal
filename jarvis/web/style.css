@@ -440,3 +440,6 @@ button { font-family: inherit; cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .bg-grid { animation: none; }
 }
+/* Kontext-Kachel: „12.3k/15k“ muss in die schmale Kachel passen */
+#tele-ctx .tele-num { font-size: 16px; }
+#tele-ctx .tele-unit { margin-left: 1px; }
