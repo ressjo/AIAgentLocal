@@ -145,8 +145,18 @@ class LLMRouter:
         """Per `jarvis model add` bzw. Oberfläche geladene Ollama-Modelle als Profile ergänzen."""
         if not self.state_path:
             return []
-        from .models import BY_TAG, added_models, slug
+        from .models import BY_TAG, added_models, added_profiles, slug
         new = []
+        for name, raw in added_profiles(self.state_path).items():
+            if name in self.profiles:
+                continue
+            try:
+                extra = self.cfg.model_copy(update={"profiles": {name: ProfileConfig.model_validate(raw)}})
+            except ValueError as e:
+                log.warning("Gespeichertes Profil '%s' ungültig: %s", name, e)
+                continue
+            self.profiles[name] = extra.resolved_profiles()[name]
+            new.append(name)
         for tag in added_models(self.state_path):
             name = slug(tag)
             if name in self.profiles:

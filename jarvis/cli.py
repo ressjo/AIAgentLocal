@@ -313,6 +313,19 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
     if not tag or not mdl.TAG_RE.match(tag):
         print(T("Ungültiger Modellname.", "Invalid model name."))
         sys.exit(1)
+    if tag == "bonsai":
+        from . import bonsai
+        name = bonsai.install(state, gpu=gpu, activate=True)
+        if not name:
+            sys.exit(1)
+        print(T("✔ Bonsai eingerichtet und als Modell aktiviert – Jarvis startet den Server bei Bedarf selbst.",
+                "✔ Bonsai is set up and activated – Jarvis starts its server itself when needed."))
+        try:
+            httpx.post(f"{base}/api/models/reload", headers=headers, timeout=10)
+            httpx.post(f"{base}/api/models/{name}/activate", headers=headers, timeout=600)
+        except httpx.HTTPError:
+            pass
+        return
     if not shutil.which("ollama"):
         print(T("ollama ist nicht installiert – erst scripts/install.sh ausführen.",
                 "ollama is not installed – run scripts/install.sh first."))
@@ -323,7 +336,7 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
                 f"✘ Could not download '{tag}' – check the name (ollama.com/library) or pick another model."))
         sys.exit(1)
     name = mdl.register_model(state, tag)
-    activate = not sys.stdin.isatty() or input(T(f"'{tag}' jetzt aktivieren? [J/n] ", f"Activate '{tag}' now? [Y/n] ")
+    activate = args.yes or not sys.stdin.isatty() or input(T(f"'{tag}' jetzt aktivieren? [J/n] ", f"Activate '{tag}' now? [Y/n] ")
                                                 ).strip().lower() not in ("n", "nein", "no")
     try:
         httpx.post(f"{base}/api/models/reload", headers=headers, timeout=10)
@@ -369,6 +382,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("name", nargs="?", help=T("Profilname zum Umschalten – oder add / remove",
                                              "profile to switch to – or add / remove"))
     p.add_argument("tag", nargs="?", help=T("bei add/remove: Ollama-Modellname", "with add/remove: Ollama model name"))
+    p.add_argument("-y", "--yes", action="store_true", help=T("ohne Rückfragen", "no questions"))
     p.add_argument("--vram", type=float, help=argparse.SUPPRESS)
     p.add_argument("--out", help=argparse.SUPPRESS)
     sub.add_parser("update", help=T("Auf den neuesten Stand bringen (git pull, Abhängigkeiten, Neustart)",

@@ -408,6 +408,8 @@ def create_app(cfg: Config) -> FastAPI:
         tag = str((await request.json()).get("tag", "")).strip().lower()
         if not mdl.TAG_RE.match(tag):
             raise HTTPException(400, "Ungültiger Modellname")
+        if tag in mdl.BY_TAG and mdl.BY_TAG[tag].kind != "ollama":
+            raise HTTPException(400, prompts.spoken(cfg, "setup_terminal", cmd=f"jarvis model add {tag}"))
         if tag not in pulls:
             pulls[tag] = asyncio.create_task(pull_model(tag))
         return {"ok": True, "tag": tag}

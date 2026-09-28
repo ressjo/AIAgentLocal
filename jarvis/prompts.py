@@ -196,6 +196,7 @@ SPOKEN = {
         "call_cal_update": "das Ändern des Termins {v}", "call_cal_delete": "das Löschen des Termins {v}",
         "call_trilium": "das Überschreiben der Trilium-Notiz {v}", "call_write": "das Schreiben der Datei {v}",
         "call_other": "die Aktion {v}",
+        "setup_terminal": "Dieses Modell wird im Terminal eingerichtet: {cmd}",
     },
     "en": {
         "confirm": "Shall I run {what}?",
@@ -210,6 +211,7 @@ SPOKEN = {
         "call_cal_update": "changing the event {v}", "call_cal_delete": "deleting the event {v}",
         "call_trilium": "overwriting the Trilium note {v}", "call_write": "writing the file {v}",
         "call_other": "the action {v}",
+        "setup_terminal": "This model is set up in the terminal: {cmd}",
     },
 }
 

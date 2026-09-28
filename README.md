@@ -157,6 +157,7 @@ presets (with the same fit marks and download progress), or run
 ```bash
 jarvis model add              # interactive list of presets for your GPU
 jarvis model add qwen3:14b    # or any model from ollama.com/library
+jarvis model add bonsai       # Bonsai 2 27B incl. its llama.cpp server (see below)
 jarvis model remove qwen3-14b # remove it from the list (optionally also delete the files)
 ```
 
@@ -171,8 +172,15 @@ Jarvis can know several language models and switch between them – click the **
 - `unload_ollama: true` evicts Ollama models from VRAM first, `embed_on_cpu: true` runs the memory embeddings on
   the CPU – useful with 8 GB of VRAM.
 
-Example: **Bonsai 2 27B on an RX 6650 XT (8 GB, ROCm)** using the
-[Bonsai-demo](https://github.com/PrismML-Eng/Bonsai-demo) setup in `~/bonsai`:
+**Bonsai 2 27B** (27B-class model in ~7 GB, runs on its own llama.cpp server from the PrismML fork) is set up
+automatically: pick it in the installer or run `jarvis model add bonsai`. Jarvis clones
+[Bonsai-demo](https://github.com/PrismML-Eng/Bonsai-demo) to `~/bonsai` (or `$JARVIS_BONSAI_DIR`), runs its
+`setup.sh` (llama.cpp binaries for CUDA/ROCm + model download) and creates an activated profile with settings for
+your GPU – context size by VRAM, compressed KV cache and CPU embeddings on 8 GB cards, the ROCm override for
+RX 6600/6700/7600 – and a random `api_key`. Running it again updates the checkout. In the web UI Bonsai is listed
+under **+ ADD MODEL** with a pointer to the terminal command, because the setup is interactive.
+
+The same profile written by hand, e.g. **Bonsai 2 27B on an RX 6650 XT (8 GB, ROCm)**:
 
 ```yaml
 llm:

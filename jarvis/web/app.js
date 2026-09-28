@@ -1110,11 +1110,17 @@
       b.querySelector(".mi-name").textContent = p.label;
       b.querySelector(".mi-tag").textContent = pulling ? L("LÄDT …", "LOADING …")
         : p.installed ? L("INSTALLIERT", "INSTALLED") : p.recommended ? L("EMPFOHLEN", "RECOMMENDED") : "";
-      b.querySelector(".mi-sub").textContent = `${p.tag} · ~${p.download_gb} GB`;
+      b.querySelector(".mi-sub").textContent = (p.kind === "ollama" ? p.tag : L("eigener Server · Terminal", "own server · terminal"))
+        + ` · ~${p.download_gb} GB`;
       b.querySelector(".mi-note").textContent = p.note;
       b.disabled = pulling;
       b.onclick = async (e) => {
         e.stopPropagation();
+        if (p.kind !== "ollama") {
+          toast(L(`${p.label}: Einrichtung im Terminal mit „jarvis model add ${p.tag}“ (lädt ~7 GB und den passenden llama.cpp-Server).`,
+                  `${p.label}: set it up in a terminal with “jarvis model add ${p.tag}” (downloads ~7 GB and the matching llama.cpp server).`));
+          return;
+        }
         if (p.fit === "big" && !confirm(L(`${p.label} ist für deinen Grafikspeicher zu groß und wird sehr langsam. Trotzdem laden?`,
                                           `${p.label} is too big for your video memory and will be very slow. Download anyway?`))) return;
         closeModelMenu();

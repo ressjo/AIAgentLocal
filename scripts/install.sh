@@ -164,7 +164,7 @@ uv sync --extra voice
 if [[ -z "$MODEL" ]]; then
   GB=0
   if [[ "$GPU" == "cuda" ]]; then
-    MIB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | sort -n | tail -1)
+    MIB=$( { nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null || true; } | sort -n | tail -1)
     GB=$(( ${MIB:-0} / 1024 ))
   else
     for f in /sys/class/drm/card*/device/mem_info_vram_total; do
@@ -179,19 +179,34 @@ fi
 say "$(t 'Sprachmodell wählen und laden (dauert beim ersten Mal)' 'Choosing and pulling the language model (takes a while the first time)')"
 for _ in {1..30}; do ollama list >/dev/null 2>&1 && break; sleep 1; done
 CHOICE_FILE="$(mktemp)"
+OLLAMA_MODEL=""   # Ollama-Chatmodell (leer, wenn nur Bonsai gewählt wurde)
+BONSAI=0
+choose_model() {  # Menü geht ins Terminal, die Wahl in $CHOICE_FILE
+  if (( ASK )); then uv run jarvis model choose --vram "$GB" --out "$CHOICE_FILE"
+  else uv run jarvis model choose --vram "$GB" --out "$CHOICE_FILE" </dev/null; fi
+}
 while true; do
-  if [[ -z "$MODEL" ]]; then
-    if (( ASK )); then uv run jarvis model choose --vram "$GB" --out "$CHOICE_FILE"
-    else uv run jarvis model choose --vram "$GB" --out "$CHOICE_FILE" </dev/null; fi
-    MODEL="$(cat "$CHOICE_FILE")"
-  fi
+  if [[ -z "$MODEL" ]]; then choose_model; MODEL="$(cat "$CHOICE_FILE")"; fi
   echo "→ $MODEL"
-  ollama pull "$MODEL" && break
-  echo "$(t "✘ '$MODEL' konnte nicht geladen werden." "✘ Could not pull '$MODEL'.")"
+  if [[ "$MODEL" == "bonsai" ]]; then
+    # Bonsai 2 27B: eigener llama-server (PrismML-Fork) – Repo, Binaries und Modell nach ~/bonsai, Profil aktiv
+    if uv run jarvis model add bonsai --yes; then
+      BONSAI=1
+      if (( ASK )) && ask_yes "Zusätzlich ein Ollama-Modell als schnelle Alternative installieren?" \
+                              "Also install an Ollama model as a fast alternative?" n; then
+        MODEL=""; continue
+      fi
+      break
+    fi
+  elif ollama pull "$MODEL"; then
+    OLLAMA_MODEL="$MODEL"
+    break
+  fi
+  echo "$(t "✘ '$MODEL' konnte nicht eingerichtet werden." "✘ Could not set up '$MODEL'.")"
   if (( ASK )); then MODEL=""; else exit 1; fi
 done
 rm -f "$CHOICE_FILE"
-ollama pull bge-m3
+ollama pull bge-m3   # Embeddings fürs Gedächtnis (auch bei Bonsai)
 
 # ---------------------------------------------------------------- Voice
 if [[ "$LANG_CHOICE" == "en" ]]; then VOICE="en_GB-alan-medium"; VOICE_PATH="en/en_GB/alan/medium"
@@ -211,7 +226,7 @@ uv run python -c "from faster_whisper import WhisperModel; WhisperModel('small',
 say "Configuration"
 if [[ ! -f "$CONF/config.yaml" ]]; then
   uv run jarvis init-config
-  sed -i "s|^  model: .*|  model: $MODEL|" "$CONF/config.yaml"
+  [[ -n "$OLLAMA_MODEL" ]] && sed -i "s|^  model: .*|  model: $OLLAMA_MODEL|" "$CONF/config.yaml"
   sed -i "s|^language: [a-z]*|language: $LANG_CHOICE|" "$CONF/config.yaml"
   echo "→ Add your NAS paths etc. in $CONF/config.yaml (tools.nas_paths)."
 else
@@ -252,6 +267,7 @@ Update:   jarvis update
 (Open a new terminal or run "source ~/.bashrc" if "jarvis" is not found yet.)
 Web UI:   http://localhost:8765
 Models:   jarvis model add        (download and switch to another model – also in the web UI: LLM menu)
+$( (( BONSAI )) && echo "Bonsai:   set up in ~/bonsai – Jarvis starts its llama-server automatically (log: ~/.local/state/jarvis-llm.log)")
 
 NVIDIA: speech recognition can run on the GPU – set voice.stt_device: cuda and voice.stt_compute_type: float16.
 AMD: if ROCm does not pick up your card (ollama ps shows 100% CPU), see the README section "AMD GPUs".
