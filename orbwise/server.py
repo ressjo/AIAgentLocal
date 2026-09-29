@@ -185,6 +185,16 @@ def check_host(host: str | None, port: int) -> bool:
     return name in ("localhost", "127.0.0.1", "[::1]")
 
 
+class FreshStaticFiles(StaticFiles):
+    """Oberflächen-Dateien immer neu prüfen (ETag → meist 304): nach einem Update läuft sonst stundenlang
+    das alte app.js aus dem Browser-Cache weiter."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 def create_app(cfg: Config) -> FastAPI:
     set_lang(cfg.language)  # Meldungen außerhalb der Prompts (z. B. Modell-Server-Fehler)
     fake = env("FAKE_LLM") == "1"
@@ -799,5 +809,5 @@ def create_app(cfg: Config) -> FastAPI:
         finally:
             hub.clients.discard(client)
 
-    app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+    app.mount("/static", FreshStaticFiles(directory=WEB_DIR), name="static")
     return app

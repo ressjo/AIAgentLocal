@@ -7,6 +7,7 @@ AudioSession, die Wake-Word erkennt, die Äußerung aufnimmt und mit Whisper tra
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 
@@ -204,14 +205,17 @@ class AudioSession:
         self.task = asyncio.create_task(self._transcribe(audio))
 
     async def _transcribe(self, audio: np.ndarray) -> None:
+        text = ""
         try:
             text = await asyncio.to_thread(self.stt.transcribe, audio)
         except Exception as e:  # noqa: BLE001
             log.exception("Transkription fehlgeschlagen")
             await self.send({"type": "voice", "state": "error", "text": f"Spracherkennung fehlgeschlagen: {e}"})
-            text = ""
-        self.mode = "idle"
-        await self.send({"type": "voice", "state": "idle"})
+        finally:
+            # auch bei Abbruch: sonst bleibt „Transkribiere“ stehen und neue Aufnahmen werden ignoriert
+            self.mode = "idle"
+            with contextlib.suppress(Exception):
+                await self.send({"type": "voice", "state": "idle"})
         if text:
             await self.send({"type": "transcript", "text": text})
             await self.on_text(text)

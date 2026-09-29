@@ -232,6 +232,7 @@
     ws.onclose = () => {
       S.connected = false;
       S.recording = false;
+      S.transcribing = false;
       updateMicStreaming();
       refresh();
       const delay = Math.min(10000, 800 * 2 ** S.retry++);
@@ -253,6 +254,7 @@
     switch (ev.type) {
       case "hello":
         S.serverState = ev.busy ? "thinking" : "idle";  // tatsächlichen Zustand übernehmen (auch nach Neuverbinden)
+        S.transcribing = false;  // neue Verbindung = neue Audio-Sitzung, eine alte Transkription meldet sich nie mehr
         if (ev.context) showContext(ev.context);
         break;
       case "context":
@@ -289,6 +291,7 @@
       case "assistant_end":
         Thought.finish(ev.id);
         finishAssistant(ev.id, ev.cancelled);
+        S.serverState = "idle";  // Antwort fertig = bereit, auch wenn das „idle“ des Servers noch aussteht
         if (S.substate === THINKING_SUB) S.substate = "";
         setTimeout(loadStatus, 300);
         if (!$("chat-title").textContent) {

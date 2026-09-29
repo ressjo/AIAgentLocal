@@ -76,3 +76,50 @@ def test_model_start_failure_also_ends_thinking(cfg, monkeypatch):
                 ev = ws.receive_json()
                 seen.append((ev["type"], ev.get("state")))
             assert ("model_error", None) in seen
+
+
+def test_cancelled_transcription_does_not_block_the_microphone():
+    """Wird die Transkription abgebrochen, darf „Transkribiere …“ nicht stehen bleiben."""
+    import threading
+
+    import numpy as np
+
+    from orbwise.config import VoiceConfig
+    from orbwise.voice.listen import AudioSession
+
+    release = threading.Event()
+
+    class SlowSTT:
+        def transcribe(self, audio):
+            release.wait(5)
+            return "zu spät"
+
+    sent, heard = [], []
+
+    async def send(ev):
+        sent.append(ev)
+
+    async def on_text(text):
+        heard.append(text)
+
+    async def scenario():
+        s = AudioSession(VoiceConfig(), SlowSTT(), None, send, on_text)
+        s.recorded = [np.ones(16000, dtype=np.int16)]
+        await s._finish()
+        assert s.mode == "transcribing"
+        await asyncio.sleep(0.05)
+        s.task.cancel()
+        release.set()
+        await asyncio.gather(s.task, return_exceptions=True)
+        return s
+
+    s = run(scenario())
+    assert s.mode == "idle" and sent[-1] == {"type": "voice", "state": "idle"} and not heard
+
+
+def test_ui_files_are_revalidated_after_updates(cfg):
+    with TestClient(server.create_app(cfg), base_url="http://localhost:8765") as client:
+        resp = client.get("/static/app.js")
+        assert resp.status_code == 200 and resp.headers["cache-control"] == "no-cache"
+        again = client.get("/static/app.js", headers={"If-None-Match": resp.headers["etag"]})
+        assert again.status_code == 304
