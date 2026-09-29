@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from datetime import datetime
@@ -63,6 +64,20 @@ class Memory:
         self.conversation.save()
         self.conversation = self.chats.create()
         return self.conversation
+
+    @contextlib.contextmanager
+    def in_chat(self, chat_id: str, title: str):
+        """Für Routinen: vorübergehend in einem eigenen Chat arbeiten, ohne den aktiven Chat des Nutzers umzustellen."""
+        previous = self.conversation
+        previous.save()
+        conv = self.chats.open(chat_id) if chat_id and self.chats.exists(chat_id) else self.chats.create(activate=False)
+        conv.meta["title"] = title
+        self.conversation = conv
+        try:
+            yield conv
+        finally:
+            conv.save()
+            self.conversation = previous
 
     def switch_chat(self, chat_id: str) -> Conversation:
         if chat_id != self.conversation.chat_id:

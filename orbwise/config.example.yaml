@@ -106,7 +106,7 @@ mail:                      # e-mail via IMAP – Proton Mail through the local P
 weather:
   location: ""             # default place for weather and the morning briefing, e.g. "Berlin"
 
-briefing:                  # "good morning" – also adjustable in the dashboard (BRIEFING tab)
+briefing:                  # "good morning" – also adjustable in the dashboard (PLANNER tab → BRIEFING CONTENT)
   sections: [weather, calendar, reminders, mail, paperless_inbox, news, updates, storage]   # order as listed
   lookahead_days: 2        # events + reminders/deadlines for today and the next days (0 = today only)
   news_topics: []          # e.g. [Linux, Berlin] – headlines of the last 24 h

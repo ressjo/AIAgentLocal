@@ -384,6 +384,14 @@
       case "chats_changed":
         if (!$("tab-chats").classList.contains("hidden")) loadChats();
         return;
+      case "routines_changed":
+        if (!$("tab-planner").classList.contains("hidden")) loadRoutines();
+        return;
+      case "routine_done":
+        toast(ev.status === "error" ? L(`Routine „${ev.name}“ fehlgeschlagen`, `Routine “${ev.name}” failed`)
+          : L(`Routine „${ev.name}“ erledigt – im VERLAUF`, `Routine “${ev.name}” done – see HISTORY`));
+        if (!$("tab-planner").classList.contains("hidden")) loadRoutines();
+        return;
     }
     refresh();
   }
@@ -606,12 +614,13 @@
       <button class="toggle-out" title="${L("Ausgabe ein-/ausblenden", "Show/hide output")}">▾</button></span></div>
       <div class="act-args"></div><pre class="act-out"></pre>`;
     el.querySelector(".act-args").textContent = fmtArgs(ev.name, ev.args);
+    if (ev.routine) el.querySelector(".act-name").textContent = `⟳ ${ev.routine} · ${ev.name}`;
     el.querySelector(".toggle-out").onclick = () => el.classList.toggle("open");
     activity.prepend(el);
     acts[ev.id] = el;
     while (activity.children.length > 60) activity.lastChild.remove();
 
-    const a = S.currentMsg && assistants[S.currentMsg];
+    const a = !ev.routine && S.currentMsg && assistants[S.currentMsg];
     if (a) {
       const chip = document.createElement("span");
       chip.className = "tool-chip running";
@@ -647,7 +656,7 @@
     S.confirmListenSent = false;
     $("confirm-summary").textContent = L(`Soll ich ${ev.summary} ausführen?`, `Shall I run ${ev.summary}?`);
     $("confirm-cmd").textContent = ev.name === "run_shell" ? ev.args.command : `${ev.name}(${JSON.stringify(ev.args, null, 2)})`;
-    $("confirm-reason").textContent = ev.reason ? "Grund: " + ev.reason : "";
+    $("confirm-reason").textContent = ev.reason ? L("Grund: ", "Reason: ") + ev.reason : "";
     $("confirm-voice").textContent = A.micReady ? L("oder sag „Ja“ bzw. „Nein“", "or say “yes” or “no”") : "";
     $("confirm-voice").classList.remove("listening");
     $("confirm").classList.remove("hidden");
@@ -833,8 +842,8 @@
       if (tab.dataset.tab === "chats") loadChats();
       $("tab-memory").classList.toggle("hidden", tab.dataset.tab !== "memory");
       $("tab-voice").classList.toggle("hidden", tab.dataset.tab !== "voice");
-      $("tab-briefing").classList.toggle("hidden", tab.dataset.tab !== "briefing");
-      if (tab.dataset.tab === "briefing") loadBriefing();
+      $("tab-planner").classList.toggle("hidden", tab.dataset.tab !== "planner");
+      if (tab.dataset.tab === "planner") loadPlanner();
       if (tab.dataset.tab === "memory") loadMemory();
       if (tab.dataset.tab === "voice") loadVoices();
     };
@@ -1171,6 +1180,118 @@
   }
 
   // ---------------------------------------------------------------- REST
+  // ---------------------------------------------------------------- Planer: Routinen
+  const DAYS = L("Mo Di Mi Do Fr Sa So", "Mo Tu We Th Fr Sa Su").split(" ");
+  const R = { items: [], edit: null, days: new Set() };
+
+  function loadPlanner() {
+    loadRoutines();
+    loadReminders();
+    if ($("brief-box").open) loadBriefing();
+  }
+  $("brief-box").addEventListener("toggle", () => { if ($("brief-box").open) loadBriefing(); });
+
+  function renderDayChips() {
+    const box = $("rt-days");
+    box.innerHTML = "";
+    DAYS.forEach((d, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "rt-day" + (R.days.has(i) ? " on" : "");
+      b.textContent = d;
+      b.onclick = () => { R.days.has(i) ? R.days.delete(i) : R.days.add(i); renderDayChips(); };
+      box.appendChild(b);
+    });
+    const hint = document.createElement("span");
+    hint.className = "rt-day-hint";
+    hint.textContent = R.days.size ? "" : L("täglich", "daily");
+    box.appendChild(hint);
+  }
+
+  function openRoutineForm(r) {
+    R.edit = r ? r.id : null;
+    R.days = new Set(r ? r.days : []);
+    $("rt-name").value = r ? r.name : "";
+    $("rt-task").value = r ? r.task : "";
+    $("rt-time").value = r ? r.time : "08:00";
+    $("rt-date").value = r ? r.date : "";
+    $("rt-error").textContent = "";
+    renderDayChips();
+    $("rt-form").classList.remove("hidden");
+    $("rt-new").classList.add("hidden");
+    $("rt-task").focus();
+  }
+
+  function closeRoutineForm() {
+    R.edit = null;
+    $("rt-form").classList.add("hidden");
+    $("rt-new").classList.remove("hidden");
+  }
+
+  async function loadRoutines() {
+    try { R.items = await getJSON("/api/routines"); } catch { return; }
+    const ul = $("rt-list");
+    ul.innerHTML = "";
+    if (!R.items.length) {
+      ul.innerHTML = `<li class="empty">${L("Noch keine Routinen – z. B. „Werktags um 8 Linux-News suchen“.",
+                                             "No routines yet – e.g. “Search Linux news on weekdays at 8”.")}</li>`;
+      return;
+    }
+    for (const r of R.items) {
+      const li = document.createElement("li");
+      li.className = "rt-item" + (r.enabled ? "" : " off");
+      const status = r.last_status || "none";
+      li.innerHTML = `<input type="checkbox" ${r.enabled ? "checked" : ""} title="${L("aktiv / pausiert", "active / paused")}">
+        <div class="rt-main"><div class="rt-name"><span class="rt-dot ${status}"></span><span class="n"></span></div>
+          <div class="rt-meta"></div></div>
+        <button class="ghost" data-a="run" title="${L("jetzt ausführen", "run now")}">▶</button>
+        <button class="ghost" data-a="edit" title="${L("bearbeiten", "edit")}">✎</button>
+        <button class="ghost" data-a="del" title="${L("löschen", "delete")}">✕</button>`;
+      li.querySelector(".n").textContent = r.name;
+      // „morgen 08:00“ → „morgen“, wenn die Uhrzeit ohnehin im Zeitplan steht
+      const nextShort = r.next.endsWith(" " + r.time) ? r.next.slice(0, -r.time.length - 1) : r.next;
+      const next = r.enabled && r.next !== "–" ? ` · ${nextShort}` : r.enabled ? "" : ` · ${L("pausiert", "paused")}`;
+      li.querySelector(".rt-meta").textContent = r.schedule + next;
+      li.querySelector(".rt-meta").title = r.enabled && r.next !== "–" ? `${L("nächste Ausführung", "next run")}: ${r.next}` : "";
+      li.querySelector(".rt-main").title = r.task + (r.last_summary ? "\n\n" + L("Zuletzt: ", "Last: ") + r.last_summary : "");
+      li.querySelector(".rt-main").onclick = () => {
+        if (!r.chat_id) { toast(L("Noch kein Ergebnis – ▶ startet die Routine jetzt.", "No result yet – ▶ runs it now.")); return; }
+        api("POST", `/api/chats/${r.chat_id}/activate`).catch(() => {});
+      };
+      li.querySelector("input").onchange = (e) => api("PUT", `/api/routines/${r.id}`, { enabled: e.target.checked })
+        .then(loadRoutines).catch(() => toast(L("Speichern fehlgeschlagen", "Saving failed")));
+      li.querySelectorAll("button").forEach((b) => b.onclick = async () => {
+        if (b.dataset.a === "edit") return openRoutineForm(r);
+        if (b.dataset.a === "del") {
+          if (!confirm(L(`Routine „${r.name}“ löschen? Ihr Chat bleibt im Verlauf.`, `Delete routine “${r.name}”? Its chat stays in the history.`))) return;
+          await api("DELETE", `/api/routines/${r.id}`).catch(() => {});
+        } else {
+          await api("POST", `/api/routines/${r.id}/run`).catch(() => {});
+          toast(L(`Routine „${r.name}“ startet …`, `Starting routine “${r.name}” …`));
+        }
+        loadRoutines();
+      });
+      ul.appendChild(li);
+    }
+  }
+
+  $("rt-new").onclick = () => openRoutineForm(null);
+  $("rt-cancel").onclick = closeRoutineForm;
+  $("rt-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const body = { name: $("rt-name").value.trim(), task: $("rt-task").value.trim(), time: $("rt-time").value,
+                   days: [...R.days].sort(), date: $("rt-date").value };
+    if (!body.task) { $("rt-error").textContent = L("Bitte eine Aufgabe eintragen.", "Please enter a task."); return; }
+    const r = await fetch(R.edit ? `/api/routines/${R.edit}` : "/api/routines", {
+      method: R.edit ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) {
+      $("rt-error").textContent = (await r.json().catch(() => ({}))).detail || L("Speichern fehlgeschlagen", "Saving failed");
+      return;
+    }
+    closeRoutineForm();
+    loadRoutines();
+  };
+
   // ---------------------------------------------------------------- Briefing-Einstellungen
   const B = { sections: [], settings: null, timer: null };
 
@@ -1452,7 +1573,6 @@
   $("reminder-ok").onclick = () => $("reminder-banner").classList.add("hidden");
 
   async function loadMemory() {
-    loadReminders();
     try {
       const [facts, days] = await Promise.all([getJSON("/api/memory/facts"), getJSON("/api/memory/days")]);
       $("facts").innerHTML = facts.length

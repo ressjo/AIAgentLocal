@@ -62,6 +62,10 @@ Behaviour:
 
 HINTS = {
     "de": {
+        "routines": "- Wiederkehrende oder zeitgesteuerte Aufgaben („jeden Morgen um 8 …“, „werktags um 17 Uhr …“, "
+                    "„am Freitag um 9 einmal …“) legst du mit routine_create an – die Aufgabe als klaren Auftrag "
+                    "formulieren. Eine einmalige Erinnerung ohne Aufgabe ist dagegen set_reminder. Ansehen/ändern/"
+                    "löschen/sofort starten: routine_list, routine_update, routine_delete, routine_run_now.\n",
         "calendar": "- Du hast Zugriff auf den Kalender des Nutzers: Termine abfragen mit calendar_events, freie Zeit mit "
                     "calendar_free, neue Termine mit calendar_add (Datum/Uhrzeit anhand des heutigen Datums als "
                     "YYYY-MM-DD HH:MM angeben), ändern mit calendar_update, löschen mit calendar_delete.\n",
@@ -94,6 +98,10 @@ HINTS = {
                          "Nutze die entity_id aus ha_find.\n",
     },
     "en": {
+        "routines": "- Recurring or scheduled tasks (“every morning at 8 …”, “weekdays at 5 pm …”, “once on Friday "
+                    "at 9 …”) are created with routine_create – phrase the task as a clear instruction. A plain "
+                    "reminder without a task is set_reminder. View/change/delete/run now: routine_list, "
+                    "routine_update, routine_delete, routine_run_now.\n",
         "calendar": "- You have access to the user's calendar: list events with calendar_events, free time with "
                     "calendar_free, new events with calendar_add (give date/time as YYYY-MM-DD HH:MM based on today's "
                     "date), change with calendar_update, delete with calendar_delete.\n",
@@ -143,6 +151,11 @@ TEXTS = {
         "repeat_skipped": "Dieser Aufruf wurde mit denselben Argumenten bereits ausgeführt – das Ergebnis steht oben. "
                           "Nicht wiederholen, sondern mit dem vorhandenen Ergebnis antworten.",
         "no_nas": "keins konfiguriert",
+        "routine_prompt": "(Geplante Routine „{name}“, gestartet {when}. Der Nutzer sitzt vermutlich nicht vor dem "
+                          "Bildschirm: Erledige die Aufgabe selbstständig und antworte am Ende mit einer kurzen, "
+                          "übersichtlichen Zusammenfassung des Ergebnisses. Aktionen, die eine Bestätigung brauchen, "
+                          "werden ggf. abgelehnt – dann nenne kurz, was noch zu tun wäre.)\n\nAufgabe: {task}",
+        "routine_confirm": "Routine „{name}“: {reason}",
         "tainted_confirm": "Nach dem Lesen einer E-Mail – Schutz vor versteckten Anweisungen in Mails. Nur erlauben, "
                            "wenn du diese Aktion selbst verlangt hast.",
     },
@@ -154,6 +167,11 @@ TEXTS = {
         "repeat_skipped": "This call was already made with the same arguments – the result is above. Don't repeat "
                           "it; answer with the existing result.",
         "no_nas": "none configured",
+        "routine_prompt": "(Scheduled routine “{name}”, started {when}. The user is probably not at the screen: do "
+                          "the task on your own and finish with a short, clear summary of the result. Actions that "
+                          "need confirmation may be declined – then briefly say what would still be needed.)\n\n"
+                          "Task: {task}",
+        "routine_confirm": "Routine “{name}”: {reason}",
         "tainted_confirm": "After reading an e-mail – protection against hidden instructions in e-mails. Only allow "
                            "it if you asked for this action yourself.",
     },
@@ -184,7 +202,7 @@ def base_prompt(cfg, **values) -> str:
 
 def hints(cfg) -> str:
     h = HINTS[lang_of(cfg)]
-    out = ""
+    out = h["routines"]
     if cfg.calendar.enabled:
         out += h["calendar"]
     ha = getattr(cfg, "homeassistant", None)
@@ -215,6 +233,8 @@ SPOKEN = {
         "reminder": "Erinnerung: {text}",
         "timer": "Der Timer ist abgelaufen: {text}",
         "missed": "Verpasste {kind} von {time} Uhr: {text}",
+        "routine_cancelled": "Die Routine wurde abgebrochen.",
+        "routine_done": "Routine erledigt – Ergebnis im Verlauf.",
         "kind_timer": "Timer", "kind_reminder": "Erinnerung",
         "call_shell": "den Befehl {v}", "call_install": "die Installation von {v}",
         "call_remove": "das Entfernen von {v}", "call_update": "ein vollständiges Systemupdate",
@@ -230,6 +250,8 @@ SPOKEN = {
         "reminder": "Reminder: {text}",
         "timer": "Your timer is up: {text}",
         "missed": "Missed {kind} from {time}: {text}",
+        "routine_cancelled": "The routine was cancelled.",
+        "routine_done": "Routine finished – see the history.",
         "kind_timer": "timer", "kind_reminder": "reminder",
         "call_shell": "the command {v}", "call_install": "the installation of {v}",
         "call_remove": "the removal of {v}", "call_update": "a full system update",

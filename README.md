@@ -40,6 +40,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Apps & web** | Start installed applications, open websites (with your own shortcuts), web search (official **Brave Search API**, your own SearXNG, or scraping via ddgs), read web pages |
 | **Shell** | Any bash command – read-only ones run directly, changing ones only after confirmation, destructive ones never |
 | **Everyday** | Weather (Open-Meteo), reminders and timers, a **morning briefing** with the items you choose (incl. news and your Paperless inbox) |
+| **Routines** | Tasks Orbwise does on its own at set times – "every weekday at 8, search Linux news" – each with its own chat |
 | **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation) |
 | **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation) |
@@ -390,10 +391,30 @@ weather:
 Reminders and timers are announced by voice, with a banner and chime in the UI and a desktop notification (even
 when the UI is closed); missed reminders are reported at the next start.
 
+### Routines
+
+Routines are tasks Orbwise carries out on its own at a set time – daily, on chosen weekdays or once:
+
+- "Every weekday at 8, search the most important Linux news and summarise them."
+- "On Saturdays at 9, tell me the weather for the weekend and what's in my calendar."
+- "Tomorrow at 7 once: check whether system updates are available."
+
+Say it like that (Orbwise asks before creating it) or use **+ ROUTINE** in the **PLANNER** tab: name, task, time,
+weekdays (none = daily) or a date for a one-off run. The list shows the schedule and the next run; ▶ runs a routine
+now, ✎ edits, ✕ deletes, the checkbox pauses it. A coloured dot shows the last result.
+
+Every routine writes into **its own chat** ("⟳ Linux news" in HISTORY) – your current chat is never touched, and you
+can ask follow-up questions right there. When a run finishes you get a short notice in the dashboard and a desktop
+notification. If a routine wants to do something that needs confirmation, the normal dialog appears when the
+dashboard is open; otherwise the action is declined and the routine says what would still be needed.
+
+Routines run while Orbwise is running (autostart). A run that was missed because the PC was off is caught up only
+if it is at most an hour late. The PLANNER tab also lists your reminders and holds the briefing settings.
+
 ### Morning briefing
 
 "Good morning", "briefing" or "what's on today?" gives you a short overview. Choose its items and their order in
-the **BRIEFING** tab of the dashboard (tick, ▲▼, **PREVIEW**) or in the config – dashboard changes take precedence
+the **PLANNER** tab of the dashboard under **BRIEFING CONTENT** (tick, ▲▼, **PREVIEW**) or in the config – dashboard changes take precedence
 until you click **RESET**:
 
 ```yaml

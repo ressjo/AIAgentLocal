@@ -77,11 +77,12 @@ class ChatStore:
         chat_id = self.active_id()
         return self.open(chat_id) if chat_id else self.create()
 
-    def create(self) -> Conversation:
+    def create(self, activate: bool = True) -> Conversation:
         chat_id = new_id()
         conv = Conversation(self.path(chat_id), chat_id)
         conv.save()
-        self.active_file.write_text(chat_id, encoding="utf-8")
+        if activate:
+            self.active_file.write_text(chat_id, encoding="utf-8")
         return conv
 
     def set_active(self, chat_id: str) -> Conversation:

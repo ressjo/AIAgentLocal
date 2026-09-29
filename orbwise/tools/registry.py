@@ -168,6 +168,7 @@ def load_all_tools() -> dict[str, ToolSpec]:
         paperless,
         power,
         reminder_tools,
+        routine_tools,
         shell,
         sysadmin,
         system,

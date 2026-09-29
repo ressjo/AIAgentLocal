@@ -184,6 +184,16 @@ class Agent:
             finally:
                 self._think = None
 
+    async def run_in_chat(self, chat_id: str, title: str, text: str, emit: Emit, confirm: Confirm) -> tuple[str, str]:
+        """Für Routinen: Aufgabe in einem eigenen Chat erledigen – der aktive Chat des Nutzers bleibt unberührt.
+        Liefert (Antwort, Chat-ID)."""
+        async with self.lock:
+            self._think = None
+            self._tainted = False
+            with self.memory.in_chat(chat_id, title) as conv:
+                answer = await self._run(text, emit, confirm)
+                return answer, conv.chat_id
+
     async def _run(self, user_text: str, emit: Emit, confirm: Confirm) -> str:
         conv = self.memory.conversation
         start_len = len(conv.history)

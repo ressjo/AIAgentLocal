@@ -98,7 +98,7 @@
         <button class="tab" data-tab="chats">VERLAUF</button>
         <button class="tab" data-tab="memory">GEDÄCHTNIS</button>
         <button class="tab" data-tab="voice">STIMME</button>
-        <button class="tab" data-tab="briefing">BRIEFING</button>
+        <button class="tab" data-tab="planner">PLANER</button>
       </div>
       <div class="tab-body" id="tab-activity">
         <div class="activity" id="activity">
@@ -129,12 +129,35 @@
           <ul class="voices" id="voices"></ul>
         </div>
       </div>
-      <div class="tab-body hidden" id="tab-briefing">
+      <div class="tab-body hidden" id="tab-planner">
         <div class="mem-section">
-          <div class="mem-title">PUNKTE &amp; REIHENFOLGE</div>
-          <ul class="brief-list" id="brief-list"></ul>
+          <div class="plan-head"><span class="mem-title">ROUTINEN</span>
+            <button class="ghost small" id="rt-new" title="Neue Routine anlegen">+ ROUTINE</button></div>
+          <form class="rt-form hidden" id="rt-form" autocomplete="off">
+            <input type="text" id="rt-name" maxlength="60" placeholder="Name, z. B. Linux-News">
+            <textarea id="rt-task" rows="2" placeholder="Aufgabe, z. B. Suche die wichtigsten Linux-News von heute und fasse sie zusammen."></textarea>
+            <div class="rt-when">
+              <input type="time" id="rt-time" value="08:00" aria-label="Uhrzeit">
+              <div class="rt-days" id="rt-days"></div>
+            </div>
+            <label class="rt-once">nur einmal am <input type="date" id="rt-date"></label>
+            <div class="rt-actions">
+              <button class="ghost small" type="submit" id="rt-save">SPEICHERN</button>
+              <button class="ghost small" type="button" id="rt-cancel">ABBRECHEN</button>
+              <span class="rt-error" id="rt-error"></span>
+            </div>
+          </form>
+          <ul class="rt-list" id="rt-list"></ul>
         </div>
-        <div class="mem-section brief-fields">
+        <div class="mem-section">
+          <div class="mem-title">ERINNERUNGEN</div>
+          <ul class="reminders" id="reminders"></ul>
+        </div>
+        <details class="mem-section brief-box" id="brief-box">
+          <summary class="mem-title">BRIEFING-INHALT</summary>
+          <div class="mem-title brief-sub">PUNKTE &amp; REIHENFOLGE</div>
+          <ul class="brief-list" id="brief-list"></ul>
+        <div class="brief-fields">
           <label>Vorausschau für Termine und Erinnerungen (Tage)
             <input type="number" id="brief-days" min="0" max="14"></label>
           <label>Nachrichten-Themen (mit Komma getrennt)
@@ -152,12 +175,9 @@
           <span class="brief-status" id="brief-status"></span>
         </div>
         <pre class="brief-out hidden" id="brief-out"></pre>
+        </details>
       </div>
       <div class="tab-body hidden" id="tab-memory">
-        <div class="mem-section">
-          <div class="mem-title">ERINNERUNGEN</div>
-          <ul class="reminders" id="reminders"></ul>
-        </div>
         <div class="mem-section">
           <div class="mem-title">FAKTEN</div>
           <ul class="facts" id="facts"></ul>

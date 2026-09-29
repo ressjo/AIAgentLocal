@@ -37,10 +37,13 @@ First public release.
 - Files & apps: find and open files (also on a NAS), read/write text files, launch applications, websites.
 - Web search (Brave Search API, your own SearXNG or ddgs) and page fetching, weather (Open-Meteo), reminders
   and timers, a morning briefing with selectable items and order (weather, events and deadlines of the next
-  days, Paperless inbox, news, updates, storage) – configurable in the config or the dashboard's BRIEFING tab.
+  days, Paperless inbox, news, updates, storage) – configurable in the config or the dashboard's PLANNER tab.
 - Integrations: **Home Assistant**, **Paperless-ngx** (search, ask, open documents; suggest and apply
   correspondent, type, tags, title and date – also for many documents at once, after one confirmation),
   **Obsidian** vaults, **Trilium** notes and a **CalDAV/iCloud** calendar.
+- **Routines**: tasks run automatically at set times (daily, weekdays or once), e.g. a web search every morning –
+  created by voice or in the new **PLANNER** tab (which also holds reminders and the briefing settings); each
+  routine writes into its own chat, confirmations are asked in the dashboard or declined when nobody is there.
 - **E-mail** via IMAP – **Proton Mail through the Proton Mail Bridge** or any other mailbox: list unread mails,
   search, read (without marking as read), ask about a mail, archive/move/label/trash and PDF attachments to
   Paperless after confirmation, unread mails in the briefing. Mail content is passed to the model as untrusted

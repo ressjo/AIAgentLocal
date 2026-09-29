@@ -26,6 +26,7 @@ from .llm_router import LLMRouter
 from .memory import Memory
 from .memory.files import valid_day
 from .reminders import ReminderStore
+from .routines import RoutineStore
 from .tools import briefing, proc
 from .tools.calendar_tools import calendar_status
 from .tools.registry import ToolContext
@@ -192,6 +193,9 @@ def create_app(cfg: Config) -> FastAPI:
     agent = Agent(cfg, llm, memory)
     reminders = ReminderStore(cfg.memory.dir.parent / "reminders.json")
     agent.services["reminders"] = reminders
+    routines = RoutineStore(cfg.memory.dir.parent / "routines.json")
+    routines.reset_running()
+    agent.services["routines"] = routines
 
     stt = wake = tts = None
     if cfg.voice.enabled:
@@ -222,6 +226,7 @@ def create_app(cfg: Config) -> FastAPI:
         background.append(asyncio.create_task(summary_loop()))
         background.append(asyncio.create_task(metrics_loop()))
         background.append(asyncio.create_task(reminder_loop()))
+        background.append(asyncio.create_task(routine_loop()))
         if stt and env("SKIP_WARMUP") != "1":
             background.append(asyncio.create_task(asyncio.to_thread(stt.warmup)))
         yield
@@ -272,6 +277,72 @@ def create_app(cfg: Config) -> FastAPI:
             except Exception as e:  # noqa: BLE001
                 log.warning("Erinnerung fehlgeschlagen: %s", e)
             await asyncio.sleep(1)
+
+    # ---------- Routinen ----------
+    def start_routine(rid: str) -> bool:
+        """Startet eine Routine im Hintergrund (sie wartet ggf., bis eine laufende Anfrage fertig ist)."""
+        r = routines.get(rid)
+        if r is None or r.last_status == "running":
+            return False
+        routines.mark_started(rid, datetime.now())
+        task = asyncio.create_task(run_routine(rid))
+        hub.tasks.add(task)  # STOP bricht auch eine laufende Routine ab
+        task.add_done_callback(hub.tasks.discard)
+        return True
+
+    agent.services["start_routine"] = start_routine
+
+    async def run_routine(rid: str) -> None:
+        r = routines.get(rid)
+        if r is None:
+            return
+        denied: list[str] = []
+        await hub.broadcast({"type": "routines_changed"})
+
+        async def emit(ev: dict) -> None:
+            # Nicht in den offenen Chat streamen und nicht vorlesen – nur Aktivität und Orb-Zustand zeigen
+            if ev.get("type") in ("tool_call", "tool_result", "tool_output", "state"):
+                await hub.broadcast({**ev, "routine": r.name})
+
+        async def confirm(call_id: str, name: str, args: dict, reason: str) -> bool:
+            ok = bool(hub.clients) and await hub.confirm(
+                call_id, name, args, prompts.text(cfg, "routine_confirm").format(name=r.name, reason=reason or name))
+            if not ok:
+                denied.append(name)
+            return ok
+
+        now = datetime.now()
+        when = now.strftime("%d.%m.%Y %H:%M") if cfg.language != "en" else now.strftime("%Y-%m-%d %H:%M")
+        text = prompts.text(cfg, "routine_prompt").format(name=r.name, when=when, task=r.task)
+        status, answer, chat_id = "ok", "", r.chat_id
+        try:
+            answer, chat_id = await agent.run_in_chat(r.chat_id, f"⟳ {r.name}", text, emit, confirm)
+            status = "denied" if denied else "ok"
+        except asyncio.CancelledError:
+            status, answer = "error", prompts.spoken(cfg, "routine_cancelled")
+        except Exception as e:  # noqa: BLE001
+            log.exception("Routine %s fehlgeschlagen", r.name)
+            status, answer = "error", str(e)
+        summary = " ".join(answer.split())[:300]
+        routines.set_result(rid, status, summary, chat_id)
+        await hub.broadcast({"type": "routine_done", "id": rid, "name": r.name, "chat_id": chat_id,
+                             "status": status, "summary": summary})
+        await hub.broadcast({"type": "chats_changed"})
+        if not agent.lock.locked():
+            await hub.broadcast({"type": "state", "state": "idle"})
+        if shutil.which("notify-send"):
+            await proc.launch(["notify-send", "--app-name=Orbwise", f"Orbwise – {r.name}",
+                               summary[:200] or prompts.spoken(cfg, "routine_done")], wait=1)
+
+    async def routine_loop() -> None:
+        await asyncio.sleep(3)
+        while True:
+            try:
+                for r in routines.due(datetime.now()):
+                    start_routine(r.id)
+            except Exception as e:  # noqa: BLE001
+                log.warning("Routinen-Planer: %s", e)
+            await asyncio.sleep(20)
 
     async def metrics_loop() -> None:
         while True:
@@ -538,6 +609,52 @@ def create_app(cfg: Config) -> FastAPI:
             await chat_switched()
         await hub.broadcast({"type": "chats_changed"})
         return {"ok": True, "days": days}
+
+    def routine_json(r) -> dict:
+        return routines.to_dict(r, datetime.now(), cfg.language == "en")
+
+    async def routine_body(request: Request) -> dict:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "JSON-Objekt erwartet")
+        return body
+
+    @app.get("/api/routines")
+    async def routines_list():
+        return [routine_json(r) for r in routines.items]
+
+    @app.post("/api/routines")
+    async def routines_add(request: Request):
+        b = await routine_body(request)
+        try:
+            r = routines.add(str(b.get("name", "")), str(b.get("task", "")), str(b.get("time", "")),
+                             b.get("days") or [], str(b.get("date") or ""))
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, str(e)) from e
+        return routine_json(r)
+
+    @app.put("/api/routines/{rid}")
+    async def routines_update(rid: str, request: Request):
+        b = await routine_body(request)
+        try:
+            r = routines.update(rid, **{k: b[k] for k in ("name", "task", "time", "days", "date", "enabled") if k in b})
+        except KeyError as e:
+            raise HTTPException(404, "Unbekannte Routine") from e
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, str(e)) from e
+        return routine_json(r)
+
+    @app.delete("/api/routines/{rid}")
+    async def routines_delete(rid: str):
+        if not routines.delete(rid):
+            raise HTTPException(404, "Unbekannte Routine")
+        return {"ok": True}
+
+    @app.post("/api/routines/{rid}/run")
+    async def routines_run(rid: str):
+        if routines.get(rid) is None:
+            raise HTTPException(404, "Unbekannte Routine")
+        return {"ok": start_routine(rid)}
 
     @app.get("/api/briefing")
     async def briefing_get():
