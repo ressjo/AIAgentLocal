@@ -470,6 +470,11 @@ confirmation come with **✅ Run / ❌ Deny** buttons; sending e-mail is only po
 Tip: tell Orbwise once when you start work ("I start work at 8") – it remembers that for "at work" reminders.
 Messages pass through Telegram's servers (not end-to-end encrypted), so keep that in mind for sensitive content.
 
+**No reply to `/start`?** Run `orbwise doctor` – it checks the token live and whether a webhook is set. Orbwise
+logs "Telegram-Bot @name aktiv" at startup, and problems also appear as a notice in the dashboard. Typical causes:
+Orbwise was not restarted after editing the config (`systemctl --user restart orbwise`), the token is wrong, or a
+second Orbwise instance (service + terminal) is fetching the bot's messages at the same time.
+
 ### Morning briefing
 
 "Good morning", "briefing" or "what's on today?" gives you a short overview. Choose its items and their order in

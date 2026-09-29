@@ -31,6 +31,21 @@ MAX_TEXT = 4000          # Telegram erlaubt 4096 Zeichen je Nachricht
 CONFIRM_TIMEOUT = 300    # so lange wartet eine Rückfrage auf den Knopf
 CHAT_TITLE = "📱 Telegram"
 
+def explain(error: str) -> str:
+    """Telegram-Fehler in einen konkreten Hinweis übersetzen."""
+    low = error.lower()
+    if "unauthorized" in low or "401" in low or "not found" in low or "404" in low:
+        return "Token ungültig – bei @BotFather mit /token prüfen und telegram.token neu eintragen."
+    if "conflict" in low or "409" in low:
+        if "webhook" in low:
+            return "Für den Bot ist ein Webhook gesetzt – Orbwise entfernt ihn beim Start automatisch."
+        return ("Ein anderes Programm holt gerade Nachrichten für diesen Bot ab (z. B. ein zweites Orbwise, "
+                "systemd-Dienst + Terminal) – nur eines laufen lassen.")
+    if "connect" in low or "timeout" in low or "name resolution" in low or "network" in low:
+        return "api.telegram.org nicht erreichbar – Internetverbindung/Proxy/Firewall prüfen."
+    return error
+
+
 Runner = Callable[[str, Callable[[dict], Awaitable[None]], Callable[..., Awaitable[Any]]], Awaitable[str]]
 
 
@@ -72,6 +87,8 @@ class TelegramBot:
         self.pending: dict[str, asyncio.Future] = {}
         self.queue: asyncio.Queue[tuple[str, int]] = asyncio.Queue()
         self.en = getattr(cfg, "language", "de") == "en"
+        # für /api/status und die Oberfläche: läuft der Bot, wie heißt er, was ist das letzte Problem?
+        self.status: dict[str, Any] = {"running": False, "bot": "", "error": "", "chat_id": self.t.chat_id}
 
     def L(self, de: str, en: str) -> str:
         return en if self.en else de
@@ -79,7 +96,10 @@ class TelegramBot:
     # ---------- Telegram-API ----------
     async def call(self, method: str, **params) -> Any:
         r = await self.client.post(method, json=params)
-        data = r.json()
+        try:
+            data = r.json()
+        except ValueError:
+            raise RuntimeError(f"Telegram {method}: HTTP {r.status_code}") from None
         if not data.get("ok"):
             raise RuntimeError(f"Telegram {method}: {data.get('description', r.status_code)}")
         return data.get("result")
@@ -113,23 +133,43 @@ class TelegramBot:
                 log.exception("Telegram-Update fehlgeschlagen")
         return len(updates or [])
 
+    async def check(self) -> None:
+        """Beim Start: Token prüfen (getMe) und einen evtl. gesetzten Webhook entfernen – sonst liefert Telegram
+        keine Nachrichten per getUpdates (Fehler „Conflict“)."""
+        me = await self.call("getMe")
+        self.status["bot"] = "@" + str(me.get("username", ""))
+        await self.call("deleteWebhook", drop_pending_updates=False)
+        if self.t.chat_id:
+            log.warning("Telegram-Bot %s aktiv – bedient Chat %s", self.status["bot"], self.t.chat_id)
+        else:
+            log.warning("Telegram-Bot %s aktiv, aber noch ohne telegram.chat_id – schreib ihm „/start“, "
+                        "er nennt dir deine Chat-ID", self.status["bot"])
+
     async def serve(self) -> None:
-        """Hauptschleife: Nachrichten abholen, Anfragen der Reihe nach bearbeiten."""
+        """Hauptschleife: Nachrichten abholen, Anfragen der Reihe nach bearbeiten. Fehler werden gemeldet und
+        wiederholt – die Schleife endet nie still."""
         worker = asyncio.create_task(self._worker())
         loop = asyncio.get_running_loop()
-        backoff = 2
+        backoff, checked = 2, False
         try:
             while True:
                 try:
+                    if not checked:
+                        await self.check()
+                        checked = True
                     started = loop.time()
                     got = await self.poll_once()
                     backoff = 2
+                    self.status.update(running=True, error="")
                     # Antwortet der Server sofort ohne Neuigkeiten (kein echtes Long Polling), nicht im Kreis rasen
                     await asyncio.sleep(0.3 if not got and loop.time() - started < 1 else 0)
                 except asyncio.CancelledError:
                     raise
-                except (httpx.HTTPError, RuntimeError, ValueError) as e:
-                    log.warning("Telegram nicht erreichbar (%s) – neuer Versuch in %s s", e, backoff)
+                except Exception as e:  # noqa: BLE001
+                    hint = explain(str(e) or type(e).__name__)
+                    if hint != self.status.get("error"):
+                        log.warning("Telegram-Bot: %s (%s) – neuer Versuch in %s s", hint, e, backoff)
+                    self.status.update(running=False, error=hint)
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 120)
         finally:

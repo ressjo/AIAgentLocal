@@ -1729,6 +1729,9 @@
       const vCls = v.stt && v.tts ? "ok" : v.stt || v.tts ? "warn" : "bad";
       setPill("pill-voice", vCls, [v.stt ? "STT" : null, v.tts ? "TTS" : "TTS(Browser)", v.wake ? "WAKE" : null].filter(Boolean).join(" · "));
       setPill("pill-mem", "ok", `${st.memory.days} ${L("Tage", "days")} · ${st.memory.facts} ${L("Fakten", "facts")}`);
+      const tg = st.telegram || {};
+      if (tg.error && tg.error !== S.telegramError) toast("Telegram: " + tg.error);  // jedes Problem einmal melden
+      S.telegramError = tg.error || "";
       return st;
     } catch {
       setPill("pill-llm", "bad", "?");

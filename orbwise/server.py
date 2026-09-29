@@ -523,6 +523,7 @@ def create_app(cfg: Config) -> FastAPI:
             "trilium": await trilium_status(cfg),
             "calendar": await calendar_status(cfg),
             "busy": agent.lock.locked(),
+            "telegram": telegram_bot.status if telegram_bot is not None else {"running": False, "configured": False},
         }
 
     @app.get("/api/models")

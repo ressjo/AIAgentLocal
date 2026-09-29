@@ -222,8 +222,23 @@ def cmd_doctor(args) -> None:
     from .memory.index import check_file
     line(check_file(cfg.memory.dir / "index.sqlite"), T("Gedächtnis-Suchindex", "Memory search index"), "orbwise reindex")
     if cfg.telegram.secret:
-        line(bool(cfg.telegram.chat_id), "Telegram-Bot", T("dem Bot „/start“ schreiben und telegram.chat_id eintragen",
-                                                           "send the bot “/start” and set telegram.chat_id"))
+        import httpx
+
+        from .telegram import API, explain
+        try:  # echte Verbindung: Token gültig? Webhook gesetzt (blockiert getUpdates)?
+            me = httpx.get(f"{API}/bot{cfg.telegram.secret}/getMe", timeout=10).json()
+            if not me.get("ok"):
+                raise RuntimeError(me.get("description", "Fehler"))
+            hook = httpx.get(f"{API}/bot{cfg.telegram.secret}/getWebhookInfo", timeout=10).json()
+            url = (hook.get("result") or {}).get("url", "")
+            line(True, f"Telegram-Bot @{me['result'].get('username', '?')}")
+            line(not url, T("kein Webhook gesetzt", "no webhook set"),
+                 T("Orbwise entfernt ihn beim nächsten Start", "Orbwise removes it on the next start"))
+        except (httpx.HTTPError, RuntimeError, ValueError) as e:
+            line(False, "Telegram-Bot", explain(str(e)))
+        line(bool(cfg.telegram.chat_id), "Telegram chat_id",
+             T("Orbwise starten, dem Bot „/start“ schreiben und telegram.chat_id eintragen",
+               "start Orbwise, send the bot “/start” and set telegram.chat_id"))
 
 
 def cmd_reindex(args) -> None:

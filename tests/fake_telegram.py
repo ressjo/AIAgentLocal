@@ -50,6 +50,11 @@ class FakeTelegram:
         body = json.loads(request.content or b"{}")
         if f"/bot{TOKEN}/" not in path:
             return httpx.Response(401, json={"ok": False, "description": "Unauthorized"})
+        if method == "getMe":
+            return httpx.Response(200, json={"ok": True, "result": {"id": 1, "is_bot": True, "username": "orbwise_test_bot"}})
+        if method == "deleteWebhook":
+            self.webhook_deleted = True
+            return httpx.Response(200, json={"ok": True, "result": True})
         if method == "getUpdates":
             offset = body.get("offset", 0)
             ups = [u for u in self.updates if u["update_id"] >= offset]

@@ -144,3 +144,31 @@ def test_server_telegram_chat_confirm_and_reminder(cfg, tg, tmp_path, monkeypatc
         # Erinnerung → kommt aufs Handy
         tg.user_message(ME, '/tool set_reminder {"text": "Tee holen", "in_minutes": 0.02}')
         until(lambda: any(t.startswith("⏰") and "Tee holen" in t for t in tg.texts()), timeout=10)
+
+
+def test_startup_check_and_errors_are_reported(cfg, tg, monkeypatch):
+    from orbwise import telegram
+
+    async def scenario():
+        bot = make_bot(cfg, tg, None)
+        await bot.check()
+        return bot
+
+    bot = run(scenario())
+    assert bot.status["bot"] == "@orbwise_test_bot" and tg.webhook_deleted
+    assert "Token ungültig" in telegram.explain("Telegram getMe: Unauthorized")
+    assert "anderes Programm" in telegram.explain("Conflict: terminated by other getUpdates request")
+    assert "nicht erreichbar" in telegram.explain("ConnectError: [Errno -3] Temporary failure in name resolution")
+
+    # falscher Token: der Bot läuft weiter, meldet den Fehler im Status statt still zu sterben
+    cfg.telegram.token = "999:FALSCH"
+
+    async def broken():
+        bad = TelegramBot(cfg, None, lambda n, a: n, lambda n: False, transport=tg.transport, poll_timeout=0)
+        task = asyncio.create_task(bad.serve())
+        await wait_for(lambda: bad.status["error"])
+        task.cancel()
+        return bad.status
+
+    status = run(broken())
+    assert not status["running"] and "Token ungültig" in status["error"]
