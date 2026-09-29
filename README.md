@@ -183,7 +183,9 @@ everything from the other chats.
 ## Models & profiles
 
 **Adding models after installation:** click the **LLM pill** at the top → **+ ADD MODEL** and pick one of the
-presets (with the same fit marks and download progress), or run
+presets (with the same fit marks and download progress; a running download can be cancelled there with
+**✕ CANCEL**). Models added this way – including Bonsai – can be deleted in the same menu with 🗑, which also removes
+their files (the active model and models from `config.yaml` stay). Or run
 
 ```bash
 orbwise model add              # interactive list of presets for your GPU

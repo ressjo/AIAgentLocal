@@ -469,7 +469,24 @@ def create_app(cfg: Config) -> FastAPI:
             return {"active": "demo", "switching": None,
                     "profiles": [{"name": "demo", "label": "Demo (Fake-LLM)", "backend": "fake", "model": "fake",
                                   "base_url": "", "managed": False, "active": True}]}
-        return {"active": llm.active, "switching": llm.switching, "profiles": llm.describe()}
+        from . import bonsai as bonsai_mod
+        from . import models as mdl
+        sizes: dict[str, int] = {}
+        try:
+            async with httpx.AsyncClient(base_url=cfg.llm.base_url, timeout=2) as client:
+                for m in (await client.get("/api/tags")).json().get("models", []):
+                    sizes[m.get("name", "")] = int(m.get("size") or 0)
+        except (httpx.HTTPError, ValueError):
+            pass
+        profiles = llm.describe()
+        for p in profiles:
+            p["deletable"] = mdl.removable(state_file, p["name"])
+            size = sizes.get(p["model"]) or sizes.get(f"{p['model']}:latest") if p["backend"] == "ollama" else None
+            if p["name"] == bonsai_mod.PROFILE_NAME:
+                size = sum(f.stat().st_size for f in bonsai_mod.model_files())
+            p["size_gb"] = round(size / 1e9, 1) if size else None
+        return {"active": llm.active, "switching": llm.switching, "profiles": profiles,
+                "pulls": [{"tag": t, **pull_state.get(t, {})} for t in sorted(pulls)]}
 
     @app.post("/api/askpass")
     async def askpass_request(request: Request):
@@ -487,6 +504,7 @@ def create_app(cfg: Config) -> FastAPI:
     # ---------- Modelle hinzufügen (Vorauswahl + ollama pull mit Fortschritt) ----------
     state_file = cfg.memory.dir.parent / "state.json"
     pulls: dict[str, asyncio.Task] = {}
+    pull_state: dict[str, dict] = {}  # letzter Fortschritt je Download (für das Modell-Menü)
 
     @app.get("/api/models/presets")
     async def model_presets():
@@ -513,17 +531,23 @@ def create_app(cfg: Config) -> FastAPI:
                         now = time.monotonic()
                         if now - last > 0.5 or ev.get("status") == "success":
                             last = now
-                            await hub.broadcast({"type": "model_pull", "tag": tag, "status": ev.get("status", ""),
-                                                 "completed": ev.get("completed"), "total": ev.get("total")})
+                            pull_state[tag] = {"status": ev.get("status", ""), "completed": ev.get("completed"),
+                                               "total": ev.get("total")}
+                            await hub.broadcast({"type": "model_pull", "tag": tag, **pull_state[tag]})
             name = mdl.register_model(state_file, tag)
             if isinstance(llm, LLMRouter):
                 llm.add_downloaded_models()
             await hub.broadcast({"type": "model_pull", "tag": tag, "done": True, "profile": name})
+        except asyncio.CancelledError:
+            # Stream geschlossen → Ollama bricht ab; Teilstücke bleiben im Ollama-Cache (erneuter Start setzt fort)
+            await hub.broadcast({"type": "model_pull", "tag": tag, "cancelled": True})
+            raise
         except (httpx.HTTPError, LLMError, ValueError) as e:
             text = str(e) if not isinstance(e, httpx.ConnectError) else "Ollama ist nicht erreichbar"
             await hub.broadcast({"type": "model_pull", "tag": tag, "error": text})
         finally:
             pulls.pop(tag, None)
+            pull_state.pop(tag, None)
 
     @app.post("/api/models/pull")
     async def model_pull(request: Request):
@@ -538,6 +562,47 @@ def create_app(cfg: Config) -> FastAPI:
         if tag not in pulls:
             pulls[tag] = asyncio.create_task(pull_model(tag))
         return {"ok": True, "tag": tag}
+
+    @app.delete("/api/models/pull/{tag:path}")
+    async def model_pull_cancel(tag: str):
+        task = pulls.get(tag.lower())
+        if task is None:
+            raise HTTPException(404, "Kein laufender Download")
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        return {"ok": True}
+
+    @app.delete("/api/models/{name}")
+    async def model_delete(name: str):
+        """Per Oberfläche/CLI hinzugefügtes Modell entfernen und seine Dateien löschen (gibt Speicher frei)."""
+        from . import bonsai as bonsai_mod
+        from . import models as mdl
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        if name not in llm.profiles:
+            raise HTTPException(404, "Unbekanntes Modell")
+        if not mdl.removable(state_file, name):
+            raise HTTPException(400, "Dieses Modell ist in der config.yaml eingetragen – dort entfernen.")
+        profile = llm.profiles[name]
+        if name == llm.active or llm.switching:
+            raise HTTPException(409, "Das aktive Modell kann nicht gelöscht werden – erst ein anderes wählen.")
+        if profile.backend == "ollama" and profile.model in pulls:
+            raise HTTPException(409, "Das Modell wird gerade geladen – erst den Download abbrechen.")
+        await llm.remove_profile(name)
+        mdl.unregister_model(state_file, name)
+        freed = 0
+        if name == bonsai_mod.PROFILE_NAME:
+            freed = await asyncio.to_thread(bonsai_mod.remove_model_files)
+        elif profile.backend == "ollama" and not any(
+                p.backend == "ollama" and p.model == profile.model for p in llm.profiles.values()):
+            try:  # nur löschen, wenn kein anderes Profil dasselbe Ollama-Modell nutzt
+                async with httpx.AsyncClient(base_url=cfg.llm.base_url, timeout=30) as client:
+                    await client.request("DELETE", "/api/delete", json={"model": profile.model})
+            except httpx.HTTPError as e:
+                log.warning("Ollama-Modell %s nicht gelöscht: %s", profile.model, e)
+        await hub.broadcast({"type": "models_changed"})
+        return {"ok": True, "freed_gb": round(freed / 1e9, 1)}
 
     @app.post("/api/models/reload")
     async def models_reload():

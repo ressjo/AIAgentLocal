@@ -73,7 +73,9 @@ First public release.
 ### Installation
 - Installer for Arch-based and Debian/Ubuntu-based systems that asks for the language, the GPU (NVIDIA/AMD/CPU,
   pre-selected from detection, ROCm override for RX 6600/6700/7600) and the model from a VRAM-aware preset list.
-- Add models later with `orbwise model add` or **+ ADD MODEL** in the web UI (download progress, fit marks).
+- Add models later with `orbwise model add` or **+ ADD MODEL** in the web UI (download progress, fit marks); running
+  downloads can be cancelled in the model menu, and added models (including Bonsai) can be deleted there with 🗑 –
+  the model files are removed and the freed size is shown.
 - **Bonsai 2 27B** is set up automatically when chosen in the installer or with `orbwise model add bonsai`
   (Bonsai-demo checkout, llama.cpp binaries, model, GPU-specific server profile). On NVIDIA the CUDA runtime
   libraries are fetched automatically when the system has none.

@@ -364,6 +364,10 @@
         S.substate = "";
         loadStatus();
         break;
+      case "models_changed":
+        if (!modelMenu.classList.contains("hidden") && !modelMenu.querySelector(".fit-ok, .fit-tight, .fit-big")) openModelMenu();
+        loadStatus();
+        return;
       case "model_pull":
         modelPullEvent(ev);
         return;
@@ -1145,6 +1149,7 @@
     let data;
     try { data = await getJSON("/api/models"); } catch { toast(L("Modelle nicht ladbar", "Could not load models")); return; }
     modelMenu.innerHTML = `<div class="mm-title">${L("MODELL WÄHLEN", "CHOOSE MODEL")}</div>`;
+    for (const d of data.pulls || []) modelMenu.appendChild(pullRow(d));
     for (const p of data.profiles) {
       const b = document.createElement("button");
       b.className = "model-item" + (p.active ? " active" : "");
@@ -1153,14 +1158,25 @@
       b.querySelector(".mi-name").textContent = p.label;
       b.querySelector(".mi-tag").textContent = p.active ? L("AKTIV", "ACTIVE")
         : p.managed ? L("STARTET SERVER", "STARTS SERVER") : p.backend.toUpperCase();
-      b.querySelector(".mi-sub").textContent = `${p.backend} · ${p.model}`;
+      b.querySelector(".mi-sub").textContent = `${p.backend} · ${p.model}` + (p.size_gb ? ` · ${p.size_gb} GB` : "");
       b.onclick = async () => {
         closeModelMenu();
         if (p.active) return;
         const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/activate`, { method: "POST" });
         if (!r.ok && r.status !== 502) toast(L("Umschalten fehlgeschlagen", "Switching failed"));
       };
-      modelMenu.appendChild(b);
+      if (!p.deletable) { modelMenu.appendChild(b); continue; }
+      const row = document.createElement("div");
+      row.className = "model-row";
+      const del = document.createElement("button");
+      del.className = "model-del";
+      del.textContent = "🗑";
+      del.disabled = p.active || !!data.switching;
+      del.title = p.active ? L("Aktives Modell – erst ein anderes wählen", "Active model – choose another one first")
+        : L("Modell löschen", "Delete model");
+      del.onclick = (e) => { e.stopPropagation(); deleteModel(p); };
+      row.append(b, del);
+      modelMenu.appendChild(row);
     }
     if (data.active !== "demo") {
       const add = document.createElement("button");
@@ -1182,6 +1198,7 @@
       <div class="mm-hint"></div>`;
     modelMenu.querySelector(".mm-hint").textContent = gpuText + " · " +
       L("✔ passt · ~ teils im RAM (langsamer) · ✘ zu groß", "✔ fits · ~ partly in RAM (slower) · ✘ too big");
+    for (const tag of data.pulling) modelMenu.appendChild(pullRow({ tag }));
     const marks = { ok: "✔", tight: "~", big: "✘" };
     for (const p of data.presets) {
       const b = document.createElement("button");
@@ -1220,15 +1237,57 @@
     modelMenu.appendChild(back);
   }
 
+  async function deleteModel(p) {
+    const size = p.size_gb ? L(` Gibt ~${p.size_gb} GB frei.`, ` Frees ~${p.size_gb} GB.`) : "";
+    if (!confirm(L(`${p.label} löschen? Die Modelldateien werden entfernt.`, `Delete ${p.label}? The model files are removed.`) + size)) return;
+    try {
+      await api("DELETE", `/api/models/${encodeURIComponent(p.name)}`);
+      toast(L(`✔ ${p.label} gelöscht`, `✔ ${p.label} deleted`));
+      openModelMenu();
+    } catch { /* Meldung kommt von api() */ }
+  }
+
+  function pullPct(d) {
+    return d.total ? Math.floor((100 * (d.completed || 0)) / d.total) : null;
+  }
+
+  // Laufender Download im Modell-Menü: Fortschritt live (model_pull-Events) und Abbrechen
+  function pullRow(d) {
+    const row = document.createElement("div");
+    row.className = "model-pull";
+    row.dataset.tag = d.tag;
+    row.innerHTML = `<div class="mp-head"><span class="mp-text"></span>
+      <button class="mp-cancel">✕ ${L("ABBRECHEN", "CANCEL")}</button></div><div class="mp-bar"><i></i></div>`;
+    row.querySelector(".mp-cancel").onclick = async (e) => {
+      e.stopPropagation();
+      e.target.disabled = true;
+      try { await api("DELETE", `/api/models/pull/${encodeURIComponent(d.tag)}`); } catch { /* Meldung kommt von api() */ }
+    };
+    updatePullRow(row, d);
+    return row;
+  }
+
+  function updatePullRow(row, d) {
+    const pct = pullPct(d);
+    row.querySelector(".mp-text").textContent = `⬇ ${d.tag}` + (pct !== null ? ` · ${pct} %` : d.status ? ` · ${d.status}` : " …");
+    row.querySelector(".mp-bar i").style.width = (pct || 0) + "%";
+  }
+
   function modelPullEvent(ev) {
+    const row = [...modelMenu.querySelectorAll(".model-pull")].find((r) => r.dataset.tag === ev.tag);
+    if (row && (ev.done || ev.error || ev.cancelled)) row.remove();
+    else if (row) updatePullRow(row, ev);
+    if (ev.cancelled) { toast(L(`Download von ${ev.tag} abgebrochen`, `Download of ${ev.tag} cancelled`)); return; }
     if (ev.error) { toast(L(`✘ ${ev.tag}: `, `✘ ${ev.tag}: `) + ev.error); return; }
     if (ev.done) {
       toast(L(`✔ ${ev.tag} geladen – jetzt im Modell-Menü auswählbar.`, `✔ ${ev.tag} downloaded – now selectable in the model menu.`));
       addSystem(L(`Modell ${ev.tag} ist bereit (Menü LLM oben).`, `Model ${ev.tag} is ready (LLM menu at the top).`));
       return;
     }
-    const pct = ev.total ? ` ${Math.floor((100 * (ev.completed || 0)) / ev.total)} %` : "";
-    toast(L(`Lade ${ev.tag}: `, `Downloading ${ev.tag}: `) + (ev.status || "") + pct);
+    if (row) return;  // Menü offen: Fortschritt steht dort
+    const pct = pullPct(ev) !== null ? ` ${pullPct(ev)} %` : "";
+    toast(L(`Lade ${ev.tag}: `, `Downloading ${ev.tag}: `) + (ev.status || "") + pct
+      + L(" · abbrechen im LLM-Menü", " · cancel in the LLM menu"));
   }
 
   function closeModelMenu() {

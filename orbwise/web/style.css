@@ -91,6 +91,21 @@ button { font-family: inherit; cursor: pointer; }
 .model-item .mi-head { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; }
 .model-item .mi-tag { font-family: var(--mono); font-size: 10px; letter-spacing: .12em; color: var(--accent); }
 .model-item .mi-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px; }
+/* Löschen neben dem Eintrag, laufende Downloads mit Fortschritt und Abbrechen */
+.model-row { display: flex; align-items: stretch; gap: 4px; }
+.model-row .model-item { flex: 1; min-width: 0; }
+.model-del { flex: none; width: 34px; border: 1px solid transparent; background: none; color: var(--muted); cursor: pointer;
+             font-size: 15px; }
+.model-del:hover:not(:disabled) { color: var(--danger); border-color: rgba(255,93,108,.4); background: rgba(255,93,108,.08); }
+.model-del:disabled { opacity: .3; cursor: not-allowed; }
+.model-pull { padding: 7px 8px; border: 1px solid var(--line); margin: 2px 0 6px; }
+.model-pull .mp-head { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+                       font-family: var(--mono); font-size: 12px; }
+.model-pull .mp-bar { height: 3px; background: rgba(63,208,255,.12); margin-top: 6px; }
+.model-pull .mp-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+.model-pull .mp-cancel { border: 1px solid rgba(255,93,108,.45); background: none; color: var(--danger); cursor: pointer;
+                         font-family: var(--mono); font-size: 10px; letter-spacing: .12em; padding: 3px 8px; }
+.model-pull .mp-cancel:hover { background: rgba(255,93,108,.1); }
 .pill {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 10px; border: 1px solid var(--panel-border); border-radius: 3px;
