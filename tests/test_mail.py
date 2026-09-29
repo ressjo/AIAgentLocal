@@ -210,3 +210,29 @@ def test_starttls_with_self_signed_certificate_like_the_bridge(cfg, monkeypatch)
         assert "STARTTLS" in server.log
         cfg.mail.verify_ssl = True
         assert "TLS-Fehler" in run(mail.mail_list(ctx(cfg)))
+
+
+def test_mail_protection_lasts_while_the_mail_is_in_the_chat(cfg, memory, imap):
+    """Die Mail bleibt im Verlauf – auch die nächste Anfrage darf ihren Anweisungen nicht unbemerkt folgen."""
+    from orbwise.agent import Agent
+    from orbwise.llm import FakeLLM
+
+    agent = Agent(cfg, FakeLLM(delay=0), memory)
+    asked: list[str] = []
+
+    async def emit(ev):
+        pass
+
+    async def confirm(call_id, name, args, reason):
+        asked.append(name)
+        return False
+
+    async def scenario():
+        await agent.run('/tool mail_read {"uid": 4}', emit, confirm)
+        await agent.run('/tool run_shell {"command": "ls"}', emit, confirm)  # neue Anfrage, gleicher Chat
+        assert asked == ["run_shell"]
+        memory.new_chat()  # neuer Chat ohne Mail → wieder ohne Rückfrage
+        await agent.run('/tool run_shell {"command": "ls"}', emit, confirm)
+        assert asked == ["run_shell"]
+
+    run(scenario())

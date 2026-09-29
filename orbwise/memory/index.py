@@ -89,15 +89,19 @@ def check_file(path: Path) -> bool:
     if not path.exists():
         return True
     try:
-        db = sqlite3.connect(path)
+        db = sqlite3.connect(path, timeout=5)
         try:
             if db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 return False
             if db.execute("SELECT 1 FROM sqlite_master WHERE name='chunks_fts'").fetchone():
                 db.execute("INSERT INTO chunks_fts(chunks_fts, rank) VALUES('integrity-check', 1)")
+                db.rollback()  # die Prüfung schreibt nichts – offene Transaktion nicht halten
             return True
         finally:
             db.close()
+    except sqlite3.OperationalError as e:
+        # gerade von Orbwise in Benutzung → nicht prüfbar, aber deshalb nicht kaputt
+        return "locked" in str(e) or "busy" in str(e)
     except sqlite3.DatabaseError:
         return False
 
@@ -145,7 +149,10 @@ class MemoryIndex:
         result = self.db.execute("PRAGMA quick_check").fetchone()[0]
         if result != "ok":
             raise sqlite3.DatabaseError(f"database disk image is malformed ({result})")
+        busy = self.db.in_transaction
         self.db.execute("INSERT INTO chunks_fts(chunks_fts, rank) VALUES('integrity-check', 1)")
+        if not busy:
+            self.db.rollback()  # sonst hielte die (schreibfreie) Prüfung die Schreibsperre bis zum nächsten commit
 
     def heal(self, error: Exception | str) -> None:
         log.warning("Gedächtnis-Suchindex beschädigt (%s) – wird repariert", error)

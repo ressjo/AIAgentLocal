@@ -374,8 +374,8 @@ class TelegramBot:
                 answer = self.current.result()
             await self.notify(answer or self.L("(keine Antwort)", "(no answer)"))
 
-    async def stop(self) -> None:
-        """/stop: laufende Anfrage vom Handy, wartende Anfragen, offene Knopf-Rückfragen – und was am PC läuft."""
+    def cancel_current(self) -> int:
+        """Laufende und wartende Anfragen vom Handy sowie offene Knopf-Rückfragen abbrechen (auch für STOP am PC)."""
         stopped = 0
         if self.current and not self.current.done():
             self.current.cancel()
@@ -386,6 +386,11 @@ class TelegramBot:
         for fut in self.pending.values():
             if not fut.done():
                 fut.set_result(False)
+        return stopped
+
+    async def stop(self) -> None:
+        """/stop: laufende Anfrage vom Handy, wartende Anfragen, offene Knopf-Rückfragen – und was am PC läuft."""
+        stopped = self.cancel_current()
         if self.on_stop:
             try:
                 stopped += int(await self.on_stop() or 0)

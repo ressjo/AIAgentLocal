@@ -409,3 +409,39 @@ def test_dashboard_is_not_opened_to_the_network_by_accident(cfg, monkeypatch):
     cfg.allow_remote = True
     cli.cmd_serve(SimpleNamespace(open=False, verbose=False))
     assert started == ["0.0.0.0"]
+
+
+def test_stop_on_the_pc_cancels_a_request_from_the_phone(cfg, tg, monkeypatch):
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.setattr(TelegramBot, "TRANSPORT", tg.transport)
+    from orbwise.server import create_app
+    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
+        hub, bot = client.app.state.hub, client.app.state.telegram
+
+        async def phone_request():
+            bot.current = asyncio.create_task(asyncio.sleep(60))  # läuft gerade vom Handy
+            return bot.current
+
+        async def stop_on_pc(task):
+            stopped = await hub.stop()
+            await asyncio.sleep(0.05)
+            return stopped, task.cancelled()
+
+        task = client.portal.call(phone_request)
+        stopped, cancelled = client.portal.call(stop_on_pc, task)
+        assert stopped >= 1 and cancelled
+
+
+def test_config_files_behind_a_symlink_are_not_sent(cfg, tmp_path):
+    from orbwise.tools.registry import BLOCKED, SAFE, ToolContext, get_tool, load_all_tools
+
+    load_all_tools()
+    other = tmp_path / "someapp"
+    other.mkdir()
+    (other / "config.yaml").write_text("api_key: geheim")
+    (tmp_path / "notizen.txt").symlink_to(other / "config.yaml")
+    (tmp_path / "echt.txt").write_text("hallo")
+    spec, ctx = get_tool("telegram_send_file"), ToolContext(cfg=cfg, memory=None)
+    assert spec.assess(ctx, {"path": str(tmp_path / "notizen.txt")})[0] == BLOCKED
+    assert spec.assess(ctx, {"path": str(tmp_path / "echt.txt")})[0] == SAFE

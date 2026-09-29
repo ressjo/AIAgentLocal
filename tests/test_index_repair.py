@@ -134,3 +134,15 @@ def test_chat_delete_with_broken_index_returns_ok(cfg, monkeypatch):
             time.sleep(0.05)
         assert not memory.index.needs_rebuild and memory.index.healthy()
         assert memory.index.count() >= 1  # der zweite Chat ist wieder im Index
+
+
+def test_check_does_not_hold_the_write_lock(tmp_path):
+    """Die Prüfung beim Start darf die Datenbank nicht sperren – sonst scheitern reindex und doctor nebenher."""
+    idx = MemoryIndex(tmp_path / "index.sqlite", None)
+    assert idx.healthy() and not idx.db.in_transaction
+    other = sqlite3.connect(tmp_path / "index.sqlite", timeout=0.2)
+    other.execute("DELETE FROM chunks")
+    other.commit()
+    other.close()
+    assert check_file(tmp_path / "index.sqlite")
+    idx.close()

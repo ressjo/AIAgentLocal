@@ -98,6 +98,7 @@ class Hub:
         self.cfg = cfg
         self.agent = agent
         self.askpass = None  # AskpassBroker (Passwortfeld für sudo -A)
+        self.cancellers: list = []  # weitere Abbrecher für STOP (z. B. laufende Telegram-Anfrage) → int
         self.think: bool | None = None  # Denkmodus-Knopf der Oberfläche (None = Profil-Einstellung)
         self.clients: set[Client] = set()
         # Erinnerungen, die fällig wurden, als keine Oberfläche offen war – werden beim Verbinden zugestellt
@@ -204,6 +205,8 @@ class Hub:
             if not task.done():
                 task.cancel()
                 stopped += 1
+        for cancel in self.cancellers:
+            stopped += cancel()
         self.speaker.stop()
         await self.broadcast({"type": "audio_stop"})
         return stopped
@@ -307,11 +310,23 @@ def create_app(cfg: Config) -> FastAPI:
                 await hub.broadcast({"type": "memory", "text": "Search index rebuilt." if en
                                      else "Suchindex neu aufgebaut."})
         except Exception as e:  # noqa: BLE001
+            heal_failed_at[0] = time.monotonic()
             log.warning("Neuaufbau des Suchindex fehlgeschlagen: %s", e)
 
+    healing: list[asyncio.Task] = []
+    heal_failed_at = [-1e9]
+
     def heal_index_soon() -> None:
-        if memory.index.needs_rebuild:
-            background.append(asyncio.create_task(heal_index()))  # nicht an STOP gebunden
+        if (memory.index.needs_rebuild and not any(not t.done() for t in healing)
+                and time.monotonic() - heal_failed_at[0] > 600):  # nach einem Fehlschlag erst in 10 min wieder
+            healing[:] = [asyncio.create_task(heal_index())]  # nicht an STOP gebunden
+
+    side_tasks: set[asyncio.Task] = set()
+
+    def keep(task: asyncio.Task) -> None:
+        """Referenz halten, bis die Aufgabe fertig ist (sonst kann sie der Garbage Collector abräumen)."""
+        side_tasks.add(task)
+        task.add_done_callback(side_tasks.discard)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -328,7 +343,7 @@ def create_app(cfg: Config) -> FastAPI:
         if stt and env("SKIP_WARMUP") != "1":
             background.append(asyncio.create_task(asyncio.to_thread(stt.warmup)))
         yield
-        for t in background:
+        for t in [*background, *healing, *side_tasks]:
             t.cancel()
         await hub.speaker.close()
         await llm.close()
@@ -391,6 +406,7 @@ def create_app(cfg: Config) -> FastAPI:
             transcribe=(lambda data: transcribe_voice(stt, data)) if stt else None,
             on_stop=hub.stop)  # /stop vom Handy stoppt auch, was am PC läuft
         agent.services["telegram"] = telegram_bot  # für telegram_send_file
+        hub.cancellers.append(telegram_bot.cancel_current)  # STOP am PC bricht auch Anfragen vom Handy ab
 
     async def fire_reminder(r, now) -> None:
         late = (now - r.due_dt).total_seconds() > 120
@@ -406,8 +422,8 @@ def create_app(cfg: Config) -> FastAPI:
             hub.speaker.say(spoken)
         else:
             hub.undelivered.append(event)
-        if telegram_bot is not None:  # immer zusätzlich aufs Handy
-            await telegram_bot.notify(("⏰ " if r.kind != "timer" else "⏱ ") + spoken)
+        if telegram_bot is not None:  # immer zusätzlich aufs Handy – im Hintergrund, Telegram darf nichts aufhalten
+            keep(asyncio.create_task(telegram_bot.notify(("⏰ " if r.kind != "timer" else "⏱ ") + spoken)))
         if shutil.which("notify-send"):
             await proc.launch(["notify-send", "--app-name=Orbwise", "--urgency=critical",
                                f"Orbwise – {kind}", r.text], wait=1)
@@ -484,6 +500,7 @@ def create_app(cfg: Config) -> FastAPI:
             try:
                 for r in routines.due(datetime.now()):
                     start_routine(r.id)
+                heal_index_soon()  # im Betrieb beschädigter Suchindex → bald neu aufbauen, nicht erst beim Neustart
             except Exception as e:  # noqa: BLE001
                 log.warning("Routinen-Planer: %s", e)
             await asyncio.sleep(20)
@@ -565,16 +582,20 @@ def create_app(cfg: Config) -> FastAPI:
                                   "base_url": "", "managed": False, "active": True}]}
         from . import bonsai as bonsai_mod
         from . import models as mdl
-        sizes: dict[str, int] = {}
-        try:
-            async with httpx.AsyncClient(base_url=cfg.llm.base_url, timeout=2) as client:
-                for m in (await client.get("/api/tags")).json().get("models", []):
-                    sizes[m.get("name", "")] = int(m.get("size") or 0)
-        except (httpx.HTTPError, ValueError):
-            pass
         profiles = llm.describe()
+        sizes: dict[str, int] = {}
+        # Größen nur von Ollama-Servern holen, die ein Profil wirklich nutzt (llama-server kennt /api/tags nicht)
+        for base in {p.get("base_url") or cfg.llm.base_url for p in profiles if p["backend"] == "ollama"}:
+            try:
+                async with httpx.AsyncClient(base_url=base, timeout=2) as client:
+                    for m in (await client.get("/api/tags")).json().get("models", []):
+                        sizes.setdefault(m.get("name", ""), int(m.get("size") or 0))
+            except (httpx.HTTPError, ValueError):
+                pass
+        added = mdl.added_profiles(state_file)  # state.json nur einmal lesen
+        added_slugs = {mdl.slug(t) for t in mdl.added_models(state_file)}
         for p in profiles:
-            p["deletable"] = mdl.removable(state_file, p["name"])
+            p["deletable"] = p["name"] in added or p["name"] in added_slugs
             size = sizes.get(p["model"]) or sizes.get(f"{p['model']}:latest") if p["backend"] == "ollama" else None
             if p["name"] == bonsai_mod.PROFILE_NAME:
                 size = sum(f.stat().st_size for f in bonsai_mod.model_files())
@@ -754,7 +775,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/history")
     async def history():
-        conv = memory.conversation
+        conv = memory.active
         msgs = [m for m in conv.history if m["role"] in ("user", "assistant") and m.get("content")]
         return {"summary": conv.running_summary, "chat": {"id": conv.chat_id, "title": conv.meta.get("title", "")},
                 "messages": [{"role": m["role"], "content": m["content"]} for m in msgs[-40:]]}
@@ -769,12 +790,14 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(409, "Jarvis arbeitet gerade – bitte kurz warten oder STOP drücken")
 
     async def chat_switched() -> None:
-        conv = memory.conversation
+        conv = memory.active
         await hub.broadcast({"type": "chat_switched", "id": conv.chat_id, "title": conv.meta.get("title", "")})
 
     @app.get("/api/chats")
     async def chats(q: str = ""):
-        memory.conversation.save()
+        memory.active.save()
+        if memory.conversation is not memory.active:
+            memory.conversation.save()
         return memory.chats.list(q)
 
     @app.post("/api/chats")
@@ -782,7 +805,7 @@ def create_app(cfg: Config) -> FastAPI:
         not_busy()
         memory.new_chat()
         await chat_switched()
-        return {"id": memory.conversation.chat_id}
+        return {"id": memory.active.chat_id}
 
     @app.post("/api/chats/{chat_id}/activate")
     async def chat_activate(chat_id: str):
@@ -813,9 +836,9 @@ def create_app(cfg: Config) -> FastAPI:
     @app.delete("/api/chats/{chat_id}")
     async def chat_delete(chat_id: str):
         chat_or_404(chat_id)
-        was_active = chat_id == memory.conversation.chat_id
-        if was_active:
-            not_busy()
+        was_active = chat_id == memory.active.chat_id
+        if was_active or chat_id == memory.conversation.chat_id:
+            not_busy()  # weder den offenen Chat noch den einer laufenden Routine/Telegram-Anfrage
         days = memory.forget_chat(chat_id)
         heal_index_soon()
         if was_active:

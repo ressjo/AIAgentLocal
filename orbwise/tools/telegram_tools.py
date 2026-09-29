@@ -17,11 +17,25 @@ def _enabled(cfg: Any) -> bool:
     return bool(tg and tg.enabled)
 
 
+def _both(path: str) -> list[Path]:
+    """Pfad wie angegeben und aufgelöst – ein harmlos benannter Symlink darf nichts freischalten."""
+    p = Path(path).expanduser()
+    try:
+        return [p, p.resolve()]
+    except (OSError, RuntimeError):
+        return [p]
+
+
+def _is_config(p: Path) -> bool:
+    name = p.name.lower()
+    return name in CONFIG_NAMES or name.endswith((".conf", ".env"))
+
+
 def _risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     # Geheimnisse verlassen den PC nie – auch nicht aufs eigene Handy
     path = str(args.get("path") or "")
     # beim Verschicken strenger als beim Lesen: auch Konfigurationsdateien anderer Programme bleiben daheim
-    if is_secret_path(path) or Path(path).name.lower() in CONFIG_NAMES or path.lower().endswith((".conf", ".env")):
+    if is_secret_path(path) or any(_is_config(p) for p in _both(path)):
         return BLOCKED, secret_reason()
     return SAFE, ""
 

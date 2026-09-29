@@ -40,6 +40,21 @@ TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_bri
 TAINT_GUARDED = {"shell", "web", "files", "apps", "obsidian", "trilium", "calendar_tools", "homeassistant",
                  "memory_tools", "reminder_tools", "power", "telegram_tools"}
 
+
+def is_taint_source(name: str, result: str) -> bool:
+    """Bringt dieses Tool-Ergebnis fremden Text (Mails) in den Verlauf?"""
+    return name in TAINT_SOURCES and (name != "daily_briefing" or "E-Mail:" in result)
+
+
+def prompt_size(stats: dict, estimated: int) -> int:
+    """Echte Prompt-Größe laut Server – 0, wenn sie unbrauchbar ist: Ollama zählt bei einem Cache-Treffer nur die
+    neu verarbeiteten Token (prompt_eval_count); so ein Wert weit unter der Schätzung würde das Budget aufblähen."""
+    total = int(stats.get("prompt_total") or 0)
+    if stats.get("prompt_cached") is not None:
+        return total  # llama-server nennt den Cache-Anteil getrennt – dort ist total die volle Größe
+    return 0 if total and total < 0.6 * estimated else total
+
+
 ANSWER_RESERVE = 1500  # Token, die im Kontextfenster für die Antwort frei bleiben
 Emit = Callable[[dict], Awaitable[None]]
 Confirm = Callable[[str, str, dict, str], Awaitable[bool]]
@@ -220,6 +235,9 @@ class Agent:
     async def _run(self, user_text: str, emit: Emit, confirm: Confirm) -> str:
         self._turn_time = datetime.now().strftime("%H:%M")
         conv = self.memory.conversation
+        # Steht noch Mail-Text im Verlauf, kann er auch in späteren Anfragen wirken – dann bleibt der Schutz an
+        self._tainted = any(m.get("role") == "tool" and is_taint_source(m.get("tool_name", ""), m.get("content") or "")
+                            for m in conv.history)
         start_len = len(conv.history)
         await emit({"type": "state", "state": "thinking"})
         hits = await self.memory.retrieve(user_text, exclude_after=conv.window_start())
@@ -326,11 +344,12 @@ class Agent:
                 stats = ev.get("stats") or {}
                 if stats.get("tps"):
                     await emit({"type": "llm_stats", **stats})
-                if self.last_context is not None and stats.get("prompt_total"):
-                    self.last_context["real"] = stats["prompt_total"]
+                total = prompt_size(stats, (self.last_context or {}).get("used", 0))
+                if self.last_context is not None and total:
+                    self.last_context["real"] = total
                     if stats.get("prompt_cached") is not None:
                         self.last_context["cached"] = stats["prompt_cached"]
-                    self.learn_tokens(self.last_context.get("used", 0), stats["prompt_total"])
+                    self.learn_tokens(self.last_context.get("used", 0), total)
                     await emit({"type": "context", **self.last_context})
         tail = filt.flush()
         if tail:
@@ -423,7 +442,7 @@ class Agent:
         try:
             result = await spec.func(ctx, **args)
             status = "ok"
-            if name in TAINT_SOURCES and (name != "daily_briefing" or "E-Mail:" in result):
+            if is_taint_source(name, result):
                 self._tainted = True
         except asyncio.CancelledError:
             await emit({"type": "tool_result", "id": call_id, "status": "error", "text": "abgebrochen"})
