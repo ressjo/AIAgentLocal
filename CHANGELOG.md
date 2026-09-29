@@ -53,6 +53,10 @@ First public release.
 ### Web UI
 - Animated neural-network orb, live telemetry (tokens/s, context, GPU, VRAM, RAM, power), activity log,
   memory browser, voice settings – optimised for smooth rendering in Firefox.
+- Orb: start-up sequence (rings assemble, network ignites), shock-wave impulses on state changes (wake word, answer,
+  tool, error), the voice shapes the main ring while speaking/listening, particles flow in/out, and satellites on
+  the ring show which tool or routine is running. HUD details: message glide-in, panel corners light up on
+  activity, a subtle scanline and a copy button on code blocks – all within the same frame budget.
 
 ### Installation
 - Installer for Arch-based and Debian/Ubuntu-based systems that asks for the language, the GPU (NVIDIA/AMD/CPU,

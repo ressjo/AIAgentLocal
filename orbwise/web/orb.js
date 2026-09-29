@@ -35,6 +35,15 @@
     error:     { rate: 1, spread: 0.15, speed: 0.7 },
   };
   const MAX_PULSES = 320;
+  // Impuls-Wellen bei Zustandswechseln: Farbe, Anzahl Wellen, zündende Neuronen (aus der Mitte?)
+  const IMPULSE = {
+    listening: { c: [77, 255, 184], waves: 1, fire: 40, inner: true },
+    speaking:  { c: null, waves: 1, fire: 25 },
+    executing: { c: [255, 179, 71], waves: 1, fire: 18 },
+    confirm:   { c: [255, 179, 71], waves: 1, fire: 12 },
+    error:     { c: [255, 93, 108], waves: 2, fire: 25 },
+  };
+  const MAX_SATELLITES = 6;
 
   class NeuralNet {
     constructor(count) {
@@ -52,6 +61,8 @@
           z: Math.sin(a) * r * depth + (Math.random() - 0.5) * 0.08,
           fire: 0, links: [], px: 0, py: 0, pz: 0, ps: 1,
         });
+        const nn = this.nodes[this.nodes.length - 1];
+        nn.d = Math.sqrt(nn.x * nn.x + nn.y * nn.y + nn.z * nn.z);
       }
       // Synapsen: jedes Neuron zu seinen 3 nächsten Nachbarn
       const edges = new Set();
@@ -82,6 +93,16 @@
         if (Math.random() < spread) {
           this.pulses.push({ a: i, b: j, t: 0, v: speed * (0.7 + Math.random() * 0.6) });
         }
+      }
+    }
+
+    /* Viele Neuronen auf einmal zünden (Impuls, Startsequenz). inner = nur aus der Mitte heraus. */
+    ignite(count, inner, spread = 0.3, speed = 1.6) {
+      const pool = inner ? this.nodes.map((n, i) => [n.d, i]).sort((a, b) => a[0] - b[0]).slice(0, count * 2)
+        .map((x) => x[1]) : null;
+      for (let k = 0; k < count; k++) {
+        const i = pool ? pool[(Math.random() * pool.length) | 0] : (Math.random() * this.nodes.length) | 0;
+        this.fire(i, -1, spread, speed);
       }
     }
 
@@ -158,15 +179,16 @@
       }
       // Leuchten feuernder Neuronen: vorgerendertes Sprite statt neuem Farbverlauf
       const sprite = orb._glowSprite();
+      const base = ctx.globalAlpha;  // Startsequenz blendet das Netz ein
       for (const n of this.nodes) {
         if (n.fire > 0.08) {
           const r = (0.9 + n.pz * 1.6) * n.ps;
           const size = r * 7 * n.fire + r;
-          ctx.globalAlpha = Math.min(1, 0.85 * n.fire);
+          ctx.globalAlpha = base * Math.min(1, 0.85 * n.fire);
           ctx.drawImage(sprite, n.px - size, n.py - size, size * 2, size * 2);
         }
       }
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = base;
       // Neuronen – gebündelt nach Helligkeit
       const dots = q.dots();
       for (const n of this.nodes) {
@@ -239,6 +261,13 @@
       this.bars = new Float32Array(120);
       this.particles = Array.from({ length: 90 }, () => this._particle(true));
       this.net = new NeuralNet(150);
+      this.shocks = [];            // Impuls-Wellen
+      this.lastPulse = 0;
+      this.deform = 0;             // 0 = runder Hauptring, 1 = von der Stimme verformt
+      this.satellites = new Map(); // Werkzeug-/Routinen-Anzeigen auf dem Skalenring
+      this.labels = new Map();     // gerenderte Beschriftungen (Cache)
+      this.bootT = null;           // Startsequenz: Sekunden seit Beginn, null = aus
+      this.dt = 0.016;
       this.pool = new BatchPool();
       // Automatische Drosselung: bei dauerhaft niedriger Bildrate nur jedes 2. Frame zeichnen
       this.slow = false;
@@ -253,7 +282,54 @@
       requestAnimationFrame(this._frame.bind(this));
     }
 
-    setState(s) { if (PALETTE[s]) this.state = s; }
+    setState(s) {
+      if (!PALETTE[s] || s === this.state) return;
+      this.state = s;
+      if (IMPULSE[s]) this.pulse(s);
+    }
+
+    /* Spürbarer Moment: Welle(n) nach außen + das Netz zündet. */
+    pulse(kind) {
+      const now = performance.now();
+      if (now - this.lastPulse < 400 || this.reduced || this.bootT !== null) return;
+      this.lastPulse = now;
+      const cfg = IMPULSE[kind] || IMPULSE.speaking;
+      const c = (cfg.c || PALETTE[this.state].c).slice();
+      for (let i = 0; i < cfg.waves; i++) {
+        if (this.shocks.length >= 4) this.shocks.shift();
+        this.shocks.push({ r: 1, delay: i * 0.18, c });
+      }
+      this.net.ignite(cfg.fire, !!cfg.inner);
+    }
+
+    /* Startsequenz: Ringe bauen sich nacheinander auf, dann zündet das Netz von innen nach außen. */
+    boot() {
+      if (this.reduced) return;
+      this.bootT = 0;
+      this.booted = { mid: false, all: false };
+    }
+
+    addSatellite(id, label) {
+      if (this.satellites.has(id)) { this.satellites.get(id).leaving = false; return; }
+      if (this.satellites.size >= MAX_SATELLITES) return;
+      const n = this.satellites.size;
+      this.satellites.set(id, { label: String(label).slice(0, 18), a: this.t * 0.25 - Math.PI / 2 + n * 0.6,
+                                alpha: 0, leaving: false, err: false });
+    }
+
+    removeSatellite(id, failed = false) {
+      const s = this.satellites.get(id);
+      if (s) { s.leaving = true; s.err = s.err || failed; }
+    }
+
+    clearSatellites(keepPrefix = "") {
+      for (const [id, s] of this.satellites) if (!keepPrefix || !id.startsWith(keepPrefix)) s.leaving = true;
+    }
+
+    _bootP(start, dur) {  // Fortschritt 0..1 eines Abschnitts der Startsequenz (1 = fertig bzw. keine Sequenz)
+      if (this.bootT === null) return 1;
+      return Math.max(0, Math.min(1, (this.bootT - start) / dur));
+    }
     setLevel(v) { this.targetLevel = Math.max(0, Math.min(1, v)); }
     setSpectrum(arr) { this.spectrum = arr; }
 
@@ -319,7 +395,68 @@
       this.t += dt * motion;
       this.rot += dt * this.speed * motion;
       this.net.update(dt * motion, this);
+      this.dt = dt * motion;
+      this._tick(dt);
       this._draw();
+    }
+
+    _tick(dt) {
+      // Wellen wachsen und verblassen
+      for (const s of this.shocks) {
+        if (s.delay > 0) s.delay -= dt;
+        else s.r += dt * 1.5;
+      }
+      this.shocks = this.shocks.filter((s) => s.r < 2.3);
+      // Ring-Verformung nur beim Sprechen/Zuhören
+      const want = (this.state === "speaking" || this.state === "listening") && this.level > 0.02 ? 1 : 0;
+      this.deform = lerp(this.deform, want, 1 - Math.pow(0.02, dt));
+      // Satelliten: gleichmäßig verteilt, weich ein-/ausblenden
+      const live = [...this.satellites.values()].filter((s) => !s.leaving);
+      // im oberen Bogen (±115° um 12 Uhr) verteilt und leicht pendelnd – unten steht die Statuszeile
+      live.forEach((s, i) => {
+        const spread = live.length > 1 ? -2 + (4 * i) / (live.length - 1) : 0;
+        const target = -Math.PI / 2 + spread * (live.length > 2 ? 1 : 0.6) + 0.18 * Math.sin(this.t * 0.35 + i);
+        const d = ((target - s.a) % TAU + TAU * 1.5) % TAU - Math.PI;
+        s.a += d * (1 - Math.pow(0.05, dt));
+      });
+      for (const [id, s] of this.satellites) {
+        s.alpha = lerp(s.alpha, s.leaving ? 0 : 1, 1 - Math.pow(s.leaving ? 0.02 : 0.005, dt));
+        if (s.leaving) s.a += dt * 0.6;
+        if (s.leaving && s.alpha < 0.03) this.satellites.delete(id);
+      }
+      // Startsequenz
+      if (this.bootT !== null) {
+        this.bootT += dt;
+        if (!this.booted.mid && this.bootT > 1.0) { this.booted.mid = true; this.net.ignite(30, true, 0.34, 1.4); }
+        if (!this.booted.all && this.bootT > 1.35) {
+          this.booted.all = true;
+          this.shocks.push({ r: 1, delay: 0, c: PALETTE[this.state].c.slice() });
+          this.net.ignite(30, false, 0.3, 1.8);
+        }
+        if (this.bootT > 1.9) this.bootT = null;
+      }
+    }
+
+    _label(text) {
+      let c = this.labels.get(text);
+      if (!c) {
+        c = document.createElement("canvas");
+        const g = c.getContext("2d");
+        const font = "600 10px ui-monospace, 'JetBrains Mono', monospace";
+        g.font = font;
+        const w = Math.ceil(g.measureText(text).width + text.length * 1.5) + 8;
+        c.width = w * 2; c.height = 28;
+        g.scale(2, 2);
+        g.font = font;
+        g.fillStyle = "rgba(225,245,255,0.95)";
+        g.textBaseline = "middle";
+        let x = 4;
+        for (const ch of text) { g.fillText(ch, x, 7); x += g.measureText(ch).width + 1.5; }  // Sperrung
+        c.w = w; c.h = 14;
+        if (this.labels.size > 40) this.labels.clear();
+        this.labels.set(text, c);
+      }
+      return c;
     }
 
     _glowSprite() {
@@ -353,14 +490,17 @@
       ctx.save();
       ctx.translate(cx, cy);
       ctx.globalCompositeOperation = "lighter";
+      const bootScale = this._bootP(0, 0.6), bootSeg = this._bootP(0.35, 0.45), bootCore = this._bootP(0.75, 0.5);
 
       // Hintergrund-Glühen
+      ctx.globalAlpha = bootCore;
       const glow = ctx.createRadialGradient(0, 0, R * 0.1, 0, 0, R * 2.1);
       glow.addColorStop(0, this._rgba(0.18 + lvl * 0.25));
       glow.addColorStop(0.45, this._rgba(0.05 + lvl * 0.05));
       glow.addColorStop(1, "rgba(0,0,0,0)");
       ctx.fillStyle = glow;
       ctx.fillRect(-R * 2.1, -R * 2.1, R * 4.2, R * 4.2);
+      ctx.globalAlpha = 1;
 
       // Äußerer Skalenring: zwei Pfade (lange / kurze Striche)
       const rot = this.rot * 0.15;
@@ -368,7 +508,7 @@
         ctx.strokeStyle = this._rgba(long ? 0.55 : 0.22);
         ctx.lineWidth = long ? 2 : 1;
         ctx.beginPath();
-        for (let i = long ? 0 : 1; i < 120; i += long ? 10 : 1) {
+        for (let i = long ? 0 : 1; i < 120 * bootScale; i += long ? 10 : 1) {
           if (!long && i % 10 === 0) continue;
           const a = (i / 120) * TAU + rot;
           const r1 = R * 1.62, r2 = R * (long ? 1.72 : 1.67);
@@ -378,10 +518,13 @@
         ctx.stroke();
       }
 
-      // Segmentierte, gegenläufig rotierende Ringe (je ein Pfad)
-      this._segRing(R * 1.48, 3, 6, this.rot * 0.6, 0.55, 0.12);
-      this._segRing(R * 1.36, 2, 24, -this.rot * 1.1, 0.35, 0.02);
-      this._segRing(R * 1.24, 4, 3, this.rot * 1.7, 0.7, 0.35);
+      // Segmentierte, gegenläufig rotierende Ringe (je ein Pfad) – beim Start einrastend
+      ctx.globalAlpha = bootSeg;
+      const snap = (1 - bootSeg) * 1.2;
+      this._segRing(R * 1.48, 3, 6, this.rot * 0.6 + snap, 0.55, 0.12);
+      this._segRing(R * 1.36, 2, 24, -this.rot * 1.1 - snap, 0.35, 0.02);
+      this._segRing(R * 1.24, 4, 3, this.rot * 1.7 + snap * 2, 0.7, 0.35);
+      ctx.globalAlpha = bootCore;
 
       // Scan-Kegel bei Ausführung/Denken
       if (this.state === "executing" || this.state === "thinking") {
@@ -420,12 +563,32 @@
       ctx.lineWidth = 2.2;
       bars.stroke(ctx, (al) => this._rgba(al, 30));
 
-      // Hauptring: Leuchten über breite, transparente Linien statt teurem shadowBlur
-      const ringR = R * pulse * 0.98;
+      // Hauptring: Leuchten über breite, transparente Linien statt teurem shadowBlur.
+      // Beim Sprechen/Zuhören formt die Stimme den Ring (Radius folgt den geglätteten Audio-Balken).
+      const ringR = R * pulse * 0.98 * (0.7 + 0.3 * bootCore);
+      const ring = new Path2D();  // einmal bauen, dreimal zeichnen
+      if (this.deform > 0.01) {
+        const pts = this._ringShape(ringR, R);
+        ring.moveTo(pts[0], pts[1]);
+        for (let i = 2; i < pts.length; i += 2) ring.lineTo(pts[i], pts[i + 1]);
+        ring.closePath();
+      } else ring.arc(0, 0, ringR, 0, TAU);
       for (const [width, alpha, boost] of [[12, 0.07, 0], [6, 0.16, 20], [2.5, 0.9, 40]]) {
         ctx.strokeStyle = this._rgba(alpha, boost);
         ctx.lineWidth = width;
-        ctx.beginPath(); ctx.arc(0, 0, ringR, 0, TAU); ctx.stroke();
+        ctx.stroke(ring);
+      }
+
+      // Impuls-Wellen
+      for (const s of this.shocks) {
+        if (s.delay > 0) continue;
+        const k = 1 - (s.r - 1) / 1.3;
+        const [r, g, b] = s.c;
+        for (const [width, alpha] of [[10, 0.08], [2, 0.7]]) {
+          ctx.strokeStyle = `rgba(${r | 0},${g | 0},${b | 0},${Math.max(0, alpha * k)})`;
+          ctx.lineWidth = width * (0.6 + k * 0.4);
+          ctx.beginPath(); ctx.arc(0, 0, R * s.r, 0, TAU); ctx.stroke();
+        }
       }
 
       // Weiches Leuchten im Zentrum, hinter dem Netz
@@ -442,8 +605,14 @@
 
       // Partikel – gebündelt
       const dots = q.dots();
+      const flow = this.state === "listening" ? -1 : this.state === "speaking" ? 1 : 0;  // nach innen / außen
       for (const pt of this.particles) {
         pt.a += pt.v * 0.016 * (0.6 + this.speed);
+        if (flow) {
+          pt.r += flow * this.dt * (0.18 + lvl * 0.5);
+          if (pt.r < 0.95) { pt.r = 1.8; pt.life = 0.05; }
+          if (pt.r > 1.85) { pt.r = 1.05; pt.life = 0.05; }
+        }
         pt.life += 0.004 + this.energy * 0.004;
         if (pt.life > 1) Object.assign(pt, this._particle(false));
         const fade = Math.sin(pt.life * Math.PI);
@@ -451,6 +620,9 @@
         dots.add(0.55 * fade, Math.cos(pt.a) * r, Math.sin(pt.a) * r, pt.s * (0.8 + lvl));
       }
       dots.fill(ctx, (al) => this._rgba(al, 50));
+
+      ctx.globalAlpha = 1;
+      if (this.satellites.size) this._drawSatellites(R);
 
       // Bestätigung: pulsierender Warnring
       if (this.state === "confirm" || this.state === "error") {
@@ -463,6 +635,39 @@
       }
 
       ctx.restore();
+    }
+
+    _ringShape(ringR, R) {
+      const N = 72, bars = this.bars, nb = bars.length;
+      const pts = this._pts || (this._pts = new Float32Array(N * 2));
+      const amp = R * 0.07 * this.deform;
+      for (let k = 0; k < N; k++) {
+        const a = (k / N) * TAU - Math.PI / 2;
+        const v = bars[Math.floor((k / N) * nb)] || 0;
+        const r = ringR + amp * (v - 0.15) * 1.4;
+        pts[k * 2] = Math.cos(a) * r;
+        pts[k * 2 + 1] = Math.sin(a) * r;
+      }
+      return pts;
+    }
+
+    _drawSatellites(R) {
+      const ctx = this.ctx;
+      const sprite = this._glowSprite();
+      const rr = R * 1.36;  // auf dem feinen Segmentring – Beschriftung bleibt im Bild
+      for (const s of this.satellites.values()) {
+        const x = Math.cos(s.a) * rr, y = Math.sin(s.a) * rr;
+        ctx.globalAlpha = s.alpha;
+        const size = 14 + 3 * Math.sin(this.t * 6 + s.a * 3);
+        ctx.drawImage(sprite, x - size, y - size, size * 2, size * 2);
+        ctx.fillStyle = s.err ? "rgba(255,93,108,0.95)" : "rgba(255,255,255,0.9)";
+        ctx.beginPath(); ctx.arc(x, y, 2.6, 0, TAU); ctx.fill();
+        // Beschriftung zentriert über (obere Hälfte) bzw. unter (untere Hälfte) dem Punkt, nie auf dem Kopf
+        const label = this._label(s.label);
+        const ly = y + (Math.sin(s.a) < 0 ? -label.h - 5 : 5);
+        ctx.drawImage(label, x - label.w / 2, ly, label.w, label.h);
+      }
+      ctx.globalAlpha = 1;
     }
 
     _segRing(radius, width, count, rot, alpha, gapRatio) {

@@ -259,6 +259,8 @@
         showContext(ev);
         return;
       case "state":
+        if (ev.routine) orb.addSatellite("rt:" + ev.routine, "⟳ " + ev.routine.toUpperCase());
+        if (ev.state === "idle") orb.clearSatellites("rt:");  // abgebrochene Werkzeuge nicht hängen lassen
         S.serverState = ev.state === "confirm" ? S.serverState : ev.state;
         S.substate = ev.state === "executing" && ev.tool ? ev.tool : "";
         break;
@@ -388,6 +390,7 @@
         if (!$("tab-planner").classList.contains("hidden")) loadRoutines();
         return;
       case "routine_done":
+        orb.removeSatellite("rt:" + ev.name, ev.status === "error");
         toast(ev.status === "error" ? L(`Routine „${ev.name}“ fehlgeschlagen`, `Routine “${ev.name}” failed`)
           : L(`Routine „${ev.name}“ erledigt – im VERLAUF`, `Routine “${ev.name}” done – see HISTORY`));
         if (!$("tab-planner").classList.contains("hidden")) loadRoutines();
@@ -439,7 +442,8 @@
   function renderMarkdown(src) {
     const blocks = [];
     let text = src.replace(/```[\w-]*\n?([\s\S]*?)(```|$)/g, (_, code) => {
-      blocks.push(`<pre>${escapeHtml(code.replace(/\n$/, ""))}</pre>`);
+      blocks.push(`<div class="code"><button class="copy" type="button" title="${L("Kopieren", "Copy")}">⧉</button>`
+        + `<pre>${escapeHtml(code.replace(/\n$/, ""))}</pre></div>`);
       return `\u0000${blocks.length - 1}\u0000`;
     });
     text = escapeHtml(text)
@@ -460,11 +464,34 @@
 
   function scrollChat() { chat.scrollTop = chat.scrollHeight; }
 
+  // Kopieren-Knopf an Code-Blöcken (Ereignis-Delegation, auch für später gerenderte Nachrichten)
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".code .copy");
+    if (!btn) return;
+    const text = btn.parentElement.querySelector("pre").textContent;
+    try { await navigator.clipboard.writeText(text); } catch {
+      const r = document.createRange(); r.selectNodeContents(btn.parentElement.querySelector("pre"));
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); document.execCommand("copy"); sel.removeAllRanges();
+    }
+    btn.textContent = "✔"; btn.classList.add("done");
+    setTimeout(() => { btn.textContent = "⧉"; btn.classList.remove("done"); }, 1200);
+  });
+
+  // Ecken eines Panels kurz aufleuchten lassen (neue Nachricht / neue Aktivität)
+  function flashPanel(el) {
+    const panel = el && el.closest(".panel");
+    if (!panel) return;
+    panel.classList.remove("flash");
+    void panel.offsetWidth;  // Animation neu starten
+    panel.classList.add("flash");
+  }
+
   function addMsg(cls, who, html) {
     const el = document.createElement("div");
     el.className = "msg " + cls;
     el.innerHTML = `<div class="who">${who}</div><div class="tools"></div><div class="body">${html}</div>`;
     chat.appendChild(el);
+    flashPanel(chat);
     scrollChat();
     return el;
   }
@@ -601,7 +628,22 @@
     return entries.map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join("  ");
   }
 
+  // Kurzname für den Werkzeug-Satelliten am Orb
+  const SAT_GROUPS = [
+    [/^(web_search|fetch_url|open_website)$/, ["WEB", "WEB"]], [/^paperless_/, ["PAPERLESS", "PAPERLESS"]],
+    [/^mail_/, ["MAIL", "MAIL"]], [/^obsidian_/, ["OBSIDIAN", "OBSIDIAN"]], [/^trilium_/, ["TRILIUM", "TRILIUM"]],
+    [/^ha_/, ["SMART HOME", "SMART HOME"]], [/^calendar_/, ["KALENDER", "CALENDAR"]], [/^run_shell$/, ["SHELL", "SHELL"]],
+    [/(package|system_update)/, ["PAKETE", "PACKAGES"]], [/(file|folder)/, ["DATEIEN", "FILES"]],
+    [/^weather/, ["WETTER", "WEATHER"]], [/^routine_/, ["ROUTINEN", "ROUTINES"]], [/reminder/, ["ERINNERUNG", "REMINDER"]],
+    [/(remember|recall|forget|memory)/, ["GEDÄCHTNIS", "MEMORY"]],
+  ];
+  function satLabel(name) {
+    const hit = SAT_GROUPS.find(([rx]) => rx.test(name));
+    return hit ? hit[1][EN ? 1 : 0] : name.split("_")[0].toUpperCase();
+  }
+
   function toolCall(ev) {
+    orb.addSatellite(ev.id, satLabel(ev.name));
     const empty = activity.querySelector(".empty");
     if (empty) empty.remove();
     const el = document.createElement("div");
@@ -617,6 +659,7 @@
     if (ev.routine) el.querySelector(".act-name").textContent = `⟳ ${ev.routine} · ${ev.name}`;
     el.querySelector(".toggle-out").onclick = () => el.classList.toggle("open");
     activity.prepend(el);
+    flashPanel(activity);
     acts[ev.id] = el;
     while (activity.children.length > 60) activity.lastChild.remove();
 
@@ -639,6 +682,7 @@
   }
 
   function toolResult(ev) {
+    orb.removeSatellite(ev.id, ev.status === "error" || ev.status === "blocked");
     const el = acts[ev.id];
     if (el) {
       el.className = "act " + ev.status;
@@ -1644,6 +1688,7 @@
   $("boot-btn").onclick = async () => {
     await initAudio().catch(() => {});
     $("boot").classList.add("hidden");
+    orb.boot();
     if (S.wake) {
       if (await initMic()) send({ type: "wake", enabled: true });
       else { S.wake = false; store.set("wake", false); }
