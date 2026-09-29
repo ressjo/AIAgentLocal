@@ -112,6 +112,10 @@ class PiperTTS:
             return True
         return False
 
+    def forget(self, name: str) -> None:
+        """Geladene Stimme aus dem Zwischenspeicher werfen (z. B. nach einem neuen Upload gleichen Namens)."""
+        self._voices.pop(name, None)
+
     def remove(self, name: str) -> None:
         """Installierte Stimme löschen (Modell + Konfiguration) und aus dem Zwischenspeicher werfen."""
         self._voices.pop(name, None)

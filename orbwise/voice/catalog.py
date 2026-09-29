@@ -145,6 +145,31 @@ def voice_list(voices_dir: Path, current: str, language: str = "", extra: dict |
     return out
 
 
+# Eigene Stimmen per Upload (z. B. von huggingface.co): Name aus dem Dateinamen, Größen- und Formatprüfung
+UPLOAD_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$")
+UPLOAD_MAX_CONFIG = 1_000_000
+UPLOAD_MIN_MODEL = 1_000_000
+UPLOAD_MAX_MODEL = 600_000_000
+
+
+def clean_voice_name(filename: str) -> str | None:
+    """de_DE-jarvis-medium.onnx → de_DE-jarvis-medium; None bei unbrauchbaren Namen (Pfade, „..“ …)."""
+    name = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    for suffix in (".onnx.json", ".json", ".onnx"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return name if UPLOAD_NAME_RE.match(name) and ".." not in name else None
+
+
+def is_piper_config(data: bytes) -> bool:
+    try:
+        cfg = json.loads(data.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return isinstance(cfg, dict) and isinstance(cfg.get("audio"), dict) and bool(cfg["audio"].get("sample_rate"))
+
+
 def installable(name: str, extra: dict | None = None) -> bool:
     """Nur Stimmen aus der Auswahl oder dem offiziellen Katalog – kein beliebiger Download."""
     return name in BY_NAME or (bool(NAME_RE.match(name)) and name in (extra or {}))

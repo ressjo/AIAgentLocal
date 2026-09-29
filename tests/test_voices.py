@@ -195,3 +195,34 @@ def test_install_endpoint_checks_catalog(client, monkeypatch):
     assert installed == ["de_DE-eva_k-x_low"]
     names = [v["name"] for v in client.get("/api/voices").json()["voices"]]
     assert "de_DE-eva_k-x_low" in names and "en_GB-cori-high" not in names
+
+
+PIPER_CONFIG = json.dumps({"audio": {"sample_rate": 22050}, "num_speakers": 1}).encode()
+
+
+def test_upload_own_voice(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(catalog, "UPLOAD_MIN_MODEL", 10)
+    voices = tmp_path / "voices"
+    url = "/api/voices/upload/de_DE-jarvis-medium"
+    assert client.put(f"{url}/model", content=b"\x08" + b"m" * 50).status_code == 400  # Konfiguration fehlt
+    assert client.put(f"{url}/config", content=b"{kein json").status_code == 400
+    assert client.put(f"{url}/config", content=b'{"x": 1}').status_code == 400  # keine Piper-Konfiguration
+    assert client.put(f"{url}/config", content=PIPER_CONFIG).json()["ok"]
+    assert client.put(f"{url}/model", content=b"PK\x03\x04" + b"m" * 50).status_code == 400  # kein ONNX
+    assert not (voices / "de_DE-jarvis-medium.onnx.json").exists()  # halbe Stimme wieder entfernt
+    assert client.put(f"{url}/config", content=PIPER_CONFIG).json()["ok"]
+    r = client.put(f"{url}/model", content=b"\x08\x07" + b"m" * 5000)
+    assert r.status_code == 200 and r.json()["name"] == "de_DE-jarvis-medium"
+    assert (voices / "de_DE-jarvis-medium.onnx").read_bytes().startswith(b"\x08")
+    assert not list(voices.glob("*.part"))
+    listed = {v["name"]: v for v in client.get("/api/voices").json()["voices"]}
+    assert listed["de_DE-jarvis-medium"]["installed"]
+    assert client.put(f"{url}/config", content=PIPER_CONFIG).status_code == 409  # gibt es schon
+    for bad in ("..%2F..%2Fetc", "a..b", "x%20y"):
+        assert client.put(f"/api/voices/upload/{bad}/config", content=PIPER_CONFIG).status_code in (400, 404)
+    assert client.put("/api/voices/upload/ok-name/weird", content=PIPER_CONFIG).status_code == 400
+    monkeypatch.setattr(catalog, "UPLOAD_MAX_CONFIG", 10)
+    assert client.put("/api/voices/upload/gross/config", content=PIPER_CONFIG).status_code == 413
+    assert not list(voices.glob("*.part"))
+    r = client.put("/api/voices/upload/fremd/config", content=PIPER_CONFIG, headers={"Origin": "http://evil.example"})
+    assert r.status_code == 403

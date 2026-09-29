@@ -102,6 +102,8 @@ button { font-family: inherit; cursor: pointer; }
 .vm-search:focus { outline: none; border-color: var(--accent); }
 .vm-tools a { color: var(--accent); font-size: 12px; white-space: nowrap; text-decoration: none; }
 .vm-group { margin-top: 6px; }
+.vm-upload .mi-note { font-size: 11.5px; color: var(--muted); margin-top: 3px; letter-spacing: 0; }
+.voice-menu.drop { border-style: dashed; box-shadow: 0 0 40px rgba(63,208,255,.45); }
 .voice-play:hover:not(:disabled) { color: var(--accent); border-color: var(--panel-border); background: rgba(63,208,255,.08); }
 .model-row .model-item { flex: 1; min-width: 0; }
 .model-del { flex: none; width: 34px; border: 1px solid transparent; background: none; color: var(--muted); cursor: pointer;

@@ -962,6 +962,22 @@
       add.textContent = L("+ STIMME HINZUFÜGEN …", "+ ADD VOICE …");
       add.onclick = (e) => { e.stopPropagation(); openVoiceMenu(true); };
       list.appendChild(add);
+      // eigene Stimme (z. B. von huggingface.co): .onnx + .onnx.json wählen oder aufs Menü ziehen
+      const up = document.createElement("button");
+      up.className = "model-item add vm-upload";
+      up.innerHTML = `<div>${L("⬆ EIGENE STIMME HOCHLADEN …", "⬆ UPLOAD OWN VOICE …")}</div><div class="mi-note"></div>`;
+      up.querySelector(".mi-note").textContent = L("Piper-Stimme, z. B. von huggingface.co – beide Dateien (.onnx + .onnx.json), auch per Drag & Drop",
+        "Piper voice, e.g. from huggingface.co – both files (.onnx + .onnx.json), drag & drop works too");
+      up.onclick = (e) => {
+        e.stopPropagation();
+        const input = document.createElement("input");
+        input.type = "file";
+        input.multiple = true;
+        input.accept = ".onnx,.json";
+        input.onchange = () => uploadVoice([...input.files]);
+        input.click();
+      };
+      list.appendChild(up);
     } else {
       // ganzer Piper-Katalog: Auswahl (empfohlen) zuerst, dann alle weiteren nach Region, mit Suchfeld
       const missing = data.voices.filter((x) => !x.installed);
@@ -1068,6 +1084,57 @@
     row.append(b, play, del);
     return row;
   }
+
+  // Upload: erst die Konfiguration, dann das Modell (roher Datenstrom, Fortschritt im Menü)
+  function putFile(url, file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", url);
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) return resolve(JSON.parse(xhr.responseText || "{}"));
+        let msg = `${L("Fehler", "Error")} ${xhr.status}`;
+        try { msg = JSON.parse(xhr.responseText).detail || msg; } catch { /* egal */ }
+        reject(new Error(msg));
+      };
+      xhr.onerror = () => reject(new Error(L("Verbindung unterbrochen", "Connection lost")));
+      xhr.send(file);
+    });
+  }
+
+  async function uploadVoice(files) {
+    const model = files.find((f) => f.name.toLowerCase().endsWith(".onnx"));
+    const config = files.find((f) => f.name.toLowerCase().endsWith(".json"));
+    if (!model || !config) {
+      toast(L("Bitte beide Dateien wählen: .onnx und .onnx.json", "Please choose both files: .onnx and .onnx.json"));
+      return;
+    }
+    const name = model.name.replace(/\.onnx$/i, "").replace(/[^A-Za-z0-9_.-]/g, "_").replace(/\.\.+/g, ".").replace(/^[^A-Za-z0-9]+/, "").slice(0, 80);
+    const up = voiceMenu.querySelector(".vm-upload");
+    const note = up && up.querySelector(".mi-note");
+    const show = (text) => { if (note) note.textContent = text; };
+    if (up) up.disabled = true;
+    try {
+      const base = `/api/voices/upload/${encodeURIComponent(name)}`;
+      show(L("Lade Konfiguration hoch …", "Uploading configuration …"));
+      await putFile(`${base}/config`, config, () => {});
+      await putFile(`${base}/model`, model, (p) => show(L(`Lade ${name} hoch … ${Math.floor(p * 100)} %`, `Uploading ${name} … ${Math.floor(p * 100)} %`)));
+      toast(L(`✔ Stimme ${name} hinzugefügt`, `✔ Voice ${name} added`));
+      openVoiceMenu();
+    } catch (err) {
+      toast(err.message);
+      if (up) up.disabled = false;
+      show(L("Hochladen fehlgeschlagen – nochmal versuchen?", "Upload failed – try again?"));
+    }
+  }
+
+  voiceMenu.addEventListener("dragover", (e) => { e.preventDefault(); voiceMenu.classList.add("drop"); });
+  voiceMenu.addEventListener("dragleave", () => voiceMenu.classList.remove("drop"));
+  voiceMenu.addEventListener("drop", (e) => {
+    e.preventDefault();
+    voiceMenu.classList.remove("drop");
+    uploadVoice([...e.dataTransfer.files]);
+  });
 
   function closeVoiceMenu() {
     voiceMenu.classList.add("hidden");

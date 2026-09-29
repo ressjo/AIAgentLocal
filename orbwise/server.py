@@ -847,6 +847,48 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(502, f"Download fehlgeschlagen: {e}") from e
         return {"ok": True}
 
+    @app.put("/api/voices/upload/{name}/{kind}")
+    async def upload_voice(name: str, kind: str, request: Request):
+        """Eigene Piper-Stimme hochladen: erst kind=config (die .onnx.json), dann kind=model (die .onnx).
+        Roher Datenstrom statt Formular – dafür braucht es keine zusätzliche Bibliothek."""
+        if not tts:
+            raise HTTPException(400, "Sprachausgabe ist deaktiviert")
+        if kind not in ("config", "model") or catalog.clean_voice_name(name) != name:
+            raise HTTPException(400, "Ungültiger Stimmenname")
+        model, config = tts.path(name), tts.voices_dir / f"{name}.onnx.json"
+        if model.exists():
+            raise HTTPException(409, f"Die Stimme „{name}“ gibt es schon – erst löschen.")
+        if kind == "model" and not config.exists():
+            raise HTTPException(400, "Zuerst die Konfiguration (.onnx.json) hochladen.")
+        limit = catalog.UPLOAD_MAX_CONFIG if kind == "config" else catalog.UPLOAD_MAX_MODEL
+        target = config if kind == "config" else model
+        tts.voices_dir.mkdir(parents=True, exist_ok=True)
+        part = target.with_name(target.name + ".part")
+        size, head = 0, b""
+        try:
+            with part.open("wb") as f:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > limit:
+                        raise HTTPException(413, "Datei zu groß")
+                    if len(head) < 16:
+                        head += chunk[:16]
+                    f.write(chunk)
+            if kind == "config":
+                if not catalog.is_piper_config(part.read_bytes()):
+                    raise HTTPException(400, "Das ist keine Piper-Konfiguration (.onnx.json mit „audio.sample_rate“).")
+            elif size < catalog.UPLOAD_MIN_MODEL or not head.startswith(b"\x08"):
+                raise HTTPException(400, "Das ist kein Piper-Stimmenmodell (.onnx).")
+            part.replace(target)
+        except BaseException:
+            part.unlink(missing_ok=True)
+            if kind == "model":
+                config.unlink(missing_ok=True)  # keine halbe Stimme zurücklassen
+            raise
+        if kind == "model":
+            tts.forget(name)
+        return {"ok": True, "name": name, "size_mb": round(size / 1e6)}
+
     @app.get("/api/voices/{name}/preview")
     async def preview_voice(name: str, text: str = ""):
         if not tts or name not in tts.installed() or not tts.available():

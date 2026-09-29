@@ -265,8 +265,10 @@ Karlsson, Kerstin, Ramona) – followed by **every official Piper voice** of you
 search field ([listen to samples](https://rhasspy.github.io/piper-samples/)). The catalogue is cached for a day and
 the selection still works offline.
 
-Voices are stored in `~/.local/share/orbwise/voices/`. To add your own (e.g. a self-trained one), put both files –
-`<name>.onnx` and `<name>.onnx.json` – into that folder; it appears in the menu as "own voice" without a restart.
+**Own voices** (e.g. a Piper voice from Hugging Face or a self-trained one): in the VOICE menu choose
+**⬆ UPLOAD OWN VOICE …** and select both files – the `.onnx` model and its `.onnx.json` config (any file name; it is
+renamed to match) – or drag them onto the menu. Alternatively copy `<name>.onnx` and `<name>.onnx.json` into
+`~/.local/share/orbwise/voices/`; the voice appears in the menu as "own voice" without a restart.
 
 The **Jarvis effect** (on/off + strength, in the same menu) adds a slightly deeper, sonorous tone, a light room reverb, a subtle
 chorus and a "digital" shimmer.

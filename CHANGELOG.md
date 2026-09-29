@@ -25,7 +25,8 @@ First public release.
 - Piper text-to-speech with installable German and English voices and an optional "Jarvis" voice effect.
 - Voices are managed in the menu of the **VOICE** pill (like the models): select, preview, delete, add from the
   catalogue, plus the Jarvis effect – the separate VOICE tab is gone. "+ ADD VOICE" offers every official Piper
-  voice of the language (catalogue cached for a day, search field, grouped by region, download size). The space bar no longer starts push-to-talk
+  voice of the language (catalogue cached for a day, search field, grouped by region, download size); own Piper
+  voices (e.g. from Hugging Face) can be uploaded there (.onnx + .onnx.json, file dialog or drag & drop). The space bar no longer starts push-to-talk
   while typing in any input field (e.g. the planner).
 - Commands are not read aloud: a confirmation only asks "Do you want to run the following command?" (the command is
   shown in the dialog), and command-like inline code in answers is skipped when speaking.
