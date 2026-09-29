@@ -18,6 +18,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from ..lang import T
 from ..memory.files import WEEKDAYS
 from .registry import CONFIRM, ToolContext, tool
 
@@ -430,11 +431,11 @@ async def calendar_add(
 
 
 def _change_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
-    return CONFIRM, f"ändert den Kalendertermin '{args.get('query', '')}'"
+    return CONFIRM, T(f"ändert den Kalendertermin '{args.get('query', '')}'", f"changes the event '{args.get('query', '')}'")
 
 
 def _delete_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
-    return CONFIRM, f"löscht den Kalendertermin '{args.get('query', '')}'"
+    return CONFIRM, T(f"löscht den Kalendertermin '{args.get('query', '')}'", f"deletes the event '{args.get('query', '')}'")
 
 
 @tool("Verschiebt oder ändert einen bestehenden Termin (neue Zeit, Titel oder Ort).", risk=_change_risk,

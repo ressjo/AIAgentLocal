@@ -7,6 +7,7 @@ Der Index ist nur ein Cache – die Wahrheit liegt in den Markdown-Dateien und k
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 import math
@@ -44,6 +45,7 @@ END;
 """
 
 MAX_CHUNK_CHARS = 1500
+CORRUPT_WORDS = ("malformed", "corrupt", "not a database", "vtable constructor failed")
 RRF_K = 60
 
 
@@ -78,6 +80,32 @@ def split_text(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
     return parts
 
 
+def is_corrupt(e: Exception) -> bool:
+    return isinstance(e, sqlite3.DatabaseError) and any(w in str(e).lower() for w in CORRUPT_WORDS)
+
+
+def check_file(path: Path) -> bool:
+    """Prüft eine Index-Datei, ohne sie zu verändern (für `orbwise doctor`)."""
+    if not path.exists():
+        return True
+    try:
+        db = sqlite3.connect(path, timeout=5)
+        try:
+            if db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                return False
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='chunks_fts'").fetchone():
+                db.execute("INSERT INTO chunks_fts(chunks_fts, rank) VALUES('integrity-check', 1)")
+                db.rollback()  # die Prüfung schreibt nichts – offene Transaktion nicht halten
+            return True
+        finally:
+            db.close()
+    except sqlite3.OperationalError as e:
+        # gerade von Orbwise in Benutzung → nicht prüfbar, aber deshalb nicht kaputt
+        return "locked" in str(e) or "busy" in str(e)
+    except sqlite3.DatabaseError:
+        return False
+
+
 def fts_query(text: str) -> str:
     words = [w for w in re.findall(r"\w{3,}", text.lower())][:24]
     return " OR ".join(f'"{w}"' for w in dict.fromkeys(words))
@@ -88,15 +116,91 @@ class MemoryIndex:
         self.path = path
         self.embedder = embedder  # Objekt mit async embed(list[str]) -> list[list[float]]
         self.min_similarity = min_similarity
-        self.db = sqlite3.connect(path, check_same_thread=False)
-        self.db.executescript(SCHEMA)
         self._matrix: np.ndarray | None = None
         self._matrix_ids: list[int] = []
         self._lock = asyncio.Lock()
         self._embed_warned = False
+        # True, wenn die Datei beschädigt war und leer neu angelegt wurde → Memory.rebuild_index() füllt sie wieder
+        self.needs_rebuild = False
+        try:
+            self.db = self._open()
+            self._check()
+        except sqlite3.DatabaseError as e:
+            if not is_corrupt(e):
+                raise
+            self.heal(e)
 
     def close(self) -> None:
         self.db.close()
+
+    # ---------- Selbstheilung ----------
+    # Der Index ist nur ein Cache der Markdown-Dateien: Ist er beschädigt („database disk image is malformed“),
+    # wird erst der Volltextindex neu aufgebaut, notfalls die Datei beiseitegelegt und neu angelegt.
+    def _open(self) -> sqlite3.Connection:
+        db = sqlite3.connect(self.path, check_same_thread=False)
+        db.execute("PRAGMA busy_timeout=5000")  # zweiter Prozess (z. B. `orbwise reindex`) wartet statt zu scheitern
+        with contextlib.suppress(sqlite3.DatabaseError):
+            db.execute("PRAGMA journal_mode=WAL")
+        db.executescript(SCHEMA)
+        return db
+
+    def _check(self) -> None:
+        """Wirft sqlite3.DatabaseError, wenn Datei oder Volltextindex beschädigt sind."""
+        result = self.db.execute("PRAGMA quick_check").fetchone()[0]
+        if result != "ok":
+            raise sqlite3.DatabaseError(f"database disk image is malformed ({result})")
+        busy = self.db.in_transaction
+        self.db.execute("INSERT INTO chunks_fts(chunks_fts, rank) VALUES('integrity-check', 1)")
+        if not busy:
+            self.db.rollback()  # sonst hielte die (schreibfreie) Prüfung die Schreibsperre bis zum nächsten commit
+
+    def heal(self, error: Exception | str) -> None:
+        log.warning("Gedächtnis-Suchindex beschädigt (%s) – wird repariert", error)
+        self._matrix = None
+        with contextlib.suppress(Exception):
+            self.db.rollback()
+        try:  # Stufe 1: nur der Volltextindex passt nicht zur Tabelle
+            self.db.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
+            self.db.commit()
+            self._check()
+            log.info("Volltextindex neu aufgebaut")
+            return
+        except Exception:  # noqa: BLE001 – dann ist die Datei selbst kaputt
+            pass
+        self._replace_file()
+
+    def _replace_file(self) -> None:
+        """Stufe 2: beschädigte Datei beiseitelegen und leer neu anlegen (Inhalt kommt aus den Markdown-Dateien)."""
+        with contextlib.suppress(Exception):
+            self.db.close()
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            f = Path(f"{self.path}{suffix}")
+            if f.exists():
+                f.replace(f"{self.path}.corrupt-{stamp}{suffix}")
+        self.db = self._open()
+        self._matrix = None
+        self.needs_rebuild = True
+        log.warning("Beschädigter Suchindex nach %s.corrupt-%s verschoben – wird neu aufgebaut", self.path, stamp)
+
+    def _guard(self, fn):
+        """Datenbank-Zugriff; bei Beschädigung reparieren und einmal wiederholen."""
+        try:
+            return fn()
+        except sqlite3.DatabaseError as e:
+            if not is_corrupt(e):
+                raise
+            self.heal(e)
+            return fn()
+
+    def reset(self) -> None:
+        """Index komplett neu anlegen (für den Neuaufbau – funktioniert auch bei beschädigter Datei)."""
+        with contextlib.suppress(Exception):
+            self.db.close()
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            Path(f"{self.path}{suffix}").unlink(missing_ok=True)
+        self.db = self._open()
+        self._matrix = None
 
     async def _embed(self, texts: list[str]) -> list[np.ndarray | None]:
         if not self.embedder or not texts:
@@ -115,15 +219,14 @@ class MemoryIndex:
         if not chunks:
             return 0
         created = created or time.time()
-        new = []
-        for c in chunks:
-            h = hashlib.sha1(f"{source}\n{c}".encode()).hexdigest()
-            if not self.db.execute("SELECT 1 FROM chunks WHERE hash=?", (h,)).fetchone():
-                new.append((c, h))
+        hashed = [(c, hashlib.sha1(f"{source}\n{c}".encode()).hexdigest()) for c in chunks]
+        new = self._guard(lambda: [(c, h) for c, h in hashed
+                                   if not self.db.execute("SELECT 1 FROM chunks WHERE hash=?", (h,)).fetchone()])
         if not new:
             return 0
         vecs = await self._embed([c for c, _ in new])
-        async with self._lock:
+
+        def insert() -> None:
             for (c, h), v in zip(new, vecs):
                 blob = v.tobytes() if v is not None else None
                 self.db.execute(
@@ -131,24 +234,39 @@ class MemoryIndex:
                     (kind, day, source, c, h, blob, created),
                 )
             self.db.commit()
+
+        async with self._lock:
+            self._guard(insert)
             self._matrix = None
         return len(new)
 
     def delete_source(self, source: str) -> None:
-        self.db.execute("DELETE FROM chunks WHERE source=?", (source,))
-        self.db.commit()
+        def run() -> None:
+            self.db.execute("DELETE FROM chunks WHERE source=?", (source,))
+            self.db.commit()
+        self._guard(run)
         self._matrix = None
 
     def clear(self) -> None:
-        self.db.execute("DELETE FROM chunks")
-        self.db.commit()
+        def run() -> None:
+            self.db.execute("DELETE FROM chunks")
+            self.db.commit()
+        self._guard(run)
         self._matrix = None
 
     def count(self) -> int:
-        return self.db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        return self._guard(lambda: self.db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
+
+    def healthy(self) -> bool:
+        try:
+            self._check()
+            return True
+        except sqlite3.DatabaseError:
+            return False
 
     def _load_matrix(self) -> None:
-        rows = self.db.execute("SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL").fetchall()
+        rows = self._guard(lambda: self.db.execute(
+            "SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL").fetchall())
         vecs, ids = [], []
         dims: dict[int, int] = {}
         for _, blob in rows:
@@ -176,9 +294,9 @@ class MemoryIndex:
         q = fts_query(query)
         if q:
             try:
-                rows = self.db.execute(
+                rows = self._guard(lambda: self.db.execute(
                     "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts) LIMIT 30", (q,)
-                ).fetchall()
+                ).fetchall())
                 for rank, (rid,) in enumerate(rows):
                     ranks[rid] = ranks.get(rid, 0) + 1 / (RRF_K + rank)
             except sqlite3.OperationalError as e:
@@ -201,9 +319,9 @@ class MemoryIndex:
         if not ranks:
             return []
         placeholders = ",".join("?" * len(ranks))
-        rows = self.db.execute(
+        rows = self._guard(lambda: self.db.execute(
             f"SELECT id, kind, day, text, created, source FROM chunks WHERE id IN ({placeholders})", list(ranks)
-        ).fetchall()
+        ).fetchall())
         now = time.time()
         hits = []
         for rid, kind, day, text, created, source in rows:

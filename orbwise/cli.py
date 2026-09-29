@@ -21,9 +21,16 @@ EXAMPLE_CONFIG = Path(__file__).parent / "config.example.yaml"
 def cmd_serve(args) -> None:
     import uvicorn
 
-    from .server import create_app
+    from .server import create_app, remote_bind_warning
 
     cfg = load_config()
+    warning = remote_bind_warning(cfg)
+    if warning and not cfg.allow_remote:
+        sys.exit(T("Abgebrochen: ", "Aborted: ") + warning + T(
+            "\nWer das wirklich will: allow_remote: true in config.yaml setzen.",
+            "\nIf you really want this, set allow_remote: true in config.yaml."))
+    if warning:
+        logging.getLogger("orbwise").warning("ACHTUNG: %s", warning)
     app = create_app(cfg)
     url = f"http://localhost:{cfg.port}"
     print(T("Orbwise läuft auf ", "Orbwise is running at ") + url)
@@ -173,6 +180,15 @@ def cmd_doctor(args) -> None:
     else:
         line(hs["online"], f"{hs.get('url') or cfg.homeassistant.url}" + (
             f" – {hs['entities']} {T('Entitäten', 'entities')} (Version {hs['version']})" if hs["online"] else ""), hs.get("error", ""))
+    print(T("E-Mail:", "E-mail:"))
+    from .tools.mail import mail_status
+    ms = asyncio.run(mail_status(cfg))
+    if not ms["enabled"]:
+        print(T("  – nicht konfiguriert", "  – not configured") + " (mail.username, mail.password)")
+    else:
+        line(ms["online"], f"{cfg.mail.username} @ {cfg.mail.host}:{cfg.mail.port}" + (
+            f" – {ms['unseen']} {T('ungelesen', 'unread')}, {ms['folders']} {T('Ordner', 'folders')}" if ms["online"] else ""),
+            ms.get("error", ""))
     print(T("Websuche:", "Web search:"))
     from .tools.web import search_status
     ws = asyncio.run(search_status(cfg))
@@ -210,6 +226,29 @@ def cmd_doctor(args) -> None:
         print(T("  – kein NAS-Pfad konfiguriert", "  – no NAS path configured") + " (tools.nas_paths)")
     for p in cfg.tools.nas_paths:
         line(p.exists() and p.is_dir() and any(p.iterdir()), f"{p} " + T("gemountet", "mounted"), T("Mount prüfen", "check the mount"))
+    from .memory.index import check_file
+    line(check_file(cfg.memory.dir / "index.sqlite"), T("Gedächtnis-Suchindex", "Memory search index"), "orbwise reindex")
+    from .server import remote_bind_warning
+    line(not remote_bind_warning(cfg), T(f"Dashboard nur lokal ({cfg.host})", f"Dashboard local only ({cfg.host})"),
+         T("host: 127.0.0.1 setzen", "set host: 127.0.0.1"))
+    if cfg.telegram.secret:
+        import httpx
+
+        from .telegram import API, explain, redact
+        try:  # echte Verbindung: Token gültig? Webhook gesetzt (blockiert getUpdates)?
+            me = httpx.get(f"{API}/bot{cfg.telegram.secret}/getMe", timeout=10).json()
+            if not me.get("ok"):
+                raise RuntimeError(me.get("description", "Fehler"))
+            hook = httpx.get(f"{API}/bot{cfg.telegram.secret}/getWebhookInfo", timeout=10).json()
+            url = (hook.get("result") or {}).get("url", "")
+            line(True, f"Telegram-Bot @{me['result'].get('username', '?')}")
+            line(not url, T("kein Webhook gesetzt", "no webhook set"),
+                 T("Orbwise entfernt ihn beim nächsten Start", "Orbwise removes it on the next start"))
+        except (httpx.HTTPError, RuntimeError, ValueError) as e:
+            line(False, "Telegram-Bot", redact(explain(str(e)), cfg.telegram.secret))
+        line(bool(cfg.telegram.chat_id), "Telegram chat_id",
+             T("Orbwise starten, dem Bot „/start“ schreiben und telegram.chat_id eintragen",
+               "start Orbwise, send the bot “/start” and set telegram.chat_id"))
 
 
 def cmd_reindex(args) -> None:
@@ -320,6 +359,16 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
                     f"'{args.tag}' is not a model added with 'orbwise model add'."))
             sys.exit(1)
         print(T(f"✔ '{tag}' aus der Modellliste entfernt.", f"✔ Removed '{tag}' from the model list."))
+        from . import bonsai
+        if tag == bonsai.PROFILE_NAME:
+            files = bonsai.model_files()
+            size = sum(f.stat().st_size for f in files) / 1e9
+            if files and sys.stdin.isatty() and input(
+                    T(f"Auch die Modelldateien löschen (~{size:.1f} GB)? [j/N] ",
+                      f"Also delete the model files (~{size:.1f} GB)? [y/N] ")).strip().lower() in ("j", "ja", "y", "yes"):
+                bonsai.remove_model_files()
+                print(T("✔ Modelldateien gelöscht.", "✔ Model files deleted."))
+            return
         if shutil.which("ollama") and sys.stdin.isatty() and \
                 input(T("Auch die Modelldatei löschen (ollama rm)? [j/N] ", "Also delete the model files (ollama rm)? [y/N] ")
                       ).strip().lower() in ("j", "ja", "y", "yes"):

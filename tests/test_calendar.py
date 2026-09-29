@@ -198,7 +198,7 @@ def test_briefing_includes_todays_events(ccfg, monkeypatch):
     run(cal.calendar_add(ctx(ccfg), "Paket abholen", later.strftime("%Y-%m-%d %H:%M"), 15))
     monkeypatch.setattr(briefing.shutil, "which", lambda n: None)
     out = run(briefing.daily_briefing(ctx(ccfg)))
-    assert "Termine heute:" in out and "Paket abholen" in out
+    assert "Termine heute und in den nächsten 2 Tagen:" in out and "Paket abholen" in out
 
 
 def test_status(ccfg):

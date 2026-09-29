@@ -266,6 +266,15 @@ class LLMRouter:
         except LLMError as e:
             log.error("Profil '%s' konnte nicht gestartet werden: %s", self.active, e)
 
+    async def remove_profile(self, name: str) -> None:
+        """Profil aus der Auswahl nehmen (vorher `orbwise.models.unregister_model`); ein gestarteter Server wird beendet."""
+        if name == self.active:
+            raise LLMError("Das aktive Modell kann nicht entfernt werden – erst ein anderes wählen.")
+        server = self.servers.pop(name, None)
+        if server:
+            await server.stop()
+        self.profiles.pop(name, None)
+
     async def activate(self, name: str, progress: Progress | None = None) -> None:
         if name not in self.profiles:
             raise LLMError(f"Unbekanntes Profil '{name}'. Vorhanden: {', '.join(self.profiles)}")

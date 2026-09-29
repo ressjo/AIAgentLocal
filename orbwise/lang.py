@@ -10,3 +10,4 @@ def set_lang(language: str) -> None:
 
 def T(de: str, en: str) -> str:  # noqa: N802 – kurzer Name, wird überall in Ausgaben verwendet
     return en if _lang == "en" else de
+

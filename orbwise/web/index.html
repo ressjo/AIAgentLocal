@@ -21,7 +21,19 @@
         <button class="pill pill-button" id="pill-llm" title="Sprachmodell wechseln" aria-haspopup="true"><i></i><b>LLM</b><em>–</em><span class="caret">▾</span></button>
         <div class="model-menu hidden" id="model-menu" role="menu"></div>
       </span>
-      <span class="pill" id="pill-voice" title="Sprachein-/ausgabe"><i></i><b>VOICE</b><em>–</em></span>
+      <span class="pill-wrap">
+        <button class="pill pill-button" id="pill-voice" title="Stimme wählen · Sprachein-/ausgabe" aria-haspopup="true"><i></i><b>VOICE</b><em>–</em><span class="caret">▾</span></button>
+        <div class="model-menu voice-menu hidden" id="voice-menu" role="menu">
+          <div id="voice-list"></div>
+          <div class="mm-title">JARVIS-EFFEKT</div>
+          <div class="fx-row">
+            <button class="toggle" id="fx-toggle">AUS</button>
+            <input type="range" id="fx-amount" min="0" max="100" value="60" aria-label="Effektstärke">
+            <span class="fx-value" id="fx-value">60 %</span>
+          </div>
+          <p class="fx-hint">Tiefere, sonore Stimme mit leichtem Hall und digitalem Schimmer.</p>
+        </div>
+      </span>
       <span class="pill" id="pill-mem" title="Gedächtnis"><i></i><b>MEM</b><em>–</em></span>
     </div>
     <div class="clock"><span id="clock-time">--:--:--</span><span id="clock-date"></span></div>
@@ -37,6 +49,7 @@
 
     <section class="core">
       <canvas id="orb" aria-label="Jarvis Statusanzeige"></canvas>
+      <canvas id="orb-overlay" aria-hidden="true"></canvas>
       <div class="telemetry" id="telemetry" aria-label="Systemauslastung">
         <div class="tele" id="tele-tps">
           <div class="tele-label">TOK/S</div>
@@ -97,7 +110,7 @@
         <button class="tab active" data-tab="activity">AKTIVITÄT</button>
         <button class="tab" data-tab="chats">VERLAUF</button>
         <button class="tab" data-tab="memory">GEDÄCHTNIS</button>
-        <button class="tab" data-tab="voice">STIMME</button>
+        <button class="tab" data-tab="planner">PLANER</button>
       </div>
       <div class="tab-body" id="tab-activity">
         <div class="activity" id="activity">
@@ -113,26 +126,55 @@
         <p class="chat-hint">★ markiert wichtige Chats · Klick öffnet und setzt fort · Doppelklick auf den Titel benennt um ·
           ✕ löscht den Chat auch aus Jarvis' Gedächtnis.</p>
       </div>
-      <div class="tab-body hidden" id="tab-voice">
+      <div class="tab-body hidden" id="tab-planner">
         <div class="mem-section">
-          <div class="mem-title">JARVIS-EFFEKT</div>
-          <div class="fx-row">
-            <button class="toggle" id="fx-toggle">AUS</button>
-            <input type="range" id="fx-amount" min="0" max="100" value="60" aria-label="Effektstärke">
-            <span class="fx-value" id="fx-value">60 %</span>
-          </div>
-          <p class="fx-hint">Tiefere, sonore Stimme mit leichtem Hall und digitalem Schimmer.</p>
+          <div class="plan-head"><span class="mem-title">ROUTINEN</span>
+            <button class="ghost small" id="rt-new" title="Neue Routine anlegen">+ ROUTINE</button></div>
+          <form class="rt-form hidden" id="rt-form" autocomplete="off">
+            <input type="text" id="rt-name" maxlength="60" placeholder="Name, z. B. Linux-News">
+            <textarea id="rt-task" rows="2" placeholder="Aufgabe, z. B. Suche die wichtigsten Linux-News von heute und fasse sie zusammen."></textarea>
+            <div class="rt-when">
+              <input type="time" id="rt-time" value="08:00" aria-label="Uhrzeit">
+              <div class="rt-days" id="rt-days"></div>
+            </div>
+            <label class="rt-once">nur einmal am <input type="date" id="rt-date"></label>
+            <div class="rt-actions">
+              <button class="ghost small" type="submit" id="rt-save">SPEICHERN</button>
+              <button class="ghost small" type="button" id="rt-cancel">ABBRECHEN</button>
+              <span class="rt-error" id="rt-error"></span>
+            </div>
+          </form>
+          <ul class="rt-list" id="rt-list"></ul>
         </div>
-        <div class="mem-section">
-          <div class="mem-title">DEUTSCHE STIMMEN</div>
-          <ul class="voices" id="voices"></ul>
-        </div>
-      </div>
-      <div class="tab-body hidden" id="tab-memory">
         <div class="mem-section">
           <div class="mem-title">ERINNERUNGEN</div>
           <ul class="reminders" id="reminders"></ul>
         </div>
+        <details class="mem-section brief-box" id="brief-box">
+          <summary class="mem-title">BRIEFING-INHALT</summary>
+          <div class="mem-title brief-sub">PUNKTE &amp; REIHENFOLGE</div>
+          <ul class="brief-list" id="brief-list"></ul>
+        <div class="brief-fields">
+          <label>Vorausschau für Termine und Erinnerungen (Tage)
+            <input type="number" id="brief-days" min="0" max="14"></label>
+          <label>Nachrichten-Themen (mit Komma getrennt)
+            <input type="text" id="brief-topics" placeholder="z. B. Linux, Freiburg, KI"></label>
+          <label>Schlagzeilen je Thema
+            <input type="number" id="brief-count" min="1" max="10"></label>
+          <label>Paperless-Posteingangs-Tag
+            <input type="text" id="brief-inbox" placeholder="leer = Posteingangs-Tags aus Paperless"></label>
+          <label>Eigener Wunsch fürs Briefing
+            <textarea id="brief-instr" rows="2" placeholder="z. B. Halte dich kurz und fang mit den Terminen an."></textarea></label>
+        </div>
+        <div class="brief-actions">
+          <button class="ghost small" id="brief-preview">VORSCHAU</button>
+          <button class="ghost small" id="brief-reset" title="Einstellungen aus der Config-Datei verwenden">ZURÜCKSETZEN</button>
+          <span class="brief-status" id="brief-status"></span>
+        </div>
+        <pre class="brief-out hidden" id="brief-out"></pre>
+        </details>
+      </div>
+      <div class="tab-body hidden" id="tab-memory">
         <div class="mem-section">
           <div class="mem-title">FAKTEN</div>
           <ul class="facts" id="facts"></ul>
@@ -176,6 +218,7 @@
       <div class="modal-title"><span class="warn-dot"></span>BESTÄTIGUNG ERFORDERLICH</div>
       <p class="confirm-summary" id="confirm-summary"></p>
       <pre class="confirm-cmd" id="confirm-cmd"></pre>
+      <div class="confirm-form hidden" id="confirm-form"></div>
       <p class="confirm-reason" id="confirm-reason"></p>
       <div class="modal-actions">
         <button class="btn deny" id="confirm-no">ABBRECHEN <kbd>Esc</kbd></button>

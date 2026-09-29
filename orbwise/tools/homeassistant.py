@@ -14,6 +14,7 @@ from typing import Annotated, Any
 
 import httpx
 
+from ..lang import T
 from .netutil import client_kwargs, explain, html_instead_of_json, normalize_url
 from .registry import CONFIRM, SAFE, ToolContext, tool
 
@@ -172,8 +173,8 @@ def _control_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     action = str(args.get("action", "")).lower()
     domain = eid.split(".")[0]
     if domain in SENSITIVE_DOMAINS or (domain == "cover" and any(w in eid for w in SENSITIVE_WORDS)):
-        return CONFIRM, f"Sicherheitsrelevantes Gerät: {eid} → {action}"
-    return SAFE, "Smart-Home-Steuerung"
+        return CONFIRM, T(f"Sicherheitsrelevantes Gerät: {eid} → {action}", f"security-relevant device: {eid} → {action}")
+    return SAFE, T("Smart-Home-Steuerung", "smart home control")
 
 
 def service_call(entity_id: str, action: str, value: str) -> tuple[str, str, dict] | str:

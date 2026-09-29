@@ -6,6 +6,7 @@ import re
 import shutil
 from typing import Annotated
 
+from ..lang import T
 from . import proc
 from .registry import CONFIRM, SAFE, ToolContext, tool
 
@@ -65,18 +66,18 @@ def split_names(names: str) -> list[str]:
     return [n for n in re.split(r"[\s,]+", names.strip().lower()) if n]
 
 
-def _names_risk(verb: str):
+def _names_risk(verb):  # verb: () -> Text in der aktuellen Sprache
     def risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
         pkgs = split_names(args.get("names", ""))
         bad = [p for p in pkgs if not PKG_RE.match(p)]
         if not pkgs or bad:
-            return SAFE, "ungültige Paketnamen werden abgelehnt"
-        return CONFIRM, f"{verb}: {', '.join(pkgs)}"
+            return SAFE, T("ungültige Paketnamen werden abgelehnt", "invalid package names are rejected")
+        return CONFIRM, f"{verb()}: {', '.join(pkgs)}"
     return risk
 
 
 @tool("Aktualisiert das komplette System (Arch: pacman -Syu + AUR via yay/paru; Debian/Ubuntu: apt-get upgrade).",
-      risk=lambda ctx, a: (CONFIRM, "Systemupdate mit Root-Rechten"))
+      risk=lambda ctx, a: (CONFIRM, T("Systemupdate mit Root-Rechten", "system update with root privileges")))
 async def system_update(ctx: ToolContext) -> str:
     limit = ctx.cfg.tools.max_output_chars
     timeout = ctx.cfg.tools.update_timeout
@@ -134,7 +135,8 @@ async def search_package(ctx: ToolContext, query: Annotated[str, "Suchbegriff"])
 
 
 @tool("Installiert ein oder mehrere Pakete (Paketquellen der Distribution, bei Arch notfalls AUR). Paketnamen exakt angeben – "
-      "im Zweifel vorher search_package nutzen.", risk=_names_risk("Pakete installieren"))
+      "im Zweifel vorher search_package nutzen.",
+      risk=_names_risk(lambda: T("Pakete installieren", "install packages")))
 async def install_package(ctx: ToolContext, names: Annotated[str, "Paketnamen, durch Leerzeichen getrennt"]) -> str:
     pkgs = split_names(names)
     invalid = [p for p in pkgs if not PKG_RE.match(p)]
@@ -180,7 +182,7 @@ async def install_package(ctx: ToolContext, names: Annotated[str, "Paketnamen, d
 
 
 @tool("Deinstalliert Pakete inklusive nicht mehr benötigter Abhängigkeiten.",
-      risk=_names_risk("Pakete entfernen"))
+      risk=_names_risk(lambda: T("Pakete entfernen", "remove packages")))
 async def remove_package(ctx: ToolContext, names: Annotated[str, "Paketnamen, durch Leerzeichen getrennt"]) -> str:
     pkgs = split_names(names)
     if not pkgs or any(not PKG_RE.match(p) for p in pkgs):

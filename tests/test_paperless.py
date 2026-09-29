@@ -4,7 +4,7 @@ from conftest import run
 from fake_paperless import TOKEN, FakePaperless
 
 from orbwise.tools import paperless as pl
-from orbwise.tools.registry import SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
+from orbwise.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
 
 TOOLS = {"paperless_search", "paperless_ask", "paperless_read", "paperless_open"}
 
@@ -13,6 +13,7 @@ TOOLS = {"paperless_search", "paperless_ask", "paperless_read", "paperless_open"
 def fake(monkeypatch, cfg):
     f = FakePaperless()
     monkeypatch.setattr(pl, "TRANSPORT", f.transport())
+    monkeypatch.setattr(pl, "_KNOWN", {})
     cfg.paperless.url = "http://paperless.local:8000"
     cfg.paperless.token = TOKEN
     return f
@@ -33,6 +34,10 @@ def test_tools_only_when_configured_and_read_only(cfg, monkeypatch):
     cfg.paperless.url, cfg.paperless.token = "http://x", "t"
     assert TOOLS <= names(tool_schemas(cfg))
     assert all(get_tool(t).risk == SAFE for t in TOOLS)
+    assert {"paperless_suggest_metadata", "paperless_apply_metadata"} <= names(tool_schemas(cfg))
+    assert get_tool("paperless_suggest_metadata").risk == SAFE
+    cfg.tools.disabled = ["paperless_apply_metadata"]  # wieder nur lesend
+    assert "paperless_apply_metadata" not in names(tool_schemas(cfg)) and TOOLS <= names(tool_schemas(cfg))
 
 
 def test_search_with_names_highlights_and_filters(cfg, fake):
@@ -188,3 +193,78 @@ def test_html_login_page_instead_of_api(cfg, fake, monkeypatch):
     monkeypatch.setattr(pl, "TRANSPORT", httpx.MockTransport(
         lambda r: httpx.Response(200, text="<html>Login</html>", headers={"content-type": "text/html"})))
     assert "Webseite statt der Paperless-API" in run(pl.paperless_search(ctx(cfg), "x"))
+
+
+# ---------------------------------------------------------------- Metadaten vorschlagen/übernehmen
+
+def test_apply_schema_has_object_items():
+    load_all_tools()
+    props = get_tool("paperless_apply_metadata").parameters["properties"]
+    assert props["changes"] == {"type": "array", "items": {"type": "object"}, "description": props["changes"]["description"]}
+    assert get_tool("paperless_suggest_metadata").parameters["properties"]["document_ids"]["items"] == {"type": "integer"}
+
+
+def test_suggest_shows_state_paperless_hints_and_known_names(cfg, fake):
+    out = run(pl.paperless_suggest_metadata(ctx(cfg), [8, 7, 99]))
+    assert "[8] Stromrechnung 2026" in out
+    assert "Paperless schlägt vor – Korrespondent: Stadtwerke · Typ: Rechnung · Tags: Steuer · Daten im Text: 2026-09-01" in out
+    assert "84,20 EUR" in out and "[99] ✘" in out
+    assert "Vorhandene Korrespondenten (2): Stadtwerke, Telekom" in out and "Vorhandene Tags (3): Posteingang, Steuer, Vertrag" in out
+    assert "paperless_apply_metadata" in out
+    cfg.paperless.max_chars = 1000  # Budget wird aufgeteilt
+    long = run(pl.paperless_suggest_metadata(ctx(cfg), "7"))
+    assert "…“" in long and len(long) < 2500
+    fake.suggestions = {}  # alte Version ohne Vorschlags-Endpunkt
+    assert "schlägt vor" not in run(pl.paperless_suggest_metadata(ctx(cfg), [7]))
+    assert "IDs" in run(pl.paperless_suggest_metadata(ctx(cfg), []))
+    many = run(pl.paperless_suggest_metadata(ctx(cfg), list(range(1, 14))))
+    assert "Nur die ersten 10" in many
+
+
+def test_apply_existing_names_tags_title_and_date(cfg, fake):
+    changes = [{"document_id": 7, "correspondent": "telekom", "document_type": "Rechnung", "add_tags": ["steuer"],
+                "remove_tags": ["Vertrag"], "title": "Handyvertrag Telekom 2025", "created": "2025-03-02"}]
+    out = run(pl.paperless_apply_metadata(ctx(cfg), changes))
+    assert out.startswith("✔ Dok 7 „Handyvertrag Telekom 2025“") and "Neu angelegt" not in out
+    doc_id, body = fake.patches[-1]
+    assert doc_id == 7 and body == {"title": "Handyvertrag Telekom 2025", "created": "2025-03-02",
+                                    "document_type": 21, "tags": [11]}  # Korrespondent war schon Telekom
+    assert "schon so eingetragen" in run(pl.paperless_apply_metadata(ctx(cfg), changes))
+
+
+def test_apply_creates_missing_entries_and_handles_batch_errors(cfg, fake):
+    changes = [{"document_id": 8, "correspondent": "Vodafone", "add_tags": ["Handy", "Steuer"]},
+               {"document_id": 99, "title": "gibt es nicht"},
+               {"document_id": 7, "created": "1.3.2025"}]
+    out = run(pl.paperless_apply_metadata(ctx(cfg), changes))
+    lines = out.splitlines()
+    assert lines[0].startswith("✔ Dok 8") and "Kein Dokument mit der ID 99" in lines[1]
+    assert "YYYY-MM-DD" in lines[2] and "nichts geändert" in lines[2]
+    assert lines[3] == "Neu angelegt: Korrespondent „Vodafone“, Tag „Handy“"
+    new_corr = next(c for c in fake.correspondents if c["name"] == "Vodafone")
+    new_tag = next(t for t in fake.tags if t["name"] == "Handy")
+    assert fake.patches == [(8, {"correspondent": new_corr["id"], "tags": [11, new_tag["id"]]})]
+
+
+def test_apply_accepts_json_text_and_legacy_date_field(cfg, fake):
+    fake.legacy_dates = True
+    out = run(pl.paperless_apply_metadata(ctx(cfg), '[{"document_id": 8, "created": "2026-09-02"}]'))
+    assert out.startswith("✔ Dok 8") and fake.patches[-1] == (8, {"created_date": "2026-09-02"})
+    assert "Keine Änderungen" in run(pl.paperless_apply_metadata(ctx(cfg), "[]"))
+
+
+def test_apply_confirmation_lists_changes_and_new_entries(cfg, fake):
+    load_all_tools()
+    spec = get_tool("paperless_apply_metadata")
+    args = {"changes": [{"document_id": 7, "correspondent": "Telekom Deutschland", "add_tags": ["Vertrag", "Handy"],
+                         "remove_tags": ["Posteingang"]},
+                        {"document_id": 8, "document_type": "Rechnung", "title": "Strom 09/2026"}]}
+    risk, reason = spec.assess(ctx(cfg), args)
+    assert risk == CONFIRM and "noch nicht geprüft" in reason and "NEU" not in reason  # Namen noch nicht geladen
+    run(pl.paperless_suggest_metadata(ctx(cfg), [7]))  # lädt die vorhandenen Namen
+    risk, reason = spec.assess(ctx(cfg), args)
+    assert "Paperless-Metadaten ändern (2 Dokumente)" in reason
+    assert "Dok 7: Korrespondent → Telekom Deutschland · +Tag Vertrag · +Tag Handy · −Tag Posteingang" in reason
+    assert "Dok 8: Titel → „Strom 09/2026“ · Typ → Rechnung" in reason
+    assert "NEU anlegen: Korrespondent „Telekom Deutschland“ (ähnlich vorhanden: „Telekom“); Tag „Handy“" in reason
+    assert "Rechnung“" not in reason.split("NEU")[1] and "„Vertrag“" not in reason.split("NEU")[1]

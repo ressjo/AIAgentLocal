@@ -183,6 +183,11 @@ def register_model(state_path: Path, tag: str, activate: bool = False) -> str:
     return name
 
 
+def removable(state_path: Path, name: str) -> bool:
+    """Per Oberfläche/`orbwise model add` hinzugefügt (state.json) – nicht aus der config.yaml."""
+    return name in added_profiles(state_path) or any(slug(t) == name for t in added_models(state_path))
+
+
 def unregister_model(state_path: Path, name_or_tag: str) -> str | None:
     data = _read_state(state_path)
     profiles = data.get("added_profiles", {})

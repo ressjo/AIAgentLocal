@@ -31,6 +31,21 @@ def bonsai_dir() -> Path:
     return Path(setting_env("BONSAI_DIR") or Path.home() / "bonsai").expanduser()
 
 
+def model_files(directory: Path | None = None) -> list[Path]:
+    models = (directory or bonsai_dir()) / "models"
+    return sorted(models.rglob("*.gguf")) if models.is_dir() else []
+
+
+def remove_model_files(directory: Path | None = None) -> int:
+    """Heruntergeladene Modelldateien (*.gguf, ~7 GB) löschen – der Bonsai-Ordner mit dem Server bleibt.
+    Liefert die freigegebenen Bytes."""
+    freed = 0
+    for f in model_files(directory):
+        freed += f.stat().st_size
+        f.unlink()
+    return freed
+
+
 def is_set_up(directory: Path | None = None) -> bool:
     d = directory or bonsai_dir()
     models = d / "models"

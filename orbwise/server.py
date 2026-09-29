@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import re
@@ -19,15 +20,17 @@ from fastapi.staticfiles import StaticFiles
 
 from . import askpass, metrics, prompts
 from .agent import Agent
-from .config import Config, env
-from .lang import set_lang
+from .config import BRIEFING_SECTIONS, BriefingConfig, Config, env
+from .lang import T, set_lang
 from .llm import FakeLLM, LLMError
 from .llm_router import LLMRouter
 from .memory import Memory
 from .memory.files import valid_day
 from .reminders import ReminderStore
-from .tools import proc
+from .routines import RoutineStore
+from .tools import briefing, proc
 from .tools.calendar_tools import calendar_status
+from .tools.registry import ToolContext, get_tool
 from .tools.trilium import trilium_status
 from .voice import catalog
 from .voice.listen import AudioSession, WakeWordFactory, WhisperSTT
@@ -53,7 +56,19 @@ def parse_yes_no(text: str) -> bool | None:
 CALL_TEXTS = {"run_shell": ("call_shell", "command"), "install_package": ("call_install", "names"),
               "remove_package": ("call_remove", "names"), "system_update": ("call_update", ""),
               "calendar_update": ("call_cal_update", "query"), "calendar_delete": ("call_cal_delete", "query"),
-              "trilium_update_note": ("call_trilium", "note"), "write_file": ("call_write", "path")}
+              "trilium_update_note": ("call_trilium", "note"), "write_file": ("call_write", "path"),
+              "mail_send": ("call_mail", "to")}
+
+
+def spoken_confirm(name: str, args: dict, cfg=None) -> str:
+    """Gesprochene Rückfrage: Befehle werden nicht vorgelesen (sie stehen im Dialog), Pfade nur als Dateiname."""
+    if name == "run_shell":
+        return prompts.spoken(cfg, "confirm_shell")
+    if name == "mail_send":
+        return prompts.spoken(cfg, "confirm_mail", v=str(args.get("to", "")))
+    if name == "write_file" and args.get("path"):
+        args = {**args, "path": Path(str(args["path"])).name}
+    return prompts.spoken(cfg, "confirm", what=describe_call(name, args, cfg))
 
 
 def describe_call(name: str, args: dict, cfg=None) -> str:
@@ -83,11 +98,13 @@ class Hub:
         self.cfg = cfg
         self.agent = agent
         self.askpass = None  # AskpassBroker (Passwortfeld für sudo -A)
+        self.cancellers: list = []  # weitere Abbrecher für STOP (z. B. laufende Telegram-Anfrage) → int
         self.think: bool | None = None  # Denkmodus-Knopf der Oberfläche (None = Profil-Einstellung)
         self.clients: set[Client] = set()
         # Erinnerungen, die fällig wurden, als keine Oberfläche offen war – werden beim Verbinden zugestellt
         self.undelivered: list[dict] = []
         self.pending: dict[str, asyncio.Future] = {}
+        self.editable_pending: set[str] = set()
         self.tasks: set[asyncio.Task] = set()
         self.stt = stt
         self.wake = wake
@@ -109,24 +126,32 @@ class Hub:
             self.speaker.say(event["text"])
         await self.broadcast(event)
 
-    async def confirm(self, call_id: str, name: str, args: dict, reason: str) -> bool:
+    async def confirm(self, call_id: str, name: str, args: dict, reason: str) -> bool | tuple[bool, dict]:
+        """Wartet auf Ja/Nein. Bei Tools mit bearbeitbaren Feldern (z. B. mail_send) liefert eine Bestätigung
+        (True, geänderte Felder) – die übernimmt der Agent."""
         fut = asyncio.get_running_loop().create_future()
         self.pending[call_id] = fut
+        spec = get_tool(name)
+        editable = list(spec.editable) if spec else []
+        if editable:
+            self.editable_pending.add(call_id)
         await self.broadcast({"type": "confirm_request", "id": call_id, "name": name, "args": args,
-                              "reason": reason, "summary": describe_call(name, args, self.cfg)})
-        self.speaker.say(prompts.spoken(self.cfg, "confirm", what=describe_call(name, args, self.cfg)))
+                              "reason": reason, "summary": describe_call(name, args, self.cfg), "editable": editable})
+        self.speaker.say(spoken_confirm(name, args, self.cfg))
         try:
-            return await asyncio.wait_for(fut, timeout=180)
+            # zum Bearbeiten (z. B. einer Mail) mehr Zeit lassen
+            return await asyncio.wait_for(fut, timeout=900 if editable else 180)
         except asyncio.TimeoutError:
             return False
         finally:
             self.pending.pop(call_id, None)
+            self.editable_pending.discard(call_id)
             await self.broadcast({"type": "confirm_done", "id": call_id})
 
-    def resolve(self, call_id: str, approved: bool) -> None:
+    def resolve(self, call_id: str, approved: bool, changes: dict | None = None) -> None:
         fut = self.pending.get(call_id)
         if fut and not fut.done():
-            fut.set_result(approved)
+            fut.set_result((True, changes) if approved and changes and call_id in self.editable_pending else approved)
 
     async def submit(self, text: str, source: str = "text") -> None:
         text = text.strip()
@@ -137,6 +162,9 @@ class Hub:
             decision = parse_yes_no(text)
             if decision is not None:
                 for cid in list(self.pending):
+                    # Fenster mit bearbeitbaren Feldern (Mail) nur per Klick bestätigen – „Nein“ bricht aber ab
+                    if decision and cid in self.editable_pending:
+                        continue
                     self.resolve(cid, decision)
                 return
             if source == "voice":
@@ -164,16 +192,47 @@ class Hub:
             if not self.agent.lock.locked():
                 await self.broadcast({"type": "state", "state": "idle"})
 
-    async def stop(self) -> None:
+    async def stop(self) -> int:
+        """Alles Laufende abbrechen (STOP im Dashboard, /stop per Telegram). Liefert, wie viel gestoppt wurde."""
+        stopped = 0
         if self.askpass:
             self.askpass.cancel_all()
         for fut in self.pending.values():
             if not fut.done():
                 fut.set_result(False)
+                stopped += 1
         for task in list(self.tasks):
-            task.cancel()
+            if not task.done():
+                task.cancel()
+                stopped += 1
+        for cancel in self.cancellers:
+            stopped += cancel()
         self.speaker.stop()
         await self.broadcast({"type": "audio_stop"})
+        return stopped
+
+
+def is_loopback(host: str) -> bool:
+    import ipaddress
+    if host in ("localhost", "ip6-localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def remote_bind_warning(cfg: Config) -> str:
+    """Leer bei 127.0.0.1. Sonst ist das Dashboard – ohne Anmeldung, mit Befehlsausführung – im Netz erreichbar;
+    die Host-Prüfung hält Browser-Angriffe ab, aber kein Gerät im LAN, das den Host-Header selbst setzt."""
+    if is_loopback(cfg.host):
+        return ""
+    return T(f"host: {cfg.host} macht das Dashboard ohne Anmeldung im Netzwerk erreichbar – jedes Gerät dort könnte "
+             "Befehle auf diesem PC auslösen. Für unterwegs lieber Telegram, VPN (z. B. WireGuard/Tailscale) oder "
+             "einen SSH-Tunnel (ssh -L 8765:localhost:8765 pc) nutzen.",
+             f"host: {cfg.host} makes the dashboard reachable on the network without a login – any device there could "
+             "run commands on this PC. For remote use prefer Telegram, a VPN (e.g. WireGuard/Tailscale) or an SSH "
+             "tunnel (ssh -L 8765:localhost:8765 pc).")
 
 
 def check_host(host: str | None, port: int) -> bool:
@@ -181,6 +240,29 @@ def check_host(host: str | None, port: int) -> bool:
         return False
     name = host.rsplit(":", 1)[0] if not host.startswith("[") else host.split("]")[0] + "]"
     return name in ("localhost", "127.0.0.1", "[::1]")
+
+
+def versioned_assets(html: str) -> str:
+    """/static/app.js → /static/app.js?v=<Inhalts-Hash>: Nach einem Update lädt der Browser jede geänderte Datei
+    sofort neu. Sonst mischt er neue und alte Dateien aus dem Cache (z. B. neues app.js mit altem orb.js) –
+    dann bricht die Oberfläche an fehlenden Funktionen ab (keine Werkzeug-Anzeige, „denke nach“ bleibt stehen)."""
+    def stamp(m: re.Match) -> str:
+        path = WEB_DIR / m.group(2)
+        if not path.is_file():
+            return m.group(0)
+        digest = hashlib.sha1(path.read_bytes()).hexdigest()[:10]
+        return f"{m.group(1)}/static/{m.group(2)}?v={digest}{m.group(3)}"
+    return re.sub(r'((?:src|href)=")/static/([\w./-]+)(")', stamp, html)
+
+
+class FreshStaticFiles(StaticFiles):
+    """Oberflächen-Dateien immer neu prüfen (ETag → meist 304): nach einem Update läuft sonst stundenlang
+    das alte app.js aus dem Browser-Cache weiter."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
 
 
 def create_app(cfg: Config) -> FastAPI:
@@ -191,6 +273,9 @@ def create_app(cfg: Config) -> FastAPI:
     agent = Agent(cfg, llm, memory)
     reminders = ReminderStore(cfg.memory.dir.parent / "reminders.json")
     agent.services["reminders"] = reminders
+    routines = RoutineStore(cfg.memory.dir.parent / "routines.json")
+    routines.reset_running()
+    agent.services["routines"] = routines
 
     stt = wake = tts = None
     if cfg.voice.enabled:
@@ -213,18 +298,52 @@ def create_app(cfg: Config) -> FastAPI:
     hub.askpass = broker
     background: list[asyncio.Task] = []
 
+    async def heal_index() -> None:
+        """Beschädigter Suchindex wurde leer neu angelegt → im Hintergrund aus den Gedächtnis-Dateien füllen."""
+        if not memory.index.needs_rebuild:
+            return
+        en = cfg.language == "en"
+        await hub.broadcast({"type": "memory", "text": "Search index was damaged – rebuilding it from the memory files."
+                             if en else "Suchindex war beschädigt – wird aus den Gedächtnis-Dateien neu aufgebaut."})
+        try:
+            if await memory.heal_index_if_needed():
+                await hub.broadcast({"type": "memory", "text": "Search index rebuilt." if en
+                                     else "Suchindex neu aufgebaut."})
+        except Exception as e:  # noqa: BLE001
+            heal_failed_at[0] = time.monotonic()
+            log.warning("Neuaufbau des Suchindex fehlgeschlagen: %s", e)
+
+    healing: list[asyncio.Task] = []
+    heal_failed_at = [-1e9]
+
+    def heal_index_soon() -> None:
+        if (memory.index.needs_rebuild and not any(not t.done() for t in healing)
+                and time.monotonic() - heal_failed_at[0] > 600):  # nach einem Fehlschlag erst in 10 min wieder
+            healing[:] = [asyncio.create_task(heal_index())]  # nicht an STOP gebunden
+
+    side_tasks: set[asyncio.Task] = set()
+
+    def keep(task: asyncio.Task) -> None:
+        """Referenz halten, bis die Aufgabe fertig ist (sonst kann sie der Garbage Collector abräumen)."""
+        side_tasks.add(task)
+        task.add_done_callback(side_tasks.discard)
+
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         hub.speaker.start()
+        heal_index_soon()
         if isinstance(llm, LLMRouter):
             background.append(asyncio.create_task(start_model()))
         background.append(asyncio.create_task(summary_loop()))
         background.append(asyncio.create_task(metrics_loop()))
         background.append(asyncio.create_task(reminder_loop()))
+        background.append(asyncio.create_task(routine_loop()))
+        if telegram_bot is not None:
+            background.append(asyncio.create_task(telegram_bot.serve()))
         if stt and env("SKIP_WARMUP") != "1":
             background.append(asyncio.create_task(asyncio.to_thread(stt.warmup)))
         yield
-        for t in background:
+        for t in [*background, *healing, *side_tasks]:
             t.cancel()
         await hub.speaker.close()
         await llm.close()
@@ -233,6 +352,11 @@ def create_app(cfg: Config) -> FastAPI:
     async def model_progress(text: str) -> None:
         await hub.broadcast({"type": "model_progress", "text": text})
 
+    async def idle_if_free() -> None:
+        """Oberfläche auf „bereit“ setzen – nur, wenn gerade keine Anfrage läuft."""
+        if not agent.lock.locked():
+            await hub.broadcast({"type": "state", "state": "idle"})
+
     async def start_model() -> None:
         # Beim Start das aktive Profil vorbereiten (z. B. llama-server starten); Chats warten so lange
         name = llm.active
@@ -240,9 +364,49 @@ def create_app(cfg: Config) -> FastAPI:
         try:
             async with agent.lock:
                 await llm.start(model_progress)
+            await hub.broadcast({"type": "model_active", "name": name})
+        except LLMError as e:
+            log.warning("Modell-Start fehlgeschlagen: %s", e)
+            await hub.broadcast({"type": "model_error", "name": name, "text": str(e)})
         finally:
             llm.switching = None
-        await hub.broadcast({"type": "model_active", "name": name})
+            await idle_if_free()  # wer sich während des Ladens verbunden hat, sah „denke nach“
+
+    # ---------- Telegram ----------
+    telegram_bot = None
+    if cfg.telegram.secret:
+        from .telegram import CHAT_TITLE, TelegramBot, chat_state_file, transcribe_voice
+        tg_state = chat_state_file(cfg)
+
+        async def run_telegram(text: str, emit, confirm) -> str:
+            """Anfrage vom Handy: eigener Chat „📱 Telegram“ – der offene Chat im Dashboard bleibt unberührt."""
+            try:
+                chat_id = json.loads(tg_state.read_text(encoding="utf-8")).get("chat_id", "")
+            except (OSError, ValueError):
+                chat_id = ""
+
+            async def emit_all(ev: dict) -> None:
+                await emit(ev)
+                if ev.get("type") in ("tool_call", "tool_result", "tool_output", "state"):
+                    await hub.broadcast({**ev, "routine": "Telegram"})  # Aktivität/Orb im Dashboard
+
+            answer, chat_id = await agent.run_in_chat(chat_id, CHAT_TITLE, text, emit_all, confirm)
+            tg_state.parent.mkdir(parents=True, exist_ok=True)
+            tg_state.write_text(json.dumps({"chat_id": chat_id}), encoding="utf-8")
+            await hub.broadcast({"type": "chats_changed"})
+            await idle_if_free()
+            return answer
+
+        def tool_editable(name: str) -> bool:
+            spec = get_tool(name)
+            return bool(spec and spec.editable)
+
+        telegram_bot = TelegramBot(
+            cfg, run_telegram, lambda name, args: describe_call(name, args, cfg), tool_editable,
+            transcribe=(lambda data: transcribe_voice(stt, data)) if stt else None,
+            on_stop=hub.stop)  # /stop vom Handy stoppt auch, was am PC läuft
+        agent.services["telegram"] = telegram_bot  # für telegram_send_file
+        hub.cancellers.append(telegram_bot.cancel_current)  # STOP am PC bricht auch Anfragen vom Handy ab
 
     async def fire_reminder(r, now) -> None:
         late = (now - r.due_dt).total_seconds() > 120
@@ -258,6 +422,8 @@ def create_app(cfg: Config) -> FastAPI:
             hub.speaker.say(spoken)
         else:
             hub.undelivered.append(event)
+        if telegram_bot is not None:  # immer zusätzlich aufs Handy – im Hintergrund, Telegram darf nichts aufhalten
+            keep(asyncio.create_task(telegram_bot.notify(("⏰ " if r.kind != "timer" else "⏱ ") + spoken)))
         if shutil.which("notify-send"):
             await proc.launch(["notify-send", "--app-name=Orbwise", "--urgency=critical",
                                f"Orbwise – {kind}", r.text], wait=1)
@@ -271,6 +437,73 @@ def create_app(cfg: Config) -> FastAPI:
             except Exception as e:  # noqa: BLE001
                 log.warning("Erinnerung fehlgeschlagen: %s", e)
             await asyncio.sleep(1)
+
+    # ---------- Routinen ----------
+    def start_routine(rid: str) -> bool:
+        """Startet eine Routine im Hintergrund (sie wartet ggf., bis eine laufende Anfrage fertig ist)."""
+        r = routines.get(rid)
+        if r is None or r.last_status == "running":
+            return False
+        routines.mark_started(rid, datetime.now())
+        task = asyncio.create_task(run_routine(rid))
+        hub.tasks.add(task)  # STOP bricht auch eine laufende Routine ab
+        task.add_done_callback(hub.tasks.discard)
+        return True
+
+    agent.services["start_routine"] = start_routine
+
+    async def run_routine(rid: str) -> None:
+        r = routines.get(rid)
+        if r is None:
+            return
+        denied: list[str] = []
+        await hub.broadcast({"type": "routines_changed"})
+
+        async def emit(ev: dict) -> None:
+            # Nicht in den offenen Chat streamen und nicht vorlesen – nur Aktivität und Orb-Zustand zeigen
+            if ev.get("type") in ("tool_call", "tool_result", "tool_output", "state"):
+                await hub.broadcast({**ev, "routine": r.name})
+
+        async def confirm(call_id: str, name: str, args: dict, reason: str) -> bool:
+            ok = bool(hub.clients) and await hub.confirm(
+                call_id, name, args, prompts.text(cfg, "routine_confirm").format(name=r.name, reason=reason or name))
+            if not ok:
+                denied.append(name)
+            return ok
+
+        now = datetime.now()
+        when = now.strftime("%d.%m.%Y %H:%M") if cfg.language != "en" else now.strftime("%Y-%m-%d %H:%M")
+        text = prompts.text(cfg, "routine_prompt").format(name=r.name, when=when, task=r.task)
+        status, answer, chat_id = "ok", "", r.chat_id
+        try:
+            answer, chat_id = await agent.run_in_chat(r.chat_id, f"⟳ {r.name}", text, emit, confirm)
+            status = "denied" if denied else "ok"
+        except asyncio.CancelledError:
+            status, answer = "error", prompts.spoken(cfg, "routine_cancelled")
+        except Exception as e:  # noqa: BLE001
+            log.exception("Routine %s fehlgeschlagen", r.name)
+            status, answer = "error", str(e)
+        summary = " ".join(answer.split())[:300]
+        routines.set_result(rid, status, summary, chat_id)
+        await hub.broadcast({"type": "routine_done", "id": rid, "name": r.name, "chat_id": chat_id,
+                             "status": status, "summary": summary})
+        await hub.broadcast({"type": "chats_changed"})
+        if not agent.lock.locked():
+            await hub.broadcast({"type": "state", "state": "idle"})
+        if shutil.which("notify-send"):
+            await proc.launch(["notify-send", "--app-name=Orbwise", f"Orbwise – {r.name}",
+                               summary[:200] or prompts.spoken(cfg, "routine_done")], wait=1)
+
+    async def routine_loop() -> None:
+        await asyncio.sleep(3)
+        while True:
+            try:
+                for r in routines.due(datetime.now()):
+                    start_routine(r.id)
+                heal_index_soon()  # im Betrieb beschädigter Suchindex → bald neu aufbauen, nicht erst beim Neustart
+            except Exception as e:  # noqa: BLE001
+                log.warning("Routinen-Planer: %s", e)
+            await asyncio.sleep(20)
 
     async def metrics_loop() -> None:
         while True:
@@ -296,6 +529,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     app = FastAPI(title="Orbwise", lifespan=lifespan)
     app.state.hub = hub
+    app.state.telegram = telegram_bot
     app.state.memory = memory
 
     @app.middleware("http")
@@ -313,7 +547,7 @@ def create_app(cfg: Config) -> FastAPI:
     @app.get("/")
     async def index():
         html = translate_index((WEB_DIR / "index.html").read_text(encoding="utf-8"), cfg.language)
-        return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+        return HTMLResponse(versioned_assets(html), headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/status")
     async def status():
@@ -337,6 +571,7 @@ def create_app(cfg: Config) -> FastAPI:
             "trilium": await trilium_status(cfg),
             "calendar": await calendar_status(cfg),
             "busy": agent.lock.locked(),
+            "telegram": telegram_bot.status if telegram_bot is not None else {"running": False, "configured": False},
         }
 
     @app.get("/api/models")
@@ -345,7 +580,28 @@ def create_app(cfg: Config) -> FastAPI:
             return {"active": "demo", "switching": None,
                     "profiles": [{"name": "demo", "label": "Demo (Fake-LLM)", "backend": "fake", "model": "fake",
                                   "base_url": "", "managed": False, "active": True}]}
-        return {"active": llm.active, "switching": llm.switching, "profiles": llm.describe()}
+        from . import bonsai as bonsai_mod
+        from . import models as mdl
+        profiles = llm.describe()
+        sizes: dict[str, int] = {}
+        # Größen nur von Ollama-Servern holen, die ein Profil wirklich nutzt (llama-server kennt /api/tags nicht)
+        for base in {p.get("base_url") or cfg.llm.base_url for p in profiles if p["backend"] == "ollama"}:
+            try:
+                async with httpx.AsyncClient(base_url=base, timeout=2) as client:
+                    for m in (await client.get("/api/tags")).json().get("models", []):
+                        sizes.setdefault(m.get("name", ""), int(m.get("size") or 0))
+            except (httpx.HTTPError, ValueError):
+                pass
+        added = mdl.added_profiles(state_file)  # state.json nur einmal lesen
+        added_slugs = {mdl.slug(t) for t in mdl.added_models(state_file)}
+        for p in profiles:
+            p["deletable"] = p["name"] in added or p["name"] in added_slugs
+            size = sizes.get(p["model"]) or sizes.get(f"{p['model']}:latest") if p["backend"] == "ollama" else None
+            if p["name"] == bonsai_mod.PROFILE_NAME:
+                size = sum(f.stat().st_size for f in bonsai_mod.model_files())
+            p["size_gb"] = round(size / 1e9, 1) if size else None
+        return {"active": llm.active, "switching": llm.switching, "profiles": profiles,
+                "pulls": [{"tag": t, **pull_state.get(t, {})} for t in sorted(pulls)]}
 
     @app.post("/api/askpass")
     async def askpass_request(request: Request):
@@ -363,6 +619,7 @@ def create_app(cfg: Config) -> FastAPI:
     # ---------- Modelle hinzufügen (Vorauswahl + ollama pull mit Fortschritt) ----------
     state_file = cfg.memory.dir.parent / "state.json"
     pulls: dict[str, asyncio.Task] = {}
+    pull_state: dict[str, dict] = {}  # letzter Fortschritt je Download (für das Modell-Menü)
 
     @app.get("/api/models/presets")
     async def model_presets():
@@ -389,17 +646,23 @@ def create_app(cfg: Config) -> FastAPI:
                         now = time.monotonic()
                         if now - last > 0.5 or ev.get("status") == "success":
                             last = now
-                            await hub.broadcast({"type": "model_pull", "tag": tag, "status": ev.get("status", ""),
-                                                 "completed": ev.get("completed"), "total": ev.get("total")})
+                            pull_state[tag] = {"status": ev.get("status", ""), "completed": ev.get("completed"),
+                                               "total": ev.get("total")}
+                            await hub.broadcast({"type": "model_pull", "tag": tag, **pull_state[tag]})
             name = mdl.register_model(state_file, tag)
             if isinstance(llm, LLMRouter):
                 llm.add_downloaded_models()
             await hub.broadcast({"type": "model_pull", "tag": tag, "done": True, "profile": name})
+        except asyncio.CancelledError:
+            # Stream geschlossen → Ollama bricht ab; Teilstücke bleiben im Ollama-Cache (erneuter Start setzt fort)
+            await hub.broadcast({"type": "model_pull", "tag": tag, "cancelled": True})
+            raise
         except (httpx.HTTPError, LLMError, ValueError) as e:
             text = str(e) if not isinstance(e, httpx.ConnectError) else "Ollama ist nicht erreichbar"
             await hub.broadcast({"type": "model_pull", "tag": tag, "error": text})
         finally:
             pulls.pop(tag, None)
+            pull_state.pop(tag, None)
 
     @app.post("/api/models/pull")
     async def model_pull(request: Request):
@@ -414,6 +677,47 @@ def create_app(cfg: Config) -> FastAPI:
         if tag not in pulls:
             pulls[tag] = asyncio.create_task(pull_model(tag))
         return {"ok": True, "tag": tag}
+
+    @app.delete("/api/models/pull/{tag:path}")
+    async def model_pull_cancel(tag: str):
+        task = pulls.get(tag.lower())
+        if task is None:
+            raise HTTPException(404, "Kein laufender Download")
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        return {"ok": True}
+
+    @app.delete("/api/models/{name}")
+    async def model_delete(name: str):
+        """Per Oberfläche/CLI hinzugefügtes Modell entfernen und seine Dateien löschen (gibt Speicher frei)."""
+        from . import bonsai as bonsai_mod
+        from . import models as mdl
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        if name not in llm.profiles:
+            raise HTTPException(404, "Unbekanntes Modell")
+        if not mdl.removable(state_file, name):
+            raise HTTPException(400, "Dieses Modell ist in der config.yaml eingetragen – dort entfernen.")
+        profile = llm.profiles[name]
+        if name == llm.active or llm.switching:
+            raise HTTPException(409, "Das aktive Modell kann nicht gelöscht werden – erst ein anderes wählen.")
+        if profile.backend == "ollama" and profile.model in pulls:
+            raise HTTPException(409, "Das Modell wird gerade geladen – erst den Download abbrechen.")
+        await llm.remove_profile(name)
+        mdl.unregister_model(state_file, name)
+        freed = 0
+        if name == bonsai_mod.PROFILE_NAME:
+            freed = await asyncio.to_thread(bonsai_mod.remove_model_files)
+        elif profile.backend == "ollama" and not any(
+                p.backend == "ollama" and p.model == profile.model for p in llm.profiles.values()):
+            try:  # nur löschen, wenn kein anderes Profil dasselbe Ollama-Modell nutzt
+                async with httpx.AsyncClient(base_url=cfg.llm.base_url, timeout=30) as client:
+                    await client.request("DELETE", "/api/delete", json={"model": profile.model})
+            except httpx.HTTPError as e:
+                log.warning("Ollama-Modell %s nicht gelöscht: %s", profile.model, e)
+        await hub.broadcast({"type": "models_changed"})
+        return {"ok": True, "freed_gb": round(freed / 1e9, 1)}
 
     @app.post("/api/models/reload")
     async def models_reload():
@@ -436,6 +740,7 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(502, str(e)) from e
         finally:
             llm.switching = None
+            await idle_if_free()
         await hub.broadcast({"type": "model_active", "name": name})
         return {"ok": True, "active": llm.active}
 
@@ -470,7 +775,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/history")
     async def history():
-        conv = memory.conversation
+        conv = memory.active
         msgs = [m for m in conv.history if m["role"] in ("user", "assistant") and m.get("content")]
         return {"summary": conv.running_summary, "chat": {"id": conv.chat_id, "title": conv.meta.get("title", "")},
                 "messages": [{"role": m["role"], "content": m["content"]} for m in msgs[-40:]]}
@@ -485,12 +790,14 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(409, "Jarvis arbeitet gerade – bitte kurz warten oder STOP drücken")
 
     async def chat_switched() -> None:
-        conv = memory.conversation
+        conv = memory.active
         await hub.broadcast({"type": "chat_switched", "id": conv.chat_id, "title": conv.meta.get("title", "")})
 
     @app.get("/api/chats")
     async def chats(q: str = ""):
-        memory.conversation.save()
+        memory.active.save()
+        if memory.conversation is not memory.active:
+            memory.conversation.save()
         return memory.chats.list(q)
 
     @app.post("/api/chats")
@@ -498,7 +805,7 @@ def create_app(cfg: Config) -> FastAPI:
         not_busy()
         memory.new_chat()
         await chat_switched()
-        return {"id": memory.conversation.chat_id}
+        return {"id": memory.active.chat_id}
 
     @app.post("/api/chats/{chat_id}/activate")
     async def chat_activate(chat_id: str):
@@ -529,34 +836,166 @@ def create_app(cfg: Config) -> FastAPI:
     @app.delete("/api/chats/{chat_id}")
     async def chat_delete(chat_id: str):
         chat_or_404(chat_id)
-        was_active = chat_id == memory.conversation.chat_id
-        if was_active:
-            not_busy()
+        was_active = chat_id == memory.active.chat_id
+        if was_active or chat_id == memory.conversation.chat_id:
+            not_busy()  # weder den offenen Chat noch den einer laufenden Routine/Telegram-Anfrage
         days = memory.forget_chat(chat_id)
+        heal_index_soon()
         if was_active:
             await chat_switched()
         await hub.broadcast({"type": "chats_changed"})
         return {"ok": True, "days": days}
+
+    def routine_json(r) -> dict:
+        return routines.to_dict(r, datetime.now(), cfg.language == "en")
+
+    async def routine_body(request: Request) -> dict:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "JSON-Objekt erwartet")
+        return body
+
+    @app.get("/api/routines")
+    async def routines_list():
+        return [routine_json(r) for r in routines.items]
+
+    @app.post("/api/routines")
+    async def routines_add(request: Request):
+        b = await routine_body(request)
+        try:
+            r = routines.add(str(b.get("name", "")), str(b.get("task", "")), str(b.get("time", "")),
+                             b.get("days") or [], str(b.get("date") or ""))
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, str(e)) from e
+        return routine_json(r)
+
+    @app.put("/api/routines/{rid}")
+    async def routines_update(rid: str, request: Request):
+        b = await routine_body(request)
+        try:
+            r = routines.update(rid, **{k: b[k] for k in ("name", "task", "time", "days", "date", "enabled") if k in b})
+        except KeyError as e:
+            raise HTTPException(404, "Unbekannte Routine") from e
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, str(e)) from e
+        return routine_json(r)
+
+    @app.delete("/api/routines/{rid}")
+    async def routines_delete(rid: str):
+        if not routines.delete(rid):
+            raise HTTPException(404, "Unbekannte Routine")
+        return {"ok": True}
+
+    @app.post("/api/routines/{rid}/run")
+    async def routines_run(rid: str):
+        if routines.get(rid) is None:
+            raise HTTPException(404, "Unbekannte Routine")
+        return {"ok": start_routine(rid)}
+
+    @app.get("/api/briefing")
+    async def briefing_get():
+        s, why = briefing.settings(cfg), briefing.availability(cfg)
+        en = cfg.language == "en"
+        return {"settings": s.model_dump(), "customized": s != cfg.briefing,
+                "sections": [{"id": k, "label": briefing.LABELS[k][1 if en else 0], "note": why[k]}
+                             for k in BRIEFING_SECTIONS]}
+
+    @app.put("/api/briefing")
+    async def briefing_put(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "JSON-Objekt erwartet")
+        allowed = set(BriefingConfig.model_fields)
+        try:
+            s = briefing.save_settings(cfg, {k: v for k, v in body.items() if k in allowed})
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"ok": True, "settings": s.model_dump()}
+
+    @app.delete("/api/briefing")
+    async def briefing_reset():
+        return {"ok": True, "settings": briefing.save_settings(cfg, None).model_dump()}
+
+    @app.post("/api/briefing/preview")
+    async def briefing_preview():
+        ctx = ToolContext(cfg=cfg, memory=memory, services=agent.services)
+        return {"text": await briefing.build_briefing(ctx)}
 
     @app.get("/api/voices")
     async def voices():
         if not tts:
             return {"available": False, "voices": []}
         tts.available()
-        return {"available": True, "current": tts.current, "rate": tts.rate,
-                "voices": catalog.voice_list(tts.voices_dir, tts.current, cfg.language)}
+        extra = await catalog.fetch_catalog(tts.voices_dir)
+        voices = catalog.voice_list(tts.voices_dir, tts.current, cfg.language, extra)
+        for v in voices:
+            f = tts.path(v["name"])
+            v["size_mb"] = round(f.stat().st_size / 1e6) if v["installed"] and f.exists() else None
+        return {"available": True, "current": tts.current, "rate": tts.rate, "voices": voices}
+
+    @app.delete("/api/voices/{name}")
+    async def delete_voice(name: str):
+        if not tts or name not in tts.installed():  # nur echte installierte Namen – kein Pfad von außen
+            raise HTTPException(404, "Stimme nicht installiert")
+        if name == tts.current:
+            raise HTTPException(409, "Die aktive Stimme kann nicht gelöscht werden – erst eine andere wählen.")
+        tts.remove(name)
+        return {"ok": True}
 
     @app.post("/api/voices/{name}/install")
     async def install_voice(name: str):
         if not tts:
             raise HTTPException(400, "Sprachausgabe ist deaktiviert")
-        if name not in catalog.BY_NAME:
+        extra = {} if name in catalog.BY_NAME else await catalog.fetch_catalog(tts.voices_dir)
+        if not catalog.installable(name, extra):  # nur Auswahl + offizieller Piper-Katalog
             raise HTTPException(404, "Unbekannte Stimme")
         try:
-            await catalog.install_voice(name, tts.voices_dir)
+            await catalog.install_voice(name, tts.voices_dir, extra=extra)
         except Exception as e:  # noqa: BLE001
             raise HTTPException(502, f"Download fehlgeschlagen: {e}") from e
         return {"ok": True}
+
+    @app.put("/api/voices/upload/{name}/{kind}")
+    async def upload_voice(name: str, kind: str, request: Request):
+        """Eigene Piper-Stimme hochladen: erst kind=config (die .onnx.json), dann kind=model (die .onnx).
+        Roher Datenstrom statt Formular – dafür braucht es keine zusätzliche Bibliothek."""
+        if not tts:
+            raise HTTPException(400, "Sprachausgabe ist deaktiviert")
+        if kind not in ("config", "model") or catalog.clean_voice_name(name) != name:
+            raise HTTPException(400, "Ungültiger Stimmenname")
+        model, config = tts.path(name), tts.voices_dir / f"{name}.onnx.json"
+        if model.exists():
+            raise HTTPException(409, f"Die Stimme „{name}“ gibt es schon – erst löschen.")
+        if kind == "model" and not config.exists():
+            raise HTTPException(400, "Zuerst die Konfiguration (.onnx.json) hochladen.")
+        limit = catalog.UPLOAD_MAX_CONFIG if kind == "config" else catalog.UPLOAD_MAX_MODEL
+        target = config if kind == "config" else model
+        tts.voices_dir.mkdir(parents=True, exist_ok=True)
+        part = target.with_name(target.name + ".part")
+        size, head = 0, b""
+        try:
+            with part.open("wb") as f:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > limit:
+                        raise HTTPException(413, "Datei zu groß")
+                    if len(head) < 16:
+                        head += chunk[:16]
+                    f.write(chunk)
+            if kind == "config":
+                if not catalog.is_piper_config(part.read_bytes()):
+                    raise HTTPException(400, "Das ist keine Piper-Konfiguration (.onnx.json mit „audio.sample_rate“).")
+            elif size < catalog.UPLOAD_MIN_MODEL or not head.startswith(b"\x08"):
+                raise HTTPException(400, "Das ist kein Piper-Stimmenmodell (.onnx).")
+            part.replace(target)
+        except BaseException:
+            part.unlink(missing_ok=True)
+            if kind == "model":
+                config.unlink(missing_ok=True)  # keine halbe Stimme zurücklassen
+            raise
+        if kind == "model":
+            tts.forget(name)
+        return {"ok": True, "name": name, "size_mb": round(size / 1e6)}
 
     @app.get("/api/voices/{name}/preview")
     async def preview_voice(name: str, text: str = ""):
@@ -600,7 +1039,8 @@ def create_app(cfg: Config) -> FastAPI:
                 if t == "user_message":
                     await hub.submit(str(data.get("text", "")))
                 elif t == "confirm":
-                    hub.resolve(str(data.get("id")), bool(data.get("approved")))
+                    changes = data.get("args") if isinstance(data.get("args"), dict) else None
+                    hub.resolve(str(data.get("id")), bool(data.get("approved")), changes)
                 elif t == "stop":
                     await hub.stop()
                 elif t == "tts":
@@ -642,5 +1082,5 @@ def create_app(cfg: Config) -> FastAPI:
         finally:
             hub.clients.discard(client)
 
-    app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+    app.mount("/static", FreshStaticFiles(directory=WEB_DIR), name="static")
     return app

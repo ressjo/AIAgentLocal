@@ -43,6 +43,8 @@ class ToolSpec:
     param_types: dict[str, type] = field(default_factory=dict)
     enabled: Callable[[Any], bool] | None = None
     group: str = ""  # Modulname, z. B. "sysadmin" – ganze Gruppen lassen sich per tools.disabled abschalten
+    # Parameter, die der Nutzer im Bestätigungsfenster noch ändern darf (z. B. Empfänger/Betreff/Text einer Mail)
+    editable: tuple[str, ...] = ()
 
     def is_enabled(self, cfg: Any) -> bool:
         if cfg is None:
@@ -78,7 +80,7 @@ def _json_type(tp: Any) -> tuple[str, type]:
 
 
 def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None,
-         enabled: Callable[[Any], bool] | None = None):
+         enabled: Callable[[Any], bool] | None = None, editable: tuple[str, ...] = ()):
     def deco(func):
         sig = inspect.signature(func)
         hints = typing.get_type_hints(func, include_extras=True)
@@ -91,7 +93,9 @@ def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None,
             jtype, pytype = _json_type(hint)
             prop: dict[str, Any] = {"type": jtype}
             if jtype == "array":
-                prop["items"] = {"type": "string"}
+                item = (get_args(hint) or (str,))[0]
+                is_obj = get_origin(item) is dict or item is dict
+                prop["items"] = {"type": "object" if is_obj else _JSON_TYPES.get(item, "string")}
             if desc:
                 prop["description"] = desc
             props[pname] = prop
@@ -107,6 +111,7 @@ def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None,
             param_types=types,
             enabled=enabled,
             group=func.__module__.rsplit(".", 1)[-1],
+            editable=tuple(editable),
         )
         REGISTRY[spec.name] = spec
         return func
@@ -159,15 +164,18 @@ def load_all_tools() -> dict[str, ToolSpec]:
         calendar_tools,
         files,
         homeassistant,
+        mail,
         memory_tools,
         obsidian,
         packages,
         paperless,
         power,
         reminder_tools,
+        routine_tools,
         shell,
         sysadmin,
         system,
+        telegram_tools,
         trilium,
         weather,
         web,

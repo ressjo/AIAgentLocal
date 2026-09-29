@@ -5,6 +5,8 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from orbwise.prompts import strip_context_note
+
 PORT = int(sys.argv[1])
 DELAY = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
 STARTED = time.time()
@@ -48,7 +50,7 @@ class Handler(BaseHTTPRequestHandler):
             send({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "x", "function": {"name": "list_updates", "arguments": ""}}]}}]})
             send({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{}"}}]}}]})
         else:
-            text = "Bonsai meldet: " + (last.get("content") or "")[:40]
+            text = "Bonsai meldet: " + strip_context_note(last.get("content") or "")[:40]
             for word in text.split(" "):
                 send({"choices": [{"delta": {"content": word + " "}}]})
         send({"choices": [], "timings": {"predicted_n": 12, "predicted_per_second": 19.24,

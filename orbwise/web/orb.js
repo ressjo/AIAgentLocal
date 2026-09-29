@@ -35,6 +35,76 @@
     error:     { rate: 1, spread: 0.15, speed: 0.7 },
   };
   const MAX_PULSES = 320;
+  // Impuls-Wellen bei Zustandswechseln: Farbe, Anzahl Wellen, zündende Neuronen (aus der Mitte?)
+  const IMPULSE = {
+    listening: { c: [77, 255, 184], waves: 1, fire: 40, inner: true },
+    speaking:  { c: null, waves: 1, fire: 25 },
+    executing: { c: [255, 179, 71], waves: 1, fire: 18 },
+    confirm:   { c: [255, 179, 71], waves: 1, fire: 12 },
+    error:     { c: [255, 93, 108], waves: 2, fire: 25 },
+  };
+  const MAX_SATELLITES = 6;
+  const MEMORY_GOLD = [255, 196, 92];  // Gedächtnis: die inneren Neuronen leuchten golden
+
+  /* Symbole für Aktionen (Einheitsgröße ±1, einmal als Path2D gebaut). Weitere lassen sich hier ergänzen. */
+  const ICONS = {
+    cli() {  // Terminalfenster mit Titelleiste und Eingabezeichen
+      const frame = new Path2D();
+      frame.roundRect ? frame.roundRect(-1, -0.78, 2, 1.56, 0.18) : frame.rect(-1, -0.78, 2, 1.56);
+      frame.moveTo(-1, -0.45); frame.lineTo(1, -0.45);
+      frame.moveTo(-0.62, -0.18); frame.lineTo(-0.28, 0.06); frame.lineTo(-0.62, 0.3);
+      const cursor = new Path2D();
+      cursor.moveTo(-0.12, 0.34); cursor.lineTo(0.42, 0.34);
+      return { frame, cursor };
+    },
+    cloud() {  // Wolke aus drei Bögen und einer Grundlinie
+      const frame = new Path2D();
+      frame.moveTo(-0.6, 0.5);
+      frame.arc(-0.58, 0.16, 0.34, Math.PI / 2, Math.PI * 1.62);
+      frame.arc(0.02, -0.08, 0.5, Math.PI * 1.08, Math.PI * 1.93);
+      frame.arc(0.6, 0.18, 0.32, Math.PI * 1.45, Math.PI * 2.5);
+      frame.closePath();
+      return { frame, cursor: null };
+    },
+    mail() {  // Briefumschlag; oben rechts pulsiert ein Punkt wie bei einer neuen Nachricht
+      const frame = new Path2D();
+      frame.roundRect ? frame.roundRect(-1, -0.68, 2, 1.36, 0.14) : frame.rect(-1, -0.68, 2, 1.36);
+      frame.moveTo(-0.92, -0.58); frame.lineTo(0, 0.12); frame.lineTo(0.92, -0.58);
+      frame.moveTo(-0.92, 0.6); frame.lineTo(-0.3, 0.02);
+      frame.moveTo(0.92, 0.6); frame.lineTo(0.3, 0.02);
+      return {
+        frame, cursor: null,
+        animate(ctx, t, rgb) {
+          const r = 0.17 + 0.05 * Math.sin(t * 5);
+          ctx.fillStyle = `rgba(${rgb},${0.7 + 0.3 * Math.sin(t * 5)})`;
+          ctx.beginPath(); ctx.arc(0.98, -0.7, r, 0, TAU); ctx.fill();
+        },
+      };
+    },
+    paperless() {  // Dokument mit Eselsohr und Textzeilen; ein Scanbalken läuft darüber (archivieren/erkennen)
+      const frame = new Path2D();
+      frame.moveTo(-0.72, -1); frame.lineTo(0.36, -1); frame.lineTo(0.72, -0.64);
+      frame.lineTo(0.72, 1); frame.lineTo(-0.72, 1); frame.closePath();
+      frame.moveTo(0.36, -1); frame.lineTo(0.36, -0.64); frame.lineTo(0.72, -0.64);
+      for (const [y, w] of [[-0.3, 0.9], [0.05, 1.05], [0.4, 0.75]]) { frame.moveTo(-0.48, y); frame.lineTo(-0.48 + w, y); }
+      return {
+        frame, cursor: null,
+        animate(ctx, t, rgb) {
+          const y = -0.9 + ((t * 0.55) % 1) * 1.8;
+          const g = ctx.createLinearGradient(0, y - 0.25, 0, y + 0.05);
+          g.addColorStop(0, `rgba(${rgb},0)`);
+          g.addColorStop(1, `rgba(${rgb},0.55)`);
+          ctx.fillStyle = g;
+          ctx.fillRect(-0.68, y - 0.25, 1.36, 0.3);
+          ctx.fillStyle = `rgba(${rgb},0.95)`;
+          ctx.fillRect(-0.68, y, 1.36, 0.05);
+        },
+      };
+    },
+  };
+  const iconPaths = {};
+  const iconPath = (name) => iconPaths[name] || (iconPaths[name] = ICONS[name] ? ICONS[name]() : null);
+  const SAT_MIN_SECONDS = 1.5;
 
   class NeuralNet {
     constructor(count) {
@@ -52,6 +122,8 @@
           z: Math.sin(a) * r * depth + (Math.random() - 0.5) * 0.08,
           fire: 0, links: [], px: 0, py: 0, pz: 0, ps: 1,
         });
+        const nn = this.nodes[this.nodes.length - 1];
+        nn.d = Math.sqrt(nn.x * nn.x + nn.y * nn.y + nn.z * nn.z);
       }
       // Synapsen: jedes Neuron zu seinen 3 nächsten Nachbarn
       const edges = new Set();
@@ -68,6 +140,10 @@
         this.nodes[a].links.push(b);
         this.nodes[b].links.push(a);
       }
+      // die innersten Neuronen: dort starten die Denk-Impulse
+      const byDepth = this.nodes.map((n, i) => [n.d, i]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+      this.inner = byDepth.slice(0, 8);
+      this.core = byDepth.slice(0, 24);  // leuchten beim Erinnern golden
       this.pulses = [];
       this.maxPulses = MAX_PULSES;
       this.acc = 0;
@@ -82,6 +158,46 @@
         if (Math.random() < spread) {
           this.pulses.push({ a: i, b: j, t: 0, v: speed * (0.7 + Math.random() * 0.6) });
         }
+      }
+    }
+
+    /* Denk-Puls: ein Signal läuft vom Kern über die Synapsen nach außen (1–2 Zweige je Neuron). */
+    fireOut(i, speed = 2.6) {
+      const n = this.nodes[i];
+      n.fire = 1;
+      const out = n.links.filter((j) => this.nodes[j].d > n.d + 0.02);
+      if (!out.length) return;
+      for (let k = out.length - 1; k > 0; k--) {  // mischen
+        const r = (Math.random() * (k + 1)) | 0;
+        [out[k], out[r]] = [out[r], out[k]];
+      }
+      const branches = Math.random() < 0.35 ? 2 : 1;
+      for (const j of out.slice(0, branches)) {
+        if (this.pulses.length >= this.maxPulses) break;
+        this.pulses.push({ a: i, b: j, t: 0, v: speed * (0.85 + Math.random() * 0.3), out: true });
+      }
+    }
+
+    /* Gedächtnis: ein Signal zwischen zwei Kern-Neuronen (bleibt innen, läuft nicht weiter). */
+    memoryPulse() {
+      if (this.pulses.length >= this.maxPulses) return;
+      const a = this.core[(Math.random() * this.core.length) | 0];
+      let b = this.core[(Math.random() * this.core.length) | 0];
+      if (a === b) b = this.core[(this.core.indexOf(a) + 1) % this.core.length];
+      this.pulses.push({ a, b, t: 0, v: 1.3 + Math.random() * 0.6, mem: true });
+    }
+
+    burstOut() {
+      this.fireOut(this.inner[(Math.random() * this.inner.length) | 0]);
+    }
+
+    /* Viele Neuronen auf einmal zünden (Impuls, Startsequenz). inner = nur aus der Mitte heraus. */
+    ignite(count, inner, spread = 0.3, speed = 1.6) {
+      const pool = inner ? this.nodes.map((n, i) => [n.d, i]).sort((a, b) => a[0] - b[0]).slice(0, count * 2)
+        .map((x) => x[1]) : null;
+      for (let k = 0; k < count; k++) {
+        const i = pool ? pool[(Math.random() * pool.length) | 0] : (Math.random() * this.nodes.length) | 0;
+        this.fire(i, -1, spread, speed);
       }
     }
 
@@ -100,7 +216,11 @@
       const alive = [];
       for (const p of this.pulses) {
         p.t += dt * p.v;
-        if (p.t >= 1) this.fire(p.b, p.a, cfg.spread, cfg.speed);
+        if (p.t >= 1) {
+          if (p.mem) this.nodes[p.b].fire = Math.max(this.nodes[p.b].fire, 0.6);
+          else if (p.out) this.fireOut(p.b, p.v);
+          else this.fire(p.b, p.a, cfg.spread, cfg.speed);
+        }
         else alive.push(p);
       }
       this.pulses = alive.length > this.maxPulses ? alive.slice(-this.maxPulses) : alive;
@@ -133,19 +253,20 @@
       calm.stroke(ctx, (al) => orb._rgba(al));
       hot.stroke(ctx, (al) => orb._rgba(al, 60));
       // Signale: Schweife gebündelt, Köpfe als ein Pfad
-      const trails = q.lines();
+      const trails = q.lines(), memTrails = q.lines();
       const heads = [];
       for (const p of this.pulses) {
         const na = this.nodes[p.a], nb = this.nodes[p.b];
         const t0 = Math.max(0, p.t - 0.22);
         const x = na.px + (nb.px - na.px) * p.t, y = na.py + (nb.py - na.py) * p.t;
         const depth = na.pz + (nb.pz - na.pz) * p.t;
-        trails.add(0.25 + depth * 0.55, na.px + (nb.px - na.px) * t0, na.py + (nb.py - na.py) * t0, x, y);
-        heads.push(x, y, 0.8 + depth * 1.3);
+        (p.mem ? memTrails : trails).add(0.25 + depth * 0.55, na.px + (nb.px - na.px) * t0, na.py + (nb.py - na.py) * t0, x, y);
+        heads.push(x, y, 0.8 + depth * 1.3 + (p.out ? 0.9 : 0));
       }
       ctx.lineCap = "round";
       ctx.lineWidth = 1.6;
       trails.stroke(ctx, (al) => orb._rgba(al, 90));
+      if (orb.memLevel > 0.01) memTrails.stroke(ctx, (al) => `rgba(${MEMORY_GOLD.join(",")},${al})`);
       ctx.lineCap = "butt";
       if (heads.length) {
         ctx.fillStyle = "rgba(255,255,255,0.85)";
@@ -158,15 +279,28 @@
       }
       // Leuchten feuernder Neuronen: vorgerendertes Sprite statt neuem Farbverlauf
       const sprite = orb._glowSprite();
+      const base = ctx.globalAlpha;  // Startsequenz blendet das Netz ein
       for (const n of this.nodes) {
         if (n.fire > 0.08) {
           const r = (0.9 + n.pz * 1.6) * n.ps;
           const size = r * 7 * n.fire + r;
-          ctx.globalAlpha = Math.min(1, 0.85 * n.fire);
+          ctx.globalAlpha = base * Math.min(1, 0.85 * n.fire);
           ctx.drawImage(sprite, n.px - size, n.py - size, size * 2, size * 2);
         }
       }
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = base;
+      // Erinnern: die Kern-Neuronen glühen golden und pulsieren
+      if (orb.memLevel > 0.01) {
+        const gold = orb._glowSprite(MEMORY_GOLD);
+        for (let k = 0; k < this.core.length; k++) {
+          const n = this.nodes[this.core[k]];
+          const beat = 0.65 + 0.35 * Math.sin(orb.t * 5 + k * 1.7);
+          const size = ((0.9 + n.pz * 1.6) * n.ps) * (6 + 5 * beat);
+          ctx.globalAlpha = base * orb.memLevel * (0.7 + 0.3 * beat);
+          ctx.drawImage(gold, n.px - size, n.py - size, size * 2, size * 2);
+        }
+        ctx.globalAlpha = base;
+      }
       // Neuronen – gebündelt nach Helligkeit
       const dots = q.dots();
       for (const n of this.nodes) {
@@ -224,9 +358,25 @@
   }
 
   class Orb {
-    constructor(canvas) {
+    constructor(canvas, overlay = null) {
       this.canvas = canvas;
       this.ctx = canvas.getContext("2d");
+      // eigene Ebene für Satelliten und Werkzeug-Strahlen: zoomt im Denkmodus nicht mit
+      this.overlay = overlay;
+      this.octx = overlay ? overlay.getContext("2d") : null;
+      this.overlayDirty = false;
+      this.zoom = 0;               // 0 = normal, 1 = in den Orb gezoomt (Gedankengang)
+      this.zoomTarget = 0;
+      this.tokenEnergy = 0;        // steigt mit jedem Token, klingt ab → Tempo des Denk-Pulses
+      this.burstAcc = 0;
+      this.ctxFrac = null;         // Kontext-Auslastung 0..1 (null = unbekannt)
+      this.ctxShow = 0;
+      this.ctxFlash = 0;
+      this.summarized = false;
+      this.memIds = new Map();     // laufende Gedächtnis-Aktionen: id → {born, until}
+      this.memLevel = 0;           // 0..1, weich ein-/ausblenden
+      this.memAcc = 0;
+      this.memLabel = "";
       this.state = "offline";
       this.color = PALETTE.offline.c.slice();
       this.speed = PALETTE.offline.speed;
@@ -239,6 +389,13 @@
       this.bars = new Float32Array(120);
       this.particles = Array.from({ length: 90 }, () => this._particle(true));
       this.net = new NeuralNet(150);
+      this.shocks = [];            // Impuls-Wellen
+      this.lastPulse = 0;
+      this.deform = 0;             // 0 = runder Hauptring, 1 = von der Stimme verformt
+      this.satellites = new Map(); // Werkzeug-/Routinen-Anzeigen auf dem Skalenring
+      this.labels = new Map();     // gerenderte Beschriftungen (Cache)
+      this.bootT = null;           // Startsequenz: Sekunden seit Beginn, null = aus
+      this.dt = 0.016;
       this.pool = new BatchPool();
       // Automatische Drosselung: bei dauerhaft niedriger Bildrate nur jedes 2. Frame zeichnen
       this.slow = false;
@@ -253,7 +410,88 @@
       requestAnimationFrame(this._frame.bind(this));
     }
 
-    setState(s) { if (PALETTE[s]) this.state = s; }
+    setState(s) {
+      if (!PALETTE[s] || s === this.state) return;
+      this.state = s;
+      if (IMPULSE[s]) this.pulse(s);
+    }
+
+    /* Spürbarer Moment: Welle(n) nach außen + das Netz zündet. */
+    pulse(kind) {
+      const now = performance.now();
+      if (now - this.lastPulse < 400 || this.reduced || this.bootT !== null) return;
+      this.lastPulse = now;
+      const cfg = IMPULSE[kind] || IMPULSE.speaking;
+      const c = (cfg.c || PALETTE[this.state].c).slice();
+      for (let i = 0; i < cfg.waves; i++) {
+        if (this.shocks.length >= 4) this.shocks.shift();
+        this.shocks.push({ r: 1, delay: i * 0.18, c });
+      }
+      this.net.ignite(cfg.fire, !!cfg.inner);
+    }
+
+    /* Startsequenz: Ringe bauen sich nacheinander auf, dann zündet das Netz von innen nach außen. */
+    boot() {
+      if (this.reduced) return;
+      this.bootT = 0;
+      this.booted = { mid: false, all: false };
+    }
+
+    setZoom(on) { this.zoomTarget = on ? 1 : 0; }
+
+    /* Ein Token (Antwort oder Gedankengang) – treibt den Denk-Puls an. */
+    token() { this.tokenEnergy = Math.min(14, this.tokenEnergy + 1); }
+
+    /* Kontext-Auslastung für den Ring; ein deutlicher Rückgang (Verdichten) blitzt kurz auf. */
+    setContext(frac, summarized) {
+      frac = Math.max(0, Math.min(1, frac || 0));
+      if (this.ctxFrac !== null && (frac < this.ctxFrac - 0.08 || (summarized && !this.summarized))) this.ctxFlash = 1;
+      if (this.ctxFrac === null) this.ctxShow = frac;
+      this.ctxFrac = frac;
+      this.summarized = summarized;
+    }
+
+    /* Gedächtnis-Aktion: statt eines Satelliten leuchten die Neuronen im Kern. */
+    memoryGlow(id, on, label = "") {
+      if (on) {
+        this.memIds.set(id, { born: this.t, until: null });
+        if (label) this.memLabel = label;
+      } else if (this.memIds.has(id)) {
+        const m = this.memIds.get(id);  // schnelle Aktionen trotzdem ~1,5 s zeigen
+        m.until = m.born + SAT_MIN_SECONDS;
+      }
+    }
+
+    addSatellite(id, label, icon = null) {
+      if (this.satellites.has(id)) { const s = this.satellites.get(id); s.leaving = false; s.leaveAt = null; return; }
+      if (this.satellites.size >= MAX_SATELLITES) return;
+      const n = this.satellites.size;
+      this.satellites.set(id, { label: String(label).slice(0, 18), a: this.t * 0.25 - Math.PI / 2 + n * 0.6,
+                                alpha: 0, leaving: false, err: false, born: this.t, leaveAt: null,
+                                beam: 0, back: null,  // Strahl hinaus (0..1) · Rückfluss mit dem Ergebnis
+                                icon: ICONS[icon] ? icon : null, flash: 0 });
+    }
+
+    removeSatellite(id, failed = false) {
+      const s = this.satellites.get(id);
+      if (!s) return;
+      s.err = s.err || failed;
+      if (s.back === null) s.back = 0;  // Ergebnis fließt zurück (grün/rot)
+      // kurze Werkzeuge nicht nur aufblitzen lassen: mindestens ~1,5 s sichtbar
+      const wait = Math.max(0, SAT_MIN_SECONDS - (this.t - s.born));
+      if (wait > 0) s.leaveAt = this.t + wait;
+      else s.leaving = true;
+    }
+
+    clearSatellites(keepPrefix = "") {
+      for (const id of [...this.satellites.keys()]) if (!keepPrefix || !id.startsWith(keepPrefix)) this.removeSatellite(id);
+      for (const id of [...this.memIds.keys()]) if (!keepPrefix || !id.startsWith(keepPrefix)) this.memoryGlow(id, false);
+    }
+
+    _bootP(start, dur) {  // Fortschritt 0..1 eines Abschnitts der Startsequenz (1 = fertig bzw. keine Sequenz)
+      if (this.bootT === null) return 1;
+      return Math.max(0, Math.min(1, (this.bootT - start) / dur));
+    }
     setLevel(v) { this.targetLevel = Math.max(0, Math.min(1, v)); }
     setSpectrum(arr) { this.spectrum = arr; }
 
@@ -275,6 +513,11 @@
       this.canvas.width = this.w * dpr;
       this.canvas.height = this.h * dpr;
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (this.overlay) {
+        this.overlay.width = this.w * dpr;
+        this.overlay.height = this.h * dpr;
+        this.octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
     }
 
     _rgba(a, boost = 0) {
@@ -319,25 +562,120 @@
       this.t += dt * motion;
       this.rot += dt * this.speed * motion;
       this.net.update(dt * motion, this);
+      this.dt = dt * motion;
+      this._tick(dt);
       this._draw();
     }
 
-    _glowSprite() {
-      const key = this.color.map((c) => (c / 8) | 0).join(",");
-      if (this._spriteKey !== key) {
-        const c = this._sprite || (this._sprite = document.createElement("canvas"));
+    _tick(dt) {
+      // Wellen wachsen und verblassen
+      for (const s of this.shocks) {
+        if (s.delay > 0) s.delay -= dt;
+        else s.r += dt * 1.5;
+      }
+      this.shocks = this.shocks.filter((s) => s.r < 2.3);
+      // Ring-Verformung nur beim Sprechen/Zuhören
+      const want = (this.state === "speaking" || this.state === "listening") && this.level > 0.02 ? 1 : 0;
+      this.deform = lerp(this.deform, want, 1 - Math.pow(0.02, dt));
+      this.zoom = lerp(this.zoom, this.zoomTarget, 1 - Math.pow(0.02, dt));
+      // Gedächtnis: Kern glüht, Signale kreisen innen; klingt nach dem Ergebnis in ~1 s aus
+      for (const [id, m] of this.memIds) if (m.until !== null && this.t >= m.until) this.memIds.delete(id);
+      this.memLevel = lerp(this.memLevel, this.memIds.size ? 1 : 0, 1 - Math.pow(this.memIds.size ? 0.02 : 0.06, dt));
+      if (this.memIds.size && this.bootT === null) {
+        this.memAcc += dt * (this.reduced ? 2 : 7);
+        while (this.memAcc >= 1) { this.memAcc -= 1; this.net.memoryPulse(); }
+      } else this.memAcc = 0;
+      // Denk-Puls: Impulse vom Kern nach außen, schneller mit jedem Token, ruhiger wenn der Stream stockt
+      this.tokenEnergy *= Math.exp(-dt * 1.4);
+      if (this.state === "thinking" && this.bootT === null) {
+        this.burstAcc += dt * (1.2 + this.tokenEnergy * 0.55) * (this.reduced ? 0.3 : 1);
+        while (this.burstAcc >= 1) { this.burstAcc -= 1; this.net.burstOut(); }
+      } else this.burstAcc = 0;
+      // Kontext-Ring gleitet zum neuen Wert
+      if (this.ctxFrac !== null) this.ctxShow = lerp(this.ctxShow, this.ctxFrac, 1 - Math.pow(0.1, dt));
+      this.ctxFlash *= Math.exp(-dt * 1.8);
+      for (const s of this.satellites.values()) {
+        s.beam = Math.min(1, s.beam + dt * 2.2);
+        // Rückfluss erst, wenn der Strahl angekommen ist (auch bei sehr schnellen Werkzeugen)
+        if (s.back !== null && s.back < 1 && s.beam >= 1) {
+          s.back = Math.min(1, s.back + dt * 1.8);
+          if (s.back >= 1) s.flash = 1;  // Ergebnis erreicht den Kern → Symbol blitzt auf
+        }
+        s.flash *= Math.exp(-dt * 2.5);
+      }
+      // Satelliten: gleichmäßig verteilt, weich ein-/ausblenden
+      const live = [...this.satellites.values()].filter((s) => !s.leaving);
+      // im oberen Bogen (±115° um 12 Uhr) verteilt und leicht pendelnd – unten steht die Statuszeile
+      live.forEach((s, i) => {
+        const spread = live.length > 1 ? -2 + (4 * i) / (live.length - 1) : 0;
+        const target = -Math.PI / 2 + spread * (live.length > 2 ? 1 : 0.6) + 0.18 * Math.sin(this.t * 0.35 + i);
+        const d = ((target - s.a) % TAU + TAU * 1.5) % TAU - Math.PI;
+        s.a += d * (1 - Math.pow(0.05, dt));
+      });
+      for (const [id, s] of this.satellites) {
+        if (s.leaveAt !== null && this.t >= s.leaveAt) { s.leaving = true; s.leaveAt = null; }
+        s.alpha = lerp(s.alpha, s.leaving ? 0 : 1, 1 - Math.pow(s.leaving ? 0.02 : 0.0005, dt));
+        if (s.leaving) s.a += dt * 0.6;
+        if (s.leaving && s.alpha < 0.03) this.satellites.delete(id);
+      }
+      // Startsequenz
+      if (this.bootT !== null) {
+        this.bootT += dt;
+        if (!this.booted.mid && this.bootT > 1.0) { this.booted.mid = true; this.net.ignite(30, true, 0.34, 1.4); }
+        if (!this.booted.all && this.bootT > 1.35) {
+          this.booted.all = true;
+          this.shocks.push({ r: 1, delay: 0, c: PALETTE[this.state].c.slice() });
+          this.net.ignite(30, false, 0.3, 1.8);
+        }
+        if (this.bootT > 1.9) this.bootT = null;
+      }
+    }
+
+    _label(text) {
+      let c = this.labels.get(text);
+      if (!c) {
+        c = document.createElement("canvas");
+        const g = c.getContext("2d");
+        const font = "700 13px ui-monospace, 'JetBrains Mono', monospace";
+        g.font = font;
+        const w = Math.ceil(g.measureText(text).width + text.length * 2) + 10;
+        c.width = w * 2; c.height = 36;
+        g.scale(2, 2);
+        g.font = font;
+        g.fillStyle = "rgba(235,250,255,0.98)";
+        g.shadowColor = "rgba(63,208,255,0.8)";
+        g.shadowBlur = 6;
+        g.textBaseline = "middle";
+        let x = 5;
+        for (const ch of text) { g.fillText(ch, x, 9); x += g.measureText(ch).width + 2; }  // Sperrung
+        c.w = w; c.h = 18;
+        if (this.labels.size > 40) this.labels.clear();
+        this.labels.set(text, c);
+      }
+      return c;
+    }
+
+    _glowSprite(rgb = null) {
+      const col = rgb || this.color;
+      const key = col.map((c) => (c / 8) | 0).join(",");
+      this._sprites = this._sprites || new Map();
+      let c = this._sprites.get(key);
+      if (!c) {
+        if (this._sprites.size > 12) this._sprites.clear();  // Orb-Farbe gleitet → alte Stufen verwerfen
+        c = document.createElement("canvas");
         c.width = c.height = 64;
         const g = c.getContext("2d");
-        g.clearRect(0, 0, 64, 64);
+        const [r, gg, b] = col;
+        const rgba = (a, boost) => `rgba(${Math.min(255, r + boost) | 0},${Math.min(255, gg + boost) | 0},${Math.min(255, b + boost) | 0},${a})`;
         const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-        grad.addColorStop(0, this._rgba(1, 150));
-        grad.addColorStop(0.35, this._rgba(0.45, 60));
+        grad.addColorStop(0, rgba(1, 150));
+        grad.addColorStop(0.35, rgba(0.45, 60));
         grad.addColorStop(1, "rgba(0,0,0,0)");
         g.fillStyle = grad;
         g.fillRect(0, 0, 64, 64);
-        this._spriteKey = key;
+        this._sprites.set(key, c);
       }
-      return this._sprite;
+      return c;
     }
 
     _draw() {
@@ -353,14 +691,17 @@
       ctx.save();
       ctx.translate(cx, cy);
       ctx.globalCompositeOperation = "lighter";
+      const bootScale = this._bootP(0, 0.6), bootSeg = this._bootP(0.35, 0.45), bootCore = this._bootP(0.75, 0.5);
 
       // Hintergrund-Glühen
+      ctx.globalAlpha = bootCore;
       const glow = ctx.createRadialGradient(0, 0, R * 0.1, 0, 0, R * 2.1);
       glow.addColorStop(0, this._rgba(0.18 + lvl * 0.25));
       glow.addColorStop(0.45, this._rgba(0.05 + lvl * 0.05));
       glow.addColorStop(1, "rgba(0,0,0,0)");
       ctx.fillStyle = glow;
       ctx.fillRect(-R * 2.1, -R * 2.1, R * 4.2, R * 4.2);
+      ctx.globalAlpha = 1;
 
       // Äußerer Skalenring: zwei Pfade (lange / kurze Striche)
       const rot = this.rot * 0.15;
@@ -368,7 +709,7 @@
         ctx.strokeStyle = this._rgba(long ? 0.55 : 0.22);
         ctx.lineWidth = long ? 2 : 1;
         ctx.beginPath();
-        for (let i = long ? 0 : 1; i < 120; i += long ? 10 : 1) {
+        for (let i = long ? 0 : 1; i < 120 * bootScale; i += long ? 10 : 1) {
           if (!long && i % 10 === 0) continue;
           const a = (i / 120) * TAU + rot;
           const r1 = R * 1.62, r2 = R * (long ? 1.72 : 1.67);
@@ -378,10 +719,13 @@
         ctx.stroke();
       }
 
-      // Segmentierte, gegenläufig rotierende Ringe (je ein Pfad)
-      this._segRing(R * 1.48, 3, 6, this.rot * 0.6, 0.55, 0.12);
-      this._segRing(R * 1.36, 2, 24, -this.rot * 1.1, 0.35, 0.02);
-      this._segRing(R * 1.24, 4, 3, this.rot * 1.7, 0.7, 0.35);
+      // Segmentierte, gegenläufig rotierende Ringe (je ein Pfad) – beim Start einrastend
+      ctx.globalAlpha = bootSeg;
+      const snap = (1 - bootSeg) * 1.2;
+      this._segRing(R * 1.48, 3, 6, this.rot * 0.6 + snap, 0.55, 0.12);
+      this._segRing(R * 1.36, 2, 24, -this.rot * 1.1 - snap, 0.35, 0.02);
+      this._segRing(R * 1.24, 4, 3, this.rot * 1.7 + snap * 2, 0.7, 0.35);
+      ctx.globalAlpha = bootCore;
 
       // Scan-Kegel bei Ausführung/Denken
       if (this.state === "executing" || this.state === "thinking") {
@@ -420,12 +764,32 @@
       ctx.lineWidth = 2.2;
       bars.stroke(ctx, (al) => this._rgba(al, 30));
 
-      // Hauptring: Leuchten über breite, transparente Linien statt teurem shadowBlur
-      const ringR = R * pulse * 0.98;
+      // Hauptring: Leuchten über breite, transparente Linien statt teurem shadowBlur.
+      // Beim Sprechen/Zuhören formt die Stimme den Ring (Radius folgt den geglätteten Audio-Balken).
+      const ringR = R * pulse * 0.98 * (0.7 + 0.3 * bootCore);
+      const ring = new Path2D();  // einmal bauen, dreimal zeichnen
+      if (this.deform > 0.01) {
+        const pts = this._ringShape(ringR, R);
+        ring.moveTo(pts[0], pts[1]);
+        for (let i = 2; i < pts.length; i += 2) ring.lineTo(pts[i], pts[i + 1]);
+        ring.closePath();
+      } else ring.arc(0, 0, ringR, 0, TAU);
       for (const [width, alpha, boost] of [[12, 0.07, 0], [6, 0.16, 20], [2.5, 0.9, 40]]) {
         ctx.strokeStyle = this._rgba(alpha, boost);
         ctx.lineWidth = width;
-        ctx.beginPath(); ctx.arc(0, 0, ringR, 0, TAU); ctx.stroke();
+        ctx.stroke(ring);
+      }
+
+      // Impuls-Wellen
+      for (const s of this.shocks) {
+        if (s.delay > 0) continue;
+        const k = 1 - (s.r - 1) / 1.3;
+        const [r, g, b] = s.c;
+        for (const [width, alpha] of [[10, 0.08], [2, 0.7]]) {
+          ctx.strokeStyle = `rgba(${r | 0},${g | 0},${b | 0},${Math.max(0, alpha * k)})`;
+          ctx.lineWidth = width * (0.6 + k * 0.4);
+          ctx.beginPath(); ctx.arc(0, 0, R * s.r, 0, TAU); ctx.stroke();
+        }
       }
 
       // Weiches Leuchten im Zentrum, hinter dem Netz
@@ -442,8 +806,14 @@
 
       // Partikel – gebündelt
       const dots = q.dots();
+      const flow = this.state === "listening" ? -1 : this.state === "speaking" ? 1 : 0;  // nach innen / außen
       for (const pt of this.particles) {
         pt.a += pt.v * 0.016 * (0.6 + this.speed);
+        if (flow) {
+          pt.r += flow * this.dt * (0.18 + lvl * 0.5);
+          if (pt.r < 0.95) { pt.r = 1.8; pt.life = 0.05; }
+          if (pt.r > 1.85) { pt.r = 1.05; pt.life = 0.05; }
+        }
         pt.life += 0.004 + this.energy * 0.004;
         if (pt.life > 1) Object.assign(pt, this._particle(false));
         const fade = Math.sin(pt.life * Math.PI);
@@ -451,6 +821,16 @@
         dots.add(0.55 * fade, Math.cos(pt.a) * r, Math.sin(pt.a) * r, pt.s * (0.8 + lvl));
       }
       dots.fill(ctx, (al) => this._rgba(al, 50));
+
+      ctx.globalAlpha = 1;
+      if (this.memLevel > 0.02 && this.memLabel) {
+        const label = this._label(this.memLabel);
+        ctx.globalAlpha = this.memLevel * 0.9;
+        ctx.drawImage(label, -label.w / 2, R * 0.66, label.w, label.h);
+        ctx.globalAlpha = 1;
+      }
+      if (this.ctxFrac !== null) this._drawContextRing(R, bootSeg);
+      if (!this.octx && this.satellites.size) this._drawSatellites(ctx, R, 0);
 
       // Bestätigung: pulsierender Warnring
       if (this.state === "confirm" || this.state === "error") {
@@ -463,6 +843,167 @@
       }
 
       ctx.restore();
+      if (this.octx) this._drawOverlay(cx, cy, R);
+    }
+
+    /* Dünner Bogen: wie voll der Kontext ist (ab 85 % orange); beim Verdichten zieht er sich zusammen und blitzt. */
+    _drawContextRing(R, fade) {
+      const ctx = this.ctx;
+      const r = R * 1.555;
+      const start = -Math.PI / 2;
+      const warn = this.ctxShow >= 0.85;
+      const col = warn ? "255,179,71" : `${this.color[0] | 0},${this.color[1] | 0},${this.color[2] | 0}`;
+      ctx.lineCap = "round";
+      ctx.strokeStyle = `rgba(${col},${0.07 * fade})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.stroke();
+      const end = start + TAU * Math.max(0.004, this.ctxShow);
+      for (const [width, alpha] of [[7, 0.1 + this.ctxFlash * 0.35], [2, 0.75]]) {
+        ctx.strokeStyle = `rgba(${col},${alpha * fade})`;
+        ctx.lineWidth = width + this.ctxFlash * 4;
+        ctx.beginPath(); ctx.arc(0, 0, r, start, end); ctx.stroke();
+      }
+      // Endpunkt mit kleiner Prozentangabe
+      const ex = Math.cos(end) * r, ey = Math.sin(end) * r;
+      ctx.fillStyle = `rgba(${col},${0.95 * fade})`;
+      ctx.beginPath(); ctx.arc(ex, ey, 2.6 + this.ctxFlash * 2, 0, TAU); ctx.fill();
+      const label = this._label(`CTX ${Math.round(this.ctxShow * 100)} %`);
+      const lx = Math.cos(end) * (r + 16), ly = Math.sin(end) * (r + 16);
+      ctx.globalAlpha = 0.75 * fade;
+      const lw = label.w * 0.8, lh = label.h * 0.8;  // links vom Punkt nach links, rechts nach rechts
+      ctx.drawImage(label, lx - (lw / 2) * (1 - Math.cos(end)), ly - lh / 2, lw, lh);
+      ctx.globalAlpha = 1;
+      const m = start + TAU * 0.85;  // Marke: ab hier wird verdichtet
+      ctx.strokeStyle = `rgba(255,179,71,${0.45 * fade})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(m) * (r - 5), Math.sin(m) * (r - 5));
+      ctx.lineTo(Math.cos(m) * (r + 5), Math.sin(m) * (r + 5));
+      ctx.stroke();
+      ctx.lineCap = "butt";
+    }
+
+    /* Eigene Ebene: Satelliten + Werkzeug-Strahlen. Im Denkmodus kreisen sie auf einer Ellipse um den
+     * Gedankenkasten (der Orb darunter ist dann vergrößert und abgedunkelt). */
+    _drawOverlay(cx, cy, R) {
+      const ctx = this.octx;
+      if (!this.satellites.size) {
+        if (this.overlayDirty) { ctx.clearRect(0, 0, this.w, this.h); this.overlayDirty = false; }
+        return;
+      }
+      ctx.clearRect(0, 0, this.w, this.h);
+      this.overlayDirty = true;
+      ctx.save();
+      ctx.translate(cx, cy);
+      this._drawSatellites(ctx, R, this.zoom);
+      ctx.restore();
+    }
+
+    _satGeometry(R, z) {
+      // Gedankenkasten wie im CSS: min(58 % Breite, 540) × min(48 % Höhe des Kerns, 380)
+      const boxW = Math.min(this.w * 0.58, 540), boxH = Math.min((this.h + 92) * 0.48, 380);
+      return {
+        rx: lerp(R * 1.36, boxW / 2 + 34, z), ry: lerp(R * 1.36, boxH / 2 + 30, z),
+        ix: lerp(R * 0.3, boxW / 2 - 6, z), iy: lerp(R * 0.3, boxH / 2 - 6, z),
+      };
+    }
+
+    _ringShape(ringR, R) {
+      const N = 72, bars = this.bars, nb = bars.length;
+      const pts = this._pts || (this._pts = new Float32Array(N * 2));
+      const amp = R * 0.07 * this.deform;
+      for (let k = 0; k < N; k++) {
+        const a = (k / N) * TAU - Math.PI / 2;
+        const v = bars[Math.floor((k / N) * nb)] || 0;
+        const r = ringR + amp * (v - 0.15) * 1.4;
+        pts[k * 2] = Math.cos(a) * r;
+        pts[k * 2 + 1] = Math.sin(a) * r;
+      }
+      return pts;
+    }
+
+    _drawSatellites(ctx, R, z) {
+      const sprite = this._glowSprite();
+      const g = this._satGeometry(R, z);
+      const col = `${this.color[0] | 0},${this.color[1] | 0},${this.color[2] | 0}`;
+      for (const s of this.satellites.values()) {
+        const ca = Math.cos(s.a), sa = Math.sin(s.a);
+        const x = ca * g.rx, y = sa * g.ry;          // Satellit
+        const x0 = ca * g.ix, y0 = sa * g.iy;        // Startpunkt des Strahls (Kern bzw. Kastenrand)
+        const at = (t) => [x0 + (x - x0) * t, y0 + (y - y0) * t];
+        // Werkzeug-Strahl: feine Spur, darauf fließen Lichtpunkte vom Kern ins Ziel, solange das Werkzeug läuft
+        ctx.globalAlpha = s.alpha;
+        ctx.strokeStyle = `rgba(${col},0.12)`;
+        ctx.lineWidth = 1;
+        const [bx, by] = at(s.beam);
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(bx, by); ctx.stroke();
+        if (s.back === null || s.back < 1) {
+          const n = s.icon ? 8 : 4;
+          ctx.fillStyle = `rgba(${col},0.95)`;
+          ctx.beginPath();
+          for (let k = 0; k < n; k++) {
+            const t = ((this.t * 0.9 + k / n) % 1) * s.beam;
+            const [px, py] = at(t);
+            const r = (s.icon ? 2.1 : 1.6) * Math.sin(Math.PI * Math.min(1, t / Math.max(0.01, s.beam)));
+            if (r > 0.2) { ctx.moveTo(px + r, py); ctx.arc(px, py, r, 0, TAU); }
+          }
+          ctx.fill();
+        }
+        // hinaus: heller Lichtkopf vom Kern zum Satelliten
+        if (s.beam < 1) this._beamHead(ctx, at, s.beam, `${col}`);
+        // zurück: Ergebnis fließt grün (ok) bzw. rot (Fehler) zum Kern
+        if (s.back !== null && s.back < 1) this._beamHead(ctx, at, 1 - s.back, s.err ? "255,93,108" : "77,255,184", true);
+        // Satellit: Symbol (z. B. Terminal, Wolke) oder leuchtender Punkt
+        const size = (s.icon ? 30 : 22) + 4 * Math.sin(this.t * 6 + s.a * 3);
+        ctx.drawImage(sprite, x - size, y - size, size * 2, size * 2);
+        const pad = s.icon ? this._drawIcon(ctx, s, x, y, col) : 8;
+        if (!s.icon) {
+          ctx.fillStyle = s.err ? "rgba(255,93,108,0.95)" : "rgba(255,255,255,0.9)";
+          ctx.beginPath(); ctx.arc(x, y, 4, 0, TAU); ctx.fill();
+        }
+        // Beschriftung zentriert über (obere Hälfte) bzw. unter (untere Hälfte) dem Punkt, nie auf dem Kopf
+        const label = this._label(s.label);
+        const ly = y + (sa < 0 ? -label.h - pad : pad);
+        ctx.drawImage(label, x - label.w / 2, ly, label.w, label.h);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    /* Symbol zeichnen; liefert den Abstand für die Beschriftung. Blitzt beim Ergebnis grün bzw. rot auf. */
+    _drawIcon(ctx, s, x, y, col) {
+      const paths = iconPath(s.icon);
+      const scale = 21;
+      const flashCol = s.err ? "255,93,108" : "77,255,184";
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(scale, scale);
+      ctx.lineJoin = ctx.lineCap = "round";
+      ctx.fillStyle = "rgba(2,10,18,0.78)";  // dunkler Grund, damit das Symbol vor dem Netz lesbar bleibt
+      ctx.fill(paths.frame);
+      for (const [width, alpha] of [[5, 0.14], [1.6, 0.95]]) {
+        ctx.lineWidth = width / scale;
+        ctx.strokeStyle = s.flash > 0.05 ? `rgba(${flashCol},${alpha})` : `rgba(${col},${alpha})`;
+        ctx.stroke(paths.frame);
+        if (paths.cursor && Math.sin(this.t * 7) > -0.2) ctx.stroke(paths.cursor);  // blinkender Cursor
+      }
+      if (paths.animate) paths.animate(ctx, this.t, s.flash > 0.05 ? flashCol : col);
+      ctx.restore();
+      return scale + 10;
+    }
+
+    _beamHead(ctx, at, t, rgb, back = false) {
+      const t0 = back ? Math.min(1, t + 0.28) : Math.max(0, t - 0.28);
+      const [hx, hy] = at(t), [tx, ty] = at(t0);
+      const grad = ctx.createLinearGradient(tx, ty, hx, hy);
+      grad.addColorStop(0, `rgba(${rgb},0)`);
+      grad.addColorStop(1, `rgba(${rgb},0.95)`);
+      ctx.strokeStyle = grad;
+      ctx.lineCap = "round";
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(hx, hy); ctx.stroke();
+      ctx.lineCap = "butt";
+      ctx.fillStyle = `rgba(${rgb},1)`;
+      ctx.beginPath(); ctx.arc(hx, hy, 3.2, 0, TAU); ctx.fill();
     }
 
     _segRing(radius, width, count, rot, alpha, gapRatio) {

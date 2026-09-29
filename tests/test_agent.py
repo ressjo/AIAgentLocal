@@ -29,7 +29,7 @@ def test_plain_answer_logged_to_journal(cfg, llm, memory):
     answer, events, _ = run(collect(agent, "Hallo Jarvis"))
     assert "Hallo Jarvis" in answer
     assert any(e["type"] == "token" for e in events)
-    assert events[-1]["type"] == "assistant_end"
+    assert [e["type"] for e in events][-2:] == ["assistant_end", "state"] and events[-1]["state"] == "idle"
     day = memory.journal.days()[0]
     assert "Hallo Jarvis" in memory.journal.read(day)
 
@@ -175,3 +175,13 @@ def test_repeated_identical_calls_are_skipped_and_stopped(cfg, memory, monkeypat
     assert "mach weiter" in answer
     skipped = [m for m in memory.conversation.history if m["role"] == "tool" and "bereits ausgeführt" in m["content"]]
     assert len(skipped) == 2
+
+
+def test_cached_prompt_counts_are_not_taken_as_prompt_size():
+    """Ollama meldet bei Cache-Treffern nur die neuen Token – das ist keine Prompt-Größe."""
+    from orbwise.agent import prompt_size
+
+    assert prompt_size({"prompt_total": 300}, 6000) == 0          # Cache-Treffer
+    assert prompt_size({"prompt_total": 5400}, 6000) == 5400      # echte Größe
+    assert prompt_size({}, 6000) == 0
+    assert prompt_size({"prompt_total": 900, "prompt_cached": 850}, 6000) == 900  # llama-server: volle Größe

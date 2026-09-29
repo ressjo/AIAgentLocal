@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -47,6 +48,7 @@ def test_added_models_become_profiles(tmp_path):
 
 class FakeOllama(BaseHTTPRequestHandler):
     pulled: list = []
+    deleted: list = []
 
     def log_message(self, *a):
         pass
@@ -61,8 +63,15 @@ class FakeOllama(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/api/tags":
-            return self._json({"models": [{"name": "qwen3:8b"}]})
+            return self._json({"models": [{"name": "qwen3:8b", "size": 5_200_000_000},
+                                          {"name": "qwen3:14b", "size": 9_300_000_000},
+                                          {"name": "llama3.1:8b", "size": 4_900_000_000}]})
         self._json({}, 404)
+
+    def do_DELETE(self):
+        req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        FakeOllama.deleted.append(req.get("model"))
+        self._json({})
 
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
@@ -73,6 +82,16 @@ class FakeOllama(BaseHTTPRequestHandler):
         self.end_headers()
         if req["model"] == "gibts:nicht":
             self.wfile.write(b'{"error":"pull model manifest: file does not exist"}\n')
+            return
+        if req["model"] == "langsam:1b":  # großer Download – wird im Test abgebrochen
+            try:
+                for i in range(200):
+                    line = {"status": "downloading", "completed": i, "total": 200}
+                    self.wfile.write((json.dumps(line) + "\n").encode())
+                    self.wfile.flush()
+                    time.sleep(0.05)
+            except (BrokenPipeError, ConnectionResetError):
+                FakeOllama.aborted = True
             return
         FakeOllama.pulled.append(req["model"])
         for line in ({"status": "pulling manifest"}, {"status": "downloading", "completed": 50, "total": 100},
@@ -119,3 +138,78 @@ def test_pull_via_web_api(cfg, ollama, monkeypatch):
             assert "does not exist" in ev["error"]
         assert client.post("/api/models/pull", json={"tag": "; rm -rf /"}).status_code == 400
     assert FakeOllama.pulled == ["qwen3:14b"]
+
+
+def model_pull_events(ws, until):
+    while True:
+        ev = ws.receive_json()
+        if ev["type"] == "model_pull":
+            if until(ev):
+                return ev
+
+
+def test_cancel_download_and_delete_models(cfg, ollama, monkeypatch, tmp_path):
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    cfg.llm.base_url = ollama
+    FakeOllama.deleted, FakeOllama.aborted = [], False
+    from orbwise.server import create_app
+    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
+        with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
+            ws.receive_json()
+            # Download abbrechen
+            assert client.post("/api/models/pull", json={"tag": "langsam:1b"}).status_code == 200
+            model_pull_events(ws, lambda ev: ev.get("completed"))
+            running = client.get("/api/models").json()["pulls"]
+            assert running[0]["tag"] == "langsam:1b" and running[0]["total"] == 200
+            assert client.delete("/api/models/pull/langsam:1b").status_code == 200
+            assert model_pull_events(ws, lambda ev: ev.get("cancelled") or ev.get("done") or ev.get("error")) == \
+                {"type": "model_pull", "tag": "langsam:1b", "cancelled": True}
+            assert client.get("/api/models").json()["pulls"] == []
+            assert "langsam-1b" not in [p["name"] for p in client.get("/api/models").json()["profiles"]]
+            assert client.delete("/api/models/pull/langsam:1b").status_code == 404
+
+            # Geladenes Modell löschen
+            client.post("/api/models/pull", json={"tag": "llama3.1:8b"})
+            model_pull_events(ws, lambda ev: ev.get("done") or ev.get("error"))
+        models = {p["name"]: p for p in client.get("/api/models").json()["profiles"]}
+        assert models["llama3.1-8b"]["deletable"] and models["llama3.1-8b"]["size_gb"] == 4.9
+        assert not models["standard"]["deletable"]  # aus der config.yaml
+        assert client.delete("/api/models/standard").status_code in (400, 409)
+        assert client.delete("/api/models/gibtsnicht").status_code == 404
+        # nutzt ein anderes Profil dasselbe Ollama-Modell, bleiben die Dateien (hier: standard = qwen3:14b)
+        mdl.register_model(cfg.memory.dir.parent / "state.json", "qwen3:14b")
+        client.post("/api/models/reload")
+        assert client.delete("/api/models/qwen3-14b").json()["ok"] and FakeOllama.deleted == []
+        assert client.post("/api/models/llama3.1-8b/activate").status_code == 200
+        assert client.delete("/api/models/llama3.1-8b").status_code == 409  # aktiv
+        assert client.post("/api/models/standard/activate").status_code == 200
+        assert client.delete("/api/models/llama3.1-8b").json()["ok"]
+        assert "llama3.1-8b" not in [p["name"] for p in client.get("/api/models").json()["profiles"]]
+        assert FakeOllama.deleted == ["llama3.1:8b"]
+        assert "llama3.1:8b" not in mdl.added_models(cfg.memory.dir.parent / "state.json")
+
+
+def test_delete_bonsai_removes_model_files_only(cfg, ollama, monkeypatch, tmp_path):
+    from orbwise import bonsai
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    d = tmp_path / "bonsai"
+    (d / "models" / "gguf").mkdir(parents=True)
+    (d / "models" / "gguf" / "Bonsai-27B.gguf").write_bytes(b"x" * 1000)
+    (d / "scripts").mkdir()
+    (d / "scripts" / "start_llama_server.sh").write_text("#!/bin/sh\n")
+    monkeypatch.setenv("ORBWISE_BONSAI_DIR", str(d))
+    cfg.llm.base_url = ollama
+    state = cfg.memory.dir.parent / "state.json"
+    gpu = {"vendor": "amd", "name": "RX 6600", "vram_gb": 8}
+    mdl.register_profile(state, bonsai.PROFILE_NAME, bonsai.make_profile(gpu, d))
+    from orbwise.server import create_app
+    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
+        assert next(p for p in client.get("/api/models").json()["profiles"] if p["name"] == "bonsai")["deletable"]
+        assert client.delete("/api/models/bonsai").json()["ok"]
+        assert "bonsai" not in [p["name"] for p in client.get("/api/models").json()["profiles"]]
+    assert not bonsai.model_files(d) and (d / "scripts" / "start_llama_server.sh").exists()
+    assert bonsai.PROFILE_NAME not in mdl.added_profiles(state)

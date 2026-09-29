@@ -22,6 +22,7 @@ from .tools.proc import clip
 from .tools.registry import (
     BLOCKED,
     CONFIRM,
+    SAFE,
     ToolContext,
     coerce_args,
     get_tool,
@@ -32,6 +33,27 @@ from .tools.registry import (
 from .tools.system import _os_name
 
 log = logging.getLogger(__name__)
+
+# Nach dem Lesen fremder Mailinhalte brauchen auch sonst sichere Tools dieser Gruppen eine Bestätigung –
+# eine Mail könnte versteckte Anweisungen enthalten (z. B. Daten per fetch_url nach außen schicken).
+TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_briefing"}
+TAINT_GUARDED = {"shell", "web", "files", "apps", "obsidian", "trilium", "calendar_tools", "homeassistant",
+                 "memory_tools", "reminder_tools", "power", "telegram_tools"}
+
+
+def is_taint_source(name: str, result: str) -> bool:
+    """Bringt dieses Tool-Ergebnis fremden Text (Mails) in den Verlauf?"""
+    return name in TAINT_SOURCES and (name != "daily_briefing" or "E-Mail:" in result)
+
+
+def prompt_size(stats: dict, estimated: int) -> int:
+    """Echte Prompt-Größe laut Server – 0, wenn sie unbrauchbar ist: Ollama zählt bei einem Cache-Treffer nur die
+    neu verarbeiteten Token (prompt_eval_count); so ein Wert weit unter der Schätzung würde das Budget aufblähen."""
+    total = int(stats.get("prompt_total") or 0)
+    if stats.get("prompt_cached") is not None:
+        return total  # llama-server nennt den Cache-Anteil getrennt – dort ist total die volle Größe
+    return 0 if total and total < 0.6 * estimated else total
+
 
 ANSWER_RESERVE = 1500  # Token, die im Kontextfenster für die Antwort frei bleiben
 Emit = Callable[[dict], Awaitable[None]]
@@ -84,6 +106,9 @@ class Agent:
         self.llm = llm
         self.memory = memory
         self._budget_scale = 1.0  # < 1, wenn der Server „Kontext zu klein“ gemeldet hat
+        # Verhältnis echte/geschätzte Prompt-Token je Modellprofil (lernt aus den Zahlen des Servers)
+        self._token_ratio: dict[str, float] = {}
+        self._turn_time = ""  # Uhrzeit der aktuellen Anfrage (bleibt über alle Schritte gleich → Cache)
         self._think: bool | None = None
         self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
         self.tools = load_all_tools()
@@ -113,15 +138,20 @@ class Agent:
         facts = self.memory.facts_text()
         if facts:
             sections.append(prompts.section(self.cfg, "facts") + "\n" + facts)
-        mem_text = self.memory.format_hits(hits)
-        if mem_text:
-            sections.append(prompts.section(self.cfg, "memories") + "\n" + mem_text)
         if conv.running_summary:
             sections.append(prompts.section(self.cfg, "summary") + "\n" + conv.running_summary)
         system = "\n\n".join(sections)
+        # Uhrzeit und Erinnerungen wechseln – sie kommen vor die aktuelle Nutzernachricht, nicht in den
+        # System-Prompt, damit der Anfang gleich bleibt (KV-Cache des Modell-Servers)
+        note = prompts.context_note(self.cfg, self._turn_time or datetime.now().strftime("%H:%M"),
+                                    self.memory.format_hits(hits))
+        note_t = est_tokens(note)
         total_budget = self.context_budget()
-        budget = total_budget - est_tokens(system) - self.schema_tokens
+        budget = total_budget - est_tokens(system) - self.schema_tokens - note_t
         history = conv.trimmed_history(max(budget, 1000))
+        last_user = max((i for i, m in enumerate(history) if m["role"] == "user"), default=None)
+        if last_user is not None:
+            history[last_user] = {**history[last_user], "content": note + (history[last_user].get("content") or "")}
         # Für die Anzeige „Kontext“ in der Oberfläche (Schätzung; echte Server-Token kommen nach dem Schritt)
         base_t, system_t = est_tokens(base), est_tokens(system)
         history_t = sum(msg_tokens(m) for m in history)
@@ -130,9 +160,9 @@ class Agent:
         self.last_context = {
             "window": self.model_window(), "budget": total_budget,
             "used": system_t + self.schema_tokens + history_t,
-            "parts": {"system": base_t, "tools": self.schema_tokens, "memory": system_t - base_t,
-                      "history": history_t},
-            "trimmed": trimmed,
+            "parts": {"system": base_t, "tools": self.schema_tokens, "memory": system_t - base_t + note_t,
+                      "history": history_t - note_t},
+            "trimmed": trimmed, "summarized": bool(conv.running_summary),
         }
         return [{"role": "system", "content": system}, *history]
 
@@ -150,7 +180,22 @@ class Agent:
         budget = self.model_window() - ANSWER_RESERVE
         if self.cfg.memory.context_budget_tokens:
             budget = min(budget, self.cfg.memory.context_budget_tokens)
-        return max(2000, int(budget * self._budget_scale))
+        return max(2000, int(budget * self._budget_scale / self.token_ratio()))
+
+    def _profile_key(self) -> str:
+        return str(getattr(self.llm, "active", "") or "default")
+
+    def token_ratio(self) -> float:
+        return self._token_ratio.get(self._profile_key(), 1.0)
+
+    def learn_tokens(self, estimated: int, real: int) -> None:
+        """Schätzung an die echten Token des Servers angleichen (gleitend, begrenzt auf 0,6–1,3)."""
+        if estimated < 500 or not real:
+            return
+        key = self._profile_key()
+        sample = max(0.6, min(1.3, real / estimated))
+        old = self._token_ratio.get(key)
+        self._token_ratio[key] = round(sample if old is None else 0.7 * old + 0.3 * sample, 3)
 
     def choose_tools(self, used_groups: set[str] | None = None) -> None:
         """Bei kleinem Kontextfenster nur passende Tool-Gruppen mitschicken (siehe toolselect.py)."""
@@ -171,13 +216,28 @@ class Agent:
         """think: Denkmodus für diese Anfrage (None = Einstellung des Modell-Profils)."""
         async with self.lock:
             self._think = think
+            self._tainted = False
             try:
                 return await self._run(user_text, emit, confirm)
             finally:
                 self._think = None
 
+    async def run_in_chat(self, chat_id: str, title: str, text: str, emit: Emit, confirm: Confirm) -> tuple[str, str]:
+        """Für Routinen: Aufgabe in einem eigenen Chat erledigen – der aktive Chat des Nutzers bleibt unberührt.
+        Liefert (Antwort, Chat-ID)."""
+        async with self.lock:
+            self._think = None
+            self._tainted = False
+            with self.memory.in_chat(chat_id, title) as conv:
+                answer = await self._run(text, emit, confirm)
+                return answer, conv.chat_id
+
     async def _run(self, user_text: str, emit: Emit, confirm: Confirm) -> str:
+        self._turn_time = datetime.now().strftime("%H:%M")
         conv = self.memory.conversation
+        # Steht noch Mail-Text im Verlauf, kann er auch in späteren Anfragen wirken – dann bleibt der Schutz an
+        self._tainted = any(m.get("role") == "tool" and is_taint_source(m.get("tool_name", ""), m.get("content") or "")
+                            for m in conv.history)
         start_len = len(conv.history)
         await emit({"type": "state", "state": "thinking"})
         hits = await self.memory.retrieve(user_text, exclude_after=conv.window_start())
@@ -249,6 +309,9 @@ class Agent:
 
         answer = "\n\n".join(spoken)
         await emit({"type": "assistant_end", "id": msg_id, "text": answer})
+        # Antwort ist fertig – das Nachbereiten (Tagebuch, Verdichten per LLM) läuft still im Hintergrund
+        await emit({"type": "state", "state": "idle"})
+        conv.age_tool_results()  # lange Tool-Ergebnisse älterer Runden auf einen Auszug kürzen
         conv.save()
         await self.memory.log_exchange(user_text, answer, tool_notes)
         try:
@@ -281,8 +344,12 @@ class Agent:
                 stats = ev.get("stats") or {}
                 if stats.get("tps"):
                     await emit({"type": "llm_stats", **stats})
-                if self.last_context is not None and stats.get("prompt_total"):
-                    self.last_context["real"] = stats["prompt_total"]
+                total = prompt_size(stats, (self.last_context or {}).get("used", 0))
+                if self.last_context is not None and total:
+                    self.last_context["real"] = total
+                    if stats.get("prompt_cached") is not None:
+                        self.last_context["cached"] = stats["prompt_cached"]
+                    self.learn_tokens(self.last_context.get("used", 0), total)
                     await emit({"type": "context", **self.last_context})
         tail = filt.flush()
         if tail:
@@ -342,30 +409,50 @@ class Agent:
             return name, f"Fehlende Parameter: {', '.join(missing)}", f"{name}: Parameter fehlen"
         ctx = ToolContext(cfg=self.cfg, memory=self.memory, emit=emit, call_id=call_id, services=self.services)
         risk, reason = spec.assess(ctx, args)
+        if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED:
+            risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
         args_str = json.dumps(args, ensure_ascii=False)
-        await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": reason})
+        await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": reason,
+                    "group": spec.group})
 
         if risk == BLOCKED:
             result = f"BLOCKIERT ({reason}). Dieser Befehl wird aus Sicherheitsgründen nie ausgeführt."
             await emit({"type": "tool_result", "id": call_id, "status": "blocked", "text": result})
             return name, result, f"{name} {args_str} → blockiert ({reason})"
+        edited: list[str] = []
         if risk == CONFIRM:
             await emit({"type": "state", "state": "confirm"})
-            if not await confirm(call_id, name, args, reason):
+            decision = await confirm(call_id, name, args, reason)
+            changes = {}
+            if isinstance(decision, tuple):  # (bestätigt, im Fenster bearbeitete Felder)
+                decision, changes = decision[0], decision[1] or {}
+            if not decision:
                 result = "Der Nutzer hat die Ausführung abgelehnt."
                 await emit({"type": "tool_result", "id": call_id, "status": "denied", "text": result})
                 return name, result, f"{name} {args_str} → abgelehnt"
+            # nur die freigegebenen Felder übernehmen (z. B. An/Betreff/Text einer Mail)
+            for key in spec.editable:
+                if key in changes and str(changes[key]) != str(args.get(key, "")):
+                    args[key] = str(changes[key])[:50_000]
+                    edited.append(key)
+            if edited:
+                args_str = json.dumps(args, ensure_ascii=False)
 
         await emit({"type": "state", "state": "executing", "tool": name})
         try:
             result = await spec.func(ctx, **args)
             status = "ok"
+            if is_taint_source(name, result):
+                self._tainted = True
         except asyncio.CancelledError:
             await emit({"type": "tool_result", "id": call_id, "status": "error", "text": "abgebrochen"})
             raise
         except Exception as e:  # noqa: BLE001
             log.exception("Tool %s fehlgeschlagen", name)
             result, status = f"Fehler: {e}", "error"
+        if edited:  # das Modell soll wissen, was tatsächlich ausgeführt wurde
+            result += "\n(Vom Nutzer vor dem Ausführen geändert: " + ", ".join(edited) + " – " + \
+                json.dumps({k: args[k] for k in edited}, ensure_ascii=False)[:1500] + ")"
         await emit({"type": "tool_result", "id": call_id, "status": status, "text": clip(result, 3000)})
         first = result.strip().splitlines()[0] if result.strip() else ""
         return name, result, f"{name} {args_str} → {first[:160]}"

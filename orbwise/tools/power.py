@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Annotated
 
+from ..lang import T
 from . import proc
 from .registry import CONFIRM, SAFE, ToolContext, tool
 
@@ -20,6 +21,7 @@ ACTIONS = {
 ALIASES = {"shutdown": "poweroff", "aus": "poweroff", "ausschalten": "poweroff", "restart": "reboot",
            "neustart": "reboot", "standby": "suspend", "sleep": "suspend", "ruhezustand": "hibernate",
            "sperren": "lock", "abbrechen": "cancel"}
+ACTIONS_EN = {"poweroff": "shut down", "reboot": "restart", "suspend": "suspend", "hibernate": "hibernate"}
 START_DELAY = 5  # Sekunden – damit Jarvis die Antwort noch aussprechen kann
 
 # Für Tests austauschbar
@@ -34,10 +36,10 @@ def _action(name: str) -> str:
 def _risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     action = _action(args.get("action", ""))
     if action in ("lock", "cancel") or action not in ACTIONS:
-        return SAFE, "harmlos"
+        return SAFE, T("harmlos", "harmless")
     delay = int(args.get("delay_minutes") or 0)
-    when = f" in {delay} Minuten" if delay > 0 else ""
-    return CONFIRM, f"Rechner {ACTIONS[action][0]}{when}"
+    return CONFIRM, T(f"Rechner {ACTIONS[action][0]}" + (f" in {delay} Minuten" if delay > 0 else ""),
+                      f"{ACTIONS_EN[action]} the computer" + (f" in {delay} minutes" if delay > 0 else ""))
 
 
 async def _run_with_fallback(ctx: ToolContext, argv: list[str]) -> tuple[int | None, str]:

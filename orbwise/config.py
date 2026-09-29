@@ -258,11 +258,113 @@ class WeatherConfig(BaseModel):
     location: str = ""
 
 
+class MailConfig(BaseModel):
+    # IMAP-Postfach – für Proton Mail über die lokale Proton Mail Bridge (Standard: 127.0.0.1:1143, STARTTLS)
+    host: str = "127.0.0.1"
+    port: int = 1143
+    security: str = "starttls"  # starttls | ssl | none
+    username: str = ""
+    # Bei Proton: das Bridge-Passwort (nicht das Proton-Passwort); alternativ $ORBWISE_MAIL_PASSWORD
+    password: str = ""
+    # Zertifikat prüfen? Leer = nur bei fremden Servern (die Bridge auf localhost nutzt ein eigenes Zertifikat)
+    verify_ssl: bool | None = None
+    archive_folder: str = "Archive"
+    trash_folder: str = "Trash"
+    timeout: float = 30.0
+    # so viel Mailtext geht höchstens an das Modell
+    max_chars: int = 6000
+    # Mails senden (optional, standardmäßig aus): immer erst nach Bestätigung in einem Fenster, in dem Empfänger,
+    # Betreff und Text noch bearbeitet werden können. Proton Mail Bridge: SMTP auf 127.0.0.1:1025 mit STARTTLS.
+    send_enabled: bool = False
+    smtp_host: str = ""          # leer = wie host
+    smtp_port: int = 1025
+    smtp_security: str = "starttls"  # starttls | ssl | none
+    from_address: str = ""       # leer = username
+
+    @field_validator("security", "smtp_security")
+    @classmethod
+    def _security(cls, v: str) -> str:
+        v = (v or "starttls").strip().lower()
+        return v if v in ("starttls", "ssl", "none") else "starttls"
+
+    @property
+    def smtp_server(self) -> str:
+        return self.smtp_host or self.host
+
+    @property
+    def sender(self) -> str:
+        return self.from_address or self.username
+
+    @property
+    def secret(self) -> str:
+        return self.password or env("MAIL_PASSWORD")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.host and self.username and self.secret)
+
+    @property
+    def verify(self) -> bool:
+        if self.verify_ssl is not None:
+            return self.verify_ssl
+        return self.host.strip().lower() not in ("127.0.0.1", "localhost", "::1")
+
+
+BRIEFING_SECTIONS = ("weather", "calendar", "reminders", "mail", "paperless_inbox", "news", "updates", "storage")
+
+
+class TelegramConfig(BaseModel):
+    # Telegram-Bot (optional): vom Handy fragen, Erinnerungen aufs Handy, Rückfragen per Knopf.
+    # Token von @BotFather (oder $ORBWISE_TELEGRAM_TOKEN); chat_id nennt der Bot nach „/start“.
+    token: str = ""
+    chat_id: int = 0
+    # Hierhin speichert der Bot Dateien und Fotos, die du vom Handy schickst
+    inbox_dir: Path | None = None
+
+    @property
+    def inbox(self) -> Path:
+        return (self.inbox_dir or Path.home() / "Downloads" / "Orbwise-Telegram").expanduser()
+
+    @property
+    def secret(self) -> str:
+        return self.token or env("TELEGRAM_TOKEN")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.secret and self.chat_id)
+
+
+class BriefingConfig(BaseModel):
+    # Punkte in dieser Reihenfolge (Datum/Uhrzeit steht immer am Anfang); nicht eingerichtete Dienste entfallen
+    sections: list[str] = Field(default_factory=lambda: list(BRIEFING_SECTIONS))
+    # Termine und Erinnerungen/Fristen der nächsten Tage (0 = nur heute; 1 = heute + morgen …)
+    lookahead_days: int = 2
+    # Schlagzeilen zu diesen Themen (leer = keine Nachrichten), je Thema so viele
+    news_topics: list[str] = Field(default_factory=list)
+    news_count: int = 3
+    # Paperless: Tag des Posteingangs – leer = die in Paperless als Posteingang markierten Tags
+    inbox_tag: str = ""
+    # eigener Wunsch an das Modell, z. B. "Halte dich kurz und fang mit den Terminen an."
+    instructions: str = ""
+
+    @field_validator("sections")
+    @classmethod
+    def _sections(cls, v: list[str]) -> list[str]:
+        return list(dict.fromkeys(s for s in v if s in BRIEFING_SECTIONS))
+
+    @field_validator("lookahead_days", "news_count")
+    @classmethod
+    def _small(cls, v: int) -> int:
+        return max(0, min(int(v), 14))
+
+
 class Config(BaseModel):
     # Sprache von Orbwise und der Oberfläche: "de" (Deutsch) oder "en" (English)
     language: str = "de"
     host: str = "127.0.0.1"
     port: int = 8765
+    # Nur mit true startet Orbwise auf einer anderen Adresse als 127.0.0.1 (Dashboard hat keine Anmeldung!)
+    allow_remote: bool = False
     assistant_name: str = "Jarvis"
     user_name: str = ""
     # Zusätzliche Persönlichkeits-/Verhaltensanweisungen für den System-Prompt
@@ -277,6 +379,9 @@ class Config(BaseModel):
     homeassistant: HomeAssistantConfig = Field(default_factory=HomeAssistantConfig)
     weather: WeatherConfig = Field(default_factory=WeatherConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
+    briefing: BriefingConfig = Field(default_factory=BriefingConfig)
+    mail: MailConfig = Field(default_factory=MailConfig)
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     # Zusätzliche Websites für open_website: Name → URL; "{q}" wird durch die Suche ersetzt
     websites: dict[str, str] = Field(default_factory=dict)
 

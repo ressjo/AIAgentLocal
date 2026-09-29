@@ -1,4 +1,5 @@
-"""Paperless-ngx über die REST-API: Dokumente suchen, befragen, lesen und lokal als PDF öffnen (nur lesend).
+"""Paperless-ngx über die REST-API: Dokumente suchen, befragen, lesen und lokal als PDF öffnen; Metadaten
+(Korrespondent, Dokumenttyp, Tags, Titel, Datum) vorschlagen und nach Bestätigung übernehmen.
 
 Einrichtung: in Paperless oben rechts auf das Profil → „API-Auth-Token“ erzeugen und in der Config eintragen:
     paperless:
@@ -8,7 +9,10 @@ Einrichtung: in Paperless oben rechts auf das Profil → „API-Auth-Token“ er
 
 from __future__ import annotations
 
+import difflib
 import html
+import json
+import mimetypes
 import os
 import re
 import shutil
@@ -17,13 +21,19 @@ from typing import Annotated, Any
 
 import httpx
 
+from ..lang import T
 from . import proc
 from .netutil import client_kwargs, explain, html_instead_of_json, normalize_url
-from .registry import ToolContext, tool
+from .registry import BLOCKED, CONFIRM, SAFE, ToolContext, tool
+from .secretpaths import is_secret_path, secret_reason
 
 # Für Tests austauschbar (httpx.MockTransport)
 TRANSPORT: httpx.AsyncBaseTransport | None = None
 
+KINDS = {"correspondent": "correspondents", "document_type": "document_types", "tag": "tags"}
+KIND_LABEL = {"correspondents": "Korrespondent", "document_types": "Dokumenttyp", "tags": "Tag"}
+# Zuletzt geladene Namen je Art – damit die (synchrone) Bestätigungsübersicht neue Einträge erkennt
+_KNOWN: dict[str, list[str]] = {}
 
 
 class PaperlessError(RuntimeError):
@@ -89,7 +99,44 @@ class PaperlessClient:
         if kind not in self._names:
             data = await self.json(f"/{kind}/", page_size=1000) or {}
             self._names[kind] = {x["id"]: x.get("name", "") for x in data.get("results", [])}
+            _KNOWN[kind] = list(self._names[kind].values())
         return self._names[kind]
+
+    async def write(self, method: str, path: str, body: dict) -> dict:
+        r = await self.request(method, path, json=body)
+        if r.status_code >= 400:
+            detail = r.text[:300]
+            try:
+                detail = "; ".join(f"{k}: {v}" for k, v in r.json().items()) or detail
+            except (ValueError, AttributeError):
+                pass
+            raise PaperlessError(f"Paperless hat die Änderung abgelehnt ({r.status_code}): {detail}")
+        return r.json() if r.content else {}
+
+    async def upload(self, filename: str, data: bytes, content_type: str = "application/pdf", title: str = "") -> str:
+        """Dokument hochladen (POST /documents/post_document/) – liefert die Aufgaben-ID; Paperless verarbeitet es
+        danach im Hintergrund."""
+        r = await self.request("POST", "/documents/post_document/", files={"document": (filename, data, content_type)},
+                               data={"title": title} if title.strip() else None)
+        if r.status_code >= 400:
+            raise PaperlessError(f"Paperless hat den Upload abgelehnt ({r.status_code}): {r.text[:200]}")
+        try:
+            return str(r.json())
+        except ValueError:
+            return r.text.strip().strip('"')
+
+    async def resolve(self, kind: str, name: str, created: list[str]) -> int:
+        """ID zu einem Namen (Groß-/Kleinschreibung egal); fehlt er, wird er angelegt (Bestätigung liegt vor)."""
+        names = await self.names(kind)
+        wanted = name.strip().casefold()
+        for id_, existing in names.items():
+            if existing.casefold() == wanted:
+                return id_
+        new = await self.write("POST", f"/{kind}/", {"name": name.strip()})
+        names[new["id"]] = new.get("name", name.strip())
+        _KNOWN[kind] = list(names.values())
+        created.append(f"{KIND_LABEL[kind]} „{name.strip()}“")
+        return new["id"]
 
     async def document(self, doc_id: int) -> dict:
         doc = await self.json(f"/documents/{int(doc_id)}/")
@@ -275,6 +322,323 @@ async def paperless_open(
         return f"Heruntergeladen nach {target}, Öffnen fehlgeschlagen ({err})."
 
     return await _guard(run())
+
+
+async def download_document(cfg: Any, document_id: int, original: bool = False) -> tuple[str, bytes]:
+    """PDF (bzw. Original) eines Dokuments holen – liefert (Dateiname, Inhalt)."""
+    async with PaperlessClient(cfg) as pc:
+        doc = await pc.document(document_id)
+        ext = (Path(doc.get("original_file_name") or "").suffix or ".pdf") if original else ".pdf"
+        r = await pc.request("GET", f"/documents/{doc['id']}/download/", params={"original": "true"} if original else None)
+        if r.status_code >= 400:
+            raise PaperlessError(f"Download fehlgeschlagen ({r.status_code}).")
+        return _safe_name(doc["id"], doc.get("title", ""), ext), r.content
+
+
+UPLOAD_TYPES = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp", ".gif", ".txt", ".eml",
+                ".doc", ".docx", ".odt", ".xls", ".xlsx", ".ods", ".ppt", ".pptx", ".odp"}
+MAX_UPLOAD = 200_000_000
+
+
+def _in_telegram_inbox(cfg: Any, path: Path) -> bool:
+    tg = getattr(cfg, "telegram", None)
+    if tg is None:
+        return False
+    try:
+        return path.resolve().is_relative_to(tg.inbox.resolve())
+    except OSError:
+        return False
+
+
+def _upload_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
+    path = Path(str(args.get("path") or "")).expanduser()
+    if is_secret_path(path):
+        return BLOCKED, secret_reason()
+    if _in_telegram_inbox(ctx.cfg, path):
+        return SAFE, ""  # selbst vom Handy geschickt → direkt ablegen
+    return CONFIRM, T(f"Datei {path} an Paperless übergeben", f"hand file {path} over to Paperless")
+
+
+@tool("Legt eine lokale Datei (PDF, Foto, Office-Dokument) in Paperless ab – z. B. eine Datei, die der Nutzer per "
+      "Telegram geschickt hat. Paperless erkennt Text und Metadaten danach im Hintergrund.",
+      risk=_upload_risk, enabled=_enabled)
+async def paperless_upload(
+    ctx: ToolContext,
+    path: Annotated[str, "Pfad der Datei"],
+    title: Annotated[str, "Titel (optional; leer = Paperless wählt selbst)"] = "",
+) -> str:
+    p = Path(path).expanduser()
+    if not p.is_file():
+        return f"Datei nicht gefunden: {p}"
+    if p.suffix.lower() not in UPLOAD_TYPES:
+        return f"Paperless nimmt {p.suffix or 'diese Dateien'} nicht an (PDF, Bilder, Office-Dokumente gehen)."
+    if p.stat().st_size > MAX_UPLOAD:
+        return "Die Datei ist zu groß (höchstens 200 MB)."
+
+    async def run() -> str:
+        ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+        async with PaperlessClient(ctx.cfg) as pc:
+            task = await pc.upload(p.name, p.read_bytes(), ctype, title)
+        return f"An Paperless übergeben: {p.name} (Aufgabe {task}) – Paperless verarbeitet es gleich."
+
+    return await _guard(run())
+
+
+# ---------------------------------------------------------------- Metadaten vorschlagen und übernehmen
+
+MAX_SUGGEST, MAX_APPLY, MAX_LISTED = 10, 25, 150
+DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _load(value: Any) -> Any:
+    """Listen kommen vom Modell mal als Liste, mal als JSON-Text."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _ids(value: Any) -> list[int]:
+    value = _load(value)
+    items = re.findall(r"\d+", value) if isinstance(value, str) else value if isinstance(value, list) else [value]
+    out: list[int] = []
+    for x in items:
+        try:
+            if int(x) not in out:
+                out.append(int(x))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def _changes(value: Any) -> list[dict]:
+    value = _load(value)
+    if isinstance(value, dict):
+        value = [value]
+    return [c for c in value if isinstance(c, dict)] if isinstance(value, list) else []
+
+
+def _names_list(value: Any) -> list[str]:
+    value = _load(value)
+    if isinstance(value, str):
+        value = value.split(",")
+    return [str(x).strip() for x in value or [] if str(x).strip()] if isinstance(value, list) else []
+
+
+def _summary(c: dict) -> str:
+    parts = []
+    if str(c.get("title") or "").strip():
+        parts.append(f"Titel → „{str(c['title']).strip()}“")
+    if str(c.get("created") or "").strip():
+        parts.append(f"Datum → {str(c['created']).strip()}")
+    if str(c.get("correspondent") or "").strip():
+        parts.append(f"Korrespondent → {str(c['correspondent']).strip()}")
+    if str(c.get("document_type") or "").strip():
+        parts.append(f"Typ → {str(c['document_type']).strip()}")
+    parts += [f"+Tag {t}" for t in _names_list(c.get("add_tags"))]
+    parts += [f"−Tag {t}" for t in _names_list(c.get("remove_tags"))]
+    return " · ".join(parts) or "keine Änderung"
+
+
+def _new_entry(kind: str, name: str) -> str:
+    """„Korrespondent ‚X‘ (ähnlich: ‚Y‘)“, wenn der Name noch nicht existiert – sonst ''."""
+    known = _KNOWN.get(kind)
+    label = KIND_LABEL[kind]
+    if known is None:
+        return "?"  # Namen noch nicht geladen
+    if any(k.casefold() == name.casefold() for k in known):
+        return ""
+    lower = {k.casefold(): k for k in known}
+    close = difflib.get_close_matches(name.casefold(), list(lower), n=1, cutoff=0.6)
+    close = close or [k for k in lower if len(k) > 2 and (k in name.casefold() or name.casefold() in k)][:1]
+    return f"{label} „{name}“" + (f" (ähnlich vorhanden: „{lower[close[0]]}“)" if close else "")
+
+
+def _apply_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
+    changes = _changes(args.get("changes"))
+    lines = [f"Dok {c.get('document_id')}: {_summary(c)}" for c in changes[:MAX_APPLY]]
+    new: list[str] = []
+    for c in changes:
+        wanted = [("correspondents", str(c.get("correspondent") or "").strip()),
+                  ("document_types", str(c.get("document_type") or "").strip())]
+        wanted += [("tags", t) for t in _names_list(c.get("add_tags"))]
+        for kind, name in wanted:
+            note = _new_entry(kind, name) if name else ""
+            if note and note not in new:
+                new.append(note)
+    n = len(changes)
+    reason = T(f"Paperless-Metadaten ändern ({n} Dokument{'e' if n != 1 else ''})",
+               f"change Paperless metadata ({n} document{'s' if n != 1 else ''})") + ":\n" + "\n".join(lines)
+    if "?" in new:
+        reason += T("\nFehlende Korrespondenten/Typen/Tags werden neu angelegt (vorhandene Namen noch nicht geprüft).",
+                    "\nMissing correspondents/types/tags will be created (existing names not checked yet).")
+    elif new:
+        reason += T("\nNEU anlegen: ", "\nCREATE: ") + "; ".join(new)
+    return CONFIRM, reason
+
+
+@tool("Sammelt alles, um Korrespondent, Dokumenttyp, Tags, Titel und Datum für Paperless-Dokumente vorzuschlagen: "
+      "aktueller Stand, Vorschläge von Paperless, Textauszug und die vorhandenen Korrespondenten/Typen/Tags. "
+      "Danach den Vorschlag als Liste zeigen und mit paperless_apply_metadata übernehmen.", enabled=_enabled)
+async def paperless_suggest_metadata(
+    ctx: ToolContext,
+    document_ids: Annotated[list[int], f"IDs der Dokumente aus paperless_search (höchstens {MAX_SUGGEST}), z. B. [7, 8]"],
+) -> str:
+    async def run() -> str:
+        ids = _ids(document_ids)
+        if not ids:
+            return "Bitte Dokument-IDs angeben (z. B. aus paperless_search)."
+        skipped = ids[MAX_SUGGEST:]
+        ids = ids[:MAX_SUGGEST]
+        async with PaperlessClient(ctx.cfg) as pc:
+            known = {kind: await pc.names(kind) for kind in ("correspondents", "document_types", "tags")}
+            budget = max(300, pc.max_chars // len(ids))
+            blocks = []
+            for doc_id in ids:
+                try:
+                    doc = await pc.document(doc_id)
+                except PaperlessError as e:
+                    blocks.append(f"[{doc_id}] ✘ {e}")
+                    continue
+                lines = [await pc.describe(doc)]
+                try:
+                    sug = await pc.json(f"/documents/{doc_id}/suggestions/") or {}
+                except PaperlessError:
+                    sug = {}  # ältere Paperless-Versionen / Klassifikator noch nicht trainiert
+                hints = []
+                for key, label in (("correspondents", "Korrespondent"), ("document_types", "Typ"), ("tags", "Tags")):
+                    names = [known[key][x] for x in sug.get(key) or [] if x in known[key]]
+                    if names:
+                        hints.append(f"{label}: {', '.join(names)}")
+                if sug.get("dates"):
+                    hints.append("Daten im Text: " + ", ".join(str(d)[:10] for d in sug["dates"][:5]))
+                if hints:
+                    lines.append("  Paperless schlägt vor – " + " · ".join(hints))
+                text = re.sub(r"\s+", " ", doc.get("content") or "").strip()
+                lines.append(f"  Text: „{text[:budget]}{'…' if len(text) > budget else ''}“" if text
+                             else "  (kein erkannter Text – Vorschlag nur aus Titel/Dateiname möglich: "
+                                  f"{doc.get('original_file_name') or '?'})")
+                blocks.append("\n".join(lines))
+            listing = []
+            for kind, label in (("correspondents", "Korrespondenten"), ("document_types", "Dokumenttypen"),
+                                ("tags", "Tags")):
+                names = sorted(known[kind].values(), key=str.casefold)
+                more = f" … (+{len(names) - MAX_LISTED})" if len(names) > MAX_LISTED else ""
+                listing.append(f"Vorhandene {label} ({len(names)}): " + (", ".join(names[:MAX_LISTED]) or "–") + more)
+        out = "\n\n".join(blocks) + "\n\n" + "\n".join(listing)
+        if skipped:
+            out += f"\n(Nur die ersten {MAX_SUGGEST} Dokumente – danach mit {skipped[:MAX_SUGGEST]} weitermachen.)"
+        return out + ("\nNächster Schritt: Vorschlag pro Dokument als kurze Liste zeigen (vorhandene Namen exakt so "
+                      "schreiben, neue nur wenn nichts passt), dann paperless_apply_metadata mit allen Dokumenten "
+                      "aufrufen – der Nutzer bestätigt dort.")
+
+    return await _guard(run())
+
+
+async def _apply_one(pc: PaperlessClient, c: dict, created: list[str]) -> str:
+    try:
+        doc_id = int(c.get("document_id"))
+    except (TypeError, ValueError):
+        raise PaperlessError(f"ungültige document_id {c.get('document_id')!r}") from None
+    date = str(c.get("created") or "").strip()
+    if date and not DATE_RE.fullmatch(date):
+        raise PaperlessError(f"Dok {doc_id}: Datum bitte als YYYY-MM-DD (nicht '{date}') – nichts geändert")
+    doc = await pc.document(doc_id)
+    fields: dict[str, Any] = {}
+    title = str(c.get("title") or "").strip()
+    if title and title != doc.get("title"):
+        fields["title"] = title
+    if date and date != str(doc.get("created") or "")[:10]:
+        fields["created"] = date
+    for key, kind in (("correspondent", "correspondents"), ("document_type", "document_types")):
+        name = str(c.get(key) or "").strip()
+        if name:
+            new_id = await pc.resolve(kind, name, created)
+            if new_id != doc.get(key):
+                fields[key] = new_id
+    tags = list(doc.get("tags") or [])
+    for name in _names_list(c.get("add_tags")):
+        tag_id = await pc.resolve("tags", name, created)
+        if tag_id not in tags:
+            tags.append(tag_id)
+    known_tags = {v.casefold(): k for k, v in (await pc.names("tags")).items()}
+    for name in _names_list(c.get("remove_tags")):
+        tag_id = known_tags.get(name.casefold())
+        if tag_id in tags:
+            tags.remove(tag_id)
+    if tags != list(doc.get("tags") or []):
+        fields["tags"] = tags
+    label = f"Dok {doc_id} „{fields.get('title') or doc.get('title') or ''}“"
+    if not fields:
+        return f"– {label}: schon so eingetragen, nichts geändert"
+    try:
+        await pc.write("PATCH", f"/documents/{doc_id}/", fields)
+    except PaperlessError as e:
+        if "created" not in fields or "created" not in str(e):
+            raise
+        # ältere Paperless-Versionen: Datum nur über created_date änderbar
+        fields["created_date"] = fields.pop("created")
+        await pc.write("PATCH", f"/documents/{doc_id}/", fields)
+    return f"✔ {label}: {_summary(c)}"
+
+
+@tool("Übernimmt Metadaten für ein oder mehrere Paperless-Dokumente nach Bestätigung durch den Nutzer: "
+      "Korrespondent, Dokumenttyp, Tags hinzufügen/entfernen, Titel, Datum. Fehlende Korrespondenten/Typen/Tags "
+      "werden angelegt. Vorher paperless_suggest_metadata nutzen.", risk=_apply_risk, enabled=_enabled)
+async def paperless_apply_metadata(
+    ctx: ToolContext,
+    changes: Annotated[list[dict], "Eine Änderung pro Dokument: {document_id, title?, created? (YYYY-MM-DD), "
+                                   "correspondent?, document_type?, add_tags? [..], remove_tags? [..]} – "
+                                   "nur Felder angeben, die sich ändern sollen"],
+) -> str:
+    async def run() -> str:
+        items = _changes(changes)
+        if not items:
+            return "Keine Änderungen übergeben (changes = Liste mit {document_id, …})."
+        if len(items) > MAX_APPLY:
+            return f"Höchstens {MAX_APPLY} Dokumente auf einmal – bitte aufteilen."
+        results, created = [], []
+        async with PaperlessClient(ctx.cfg) as pc:
+            for c in items:
+                try:
+                    results.append(await _apply_one(pc, c, created))
+                except PaperlessError as e:
+                    results.append(f"✘ {e}")
+        if created:
+            results.append("Neu angelegt: " + ", ".join(created))
+        return "\n".join(results)
+
+    return await _guard(run())
+
+
+async def inbox_summary(cfg, tag: str = "", limit: int = 5) -> str | None:
+    """Für das Briefing: Dokumente im Posteingang (Tag aus der Config, sonst Paperless' Posteingangs-Tags)."""
+    if not cfg.paperless.enabled:
+        return None
+    try:
+        async with PaperlessClient(cfg) as pc:
+            params: dict[str, Any] = {"page_size": limit, "ordering": "-added", "truncate_content": "true"}
+            if tag.strip():
+                params["tags__name__iexact"] = tag.strip()
+            else:
+                inbox = await pc.json("/tags/", is_inbox_tag="true", page_size=100) or {}
+                ids = [str(t["id"]) for t in inbox.get("results", []) if t.get("is_inbox_tag", True)]
+                if not ids:
+                    return ("Paperless-Posteingang: kein Posteingangs-Tag festgelegt (in Paperless beim Tag "
+                            "„Posteingangs-Tag“ anhaken oder briefing.inbox_tag setzen).")
+                params["tags__id__in"] = ",".join(ids)
+            data = await pc.json("/documents/", **params) or {}
+    except PaperlessError as e:
+        return f"Paperless-Posteingang: {e}"
+    count, docs = data.get("count", 0), data.get("results", [])
+    if not count:
+        return "Paperless-Posteingang: leer."
+    titles = ", ".join(f"„{d.get('title') or '?'}“ [{d['id']}]" for d in docs)
+    more = f" und {count - len(docs)} weitere" if count > len(docs) else ""
+    return (f"Paperless-Posteingang: {count} Dokument{'e' if count != 1 else ''} – {titles}{more}. "
+            "(Auf Wunsch einordnen: paperless_suggest_metadata)")
 
 
 async def paperless_status(cfg) -> dict:

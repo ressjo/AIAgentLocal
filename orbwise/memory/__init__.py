@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from datetime import datetime
@@ -37,8 +38,10 @@ class Memory:
         self.facts = Facts(cfg.dir / "facts.md")
         self.index = MemoryIndex(cfg.dir / "index.sqlite", embedder=llm)
         self.chats = ChatStore(cfg.dir / "chats", legacy_session=cfg.dir / "session.json")
-        self.conversation = self.chats.open_active()
+        self.conversation = self.chats.open_active()  # Chat, in dem der Agent gerade arbeitet
+        self._outer: list[Conversation] = []  # während in_chat: die darunterliegenden Chats (unten = Nutzer-Chat)
         self.last_activity = time.time()
+        self._rebuilding = False
 
     def close(self) -> None:
         self.index.close()
@@ -56,6 +59,15 @@ class Memory:
         await self.index.add("journal", day_str(now), f"chat:{chat}" if chat else f"journal:{day_str(now)}", text)
 
     # ---------- Chats ----------
+    @property
+    def active(self) -> Conversation:
+        """Der Chat, den der Nutzer im Dashboard offen hat – auch während eine Routine oder eine Telegram-Anfrage
+        vorübergehend in ihrem eigenen Chat arbeitet."""
+        return self._outer[0] if self._outer else self.conversation
+
+    def _loaded(self, chat_id: str) -> Conversation | None:
+        return next((c for c in (self.conversation, *self._outer) if c.chat_id == chat_id), None)
+
     def new_chat(self) -> Conversation:
         """Neuer Chat – ist der aktuelle noch leer, wird er weiterverwendet."""
         if not self.conversation.history:
@@ -64,6 +76,21 @@ class Memory:
         self.conversation = self.chats.create()
         return self.conversation
 
+    @contextlib.contextmanager
+    def in_chat(self, chat_id: str, title: str):
+        """Für Routinen: vorübergehend in einem eigenen Chat arbeiten, ohne den aktiven Chat des Nutzers umzustellen."""
+        previous = self.conversation
+        previous.save()
+        conv = self.chats.open(chat_id) if chat_id and self.chats.exists(chat_id) else self.chats.create(activate=False)
+        conv.meta["title"] = title
+        self._outer.append(previous)
+        self.conversation = conv
+        try:
+            yield conv
+        finally:
+            conv.save()
+            self.conversation = self._outer.pop()
+
     def switch_chat(self, chat_id: str) -> Conversation:
         if chat_id != self.conversation.chat_id:
             self.conversation.save()
@@ -71,17 +98,19 @@ class Memory:
         return self.conversation
 
     def star_chat(self, chat_id: str, starred: bool) -> None:
-        if chat_id == self.conversation.chat_id:
-            self.conversation.meta["starred"] = bool(starred)
-            self.conversation.save()
+        conv = self._loaded(chat_id)  # geladene Chats direkt ändern – sonst überschreibt ihr nächstes save() das
+        if conv:
+            conv.meta["starred"] = bool(starred)
+            conv.save()
         else:
             self.chats.set_star(chat_id, starred)
 
     def rename_chat(self, chat_id: str, title: str) -> None:
-        if chat_id == self.conversation.chat_id:
+        conv = self._loaded(chat_id)
+        if conv:
             from .context import make_title
-            self.conversation.meta["title"] = make_title(title, 80) or "Neuer Chat"
-            self.conversation.save()
+            conv.meta["title"] = make_title(title, 80) or "Neuer Chat"
+            conv.save()
         else:
             self.chats.rename(chat_id, title)
 
@@ -89,11 +118,19 @@ class Memory:
         """Chat komplett vergessen: Datei, Tagebuch-Einträge, Suchindex, betroffene Tageszusammenfassungen
         (werden aus dem Rest neu erstellt). Gelernte Fakten bleiben. Liefert die betroffenen Tage."""
         self.chats.path(chat_id)  # prüft die ID
+        if self._outer and self._loaded(chat_id):
+            raise RuntimeError("Chat wird gerade benutzt")  # der Server verhindert das vorher (409)
+        # Erst den Suchindex (nur ein Cache) – scheitert er, darf das Löschen nicht halb stehen bleiben
+        try:
+            self.index.delete_source(f"chat:{chat_id}")
+        except Exception as e:  # noqa: BLE001
+            log.warning("Suchindex beim Löschen nicht bereinigt (%s) – wird neu aufgebaut", e)
+            self.index.needs_rebuild = True
         days = self.journal.remove_chat(chat_id)
-        self.index.delete_source(f"chat:{chat_id}")
         for day in days:
             self.summaries.delete(day)
-            self.index.delete_source(f"summary:{day}")
+            with contextlib.suppress(Exception):
+                self.index.delete_source(f"summary:{day}")
         self.chats.delete(chat_id)
         if chat_id == self.conversation.chat_id:
             self.conversation = self.chats.create()
@@ -184,8 +221,20 @@ class Memory:
         return done
 
     # ---------- Wartung ----------
+    async def heal_index_if_needed(self) -> bool:
+        """War der Suchindex beschädigt und wurde leer neu angelegt: aus den Markdown-Dateien wieder aufbauen."""
+        if not self.index.needs_rebuild or self._rebuilding:
+            return False
+        self._rebuilding = True
+        try:
+            n = await self.rebuild_index()
+            log.info("Suchindex neu aufgebaut: %s Einträge", n)
+        finally:
+            self._rebuilding = False
+        return True
+
     async def rebuild_index(self) -> int:
-        self.index.clear()
+        self.index.reset()  # Datei frisch anlegen – klappt auch, wenn sie beschädigt ist
         for day in sorted(self.journal.days()):
             entries = self.journal.entries(day)
             block: list[str] = []
@@ -208,4 +257,5 @@ class Memory:
             await self.index.add("summary", day, f"summary:{day}", body,
                                  created=datetime.strptime(day, "%Y-%m-%d").timestamp() + 86399)
         await self.reindex_facts()
+        self.index.needs_rebuild = False
         return self.index.count()

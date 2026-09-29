@@ -3,7 +3,7 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const orb = new window.Orb($("orb"));
+  const orb = new window.Orb($("orb"), $("orb-overlay"));
   // Sprache: der Server liefert index.html bereits mit lang="de" bzw. lang="en" aus
   const EN = document.documentElement.lang === "en";
   const L = (de, en) => (EN ? en : de);
@@ -158,7 +158,8 @@
 
   function onSpeechDrained() {
     // Nach der gesprochenen Rückfrage automatisch auf „Ja/Nein“ hören
-    if (S.confirm && !S.confirmListenSent && A.micReady && (S.wake || S.voiceUsed)) {
+    // nicht bei bearbeitbaren Fenstern (Mail): dort wird per Klick gesendet
+    if (S.confirm && !(S.confirm.editable || []).length && !S.confirmListenSent && A.micReady && (S.wake || S.voiceUsed)) {
       S.confirmListenSent = true;
       startListen();
     }
@@ -232,6 +233,7 @@
     ws.onclose = () => {
       S.connected = false;
       S.recording = false;
+      S.transcribing = false;
       updateMicStreaming();
       refresh();
       const delay = Math.min(10000, 800 * 2 ** S.retry++);
@@ -252,13 +254,18 @@
   function handle(ev) {
     switch (ev.type) {
       case "hello":
-        if (ev.busy) S.serverState = "thinking";
+        S.serverState = ev.busy ? "thinking" : "idle";  // tatsächlichen Zustand übernehmen (auch nach Neuverbinden)
+        S.transcribing = false;  // neue Verbindung = neue Audio-Sitzung, eine alte Transkription meldet sich nie mehr
         if (ev.context) showContext(ev.context);
         break;
       case "context":
         showContext(ev);
         return;
       case "state":
+        if (ev.routine) orb.addSatellite("rt:" + ev.routine, "⟳ " + ev.routine.toUpperCase());
+        if (ev.state === "idle") {  // abgebrochene Werkzeuge nicht hängen lassen
+          orb.clearSatellites("rt:");
+        }
         S.serverState = ev.state === "confirm" ? S.serverState : ev.state;
         S.substate = ev.state === "executing" && ev.tool ? ev.tool : "";
         break;
@@ -271,6 +278,7 @@
         break;
       case "token":
         appendToken(ev.id, ev.text);
+        orb.token();
         T.tokenTimes.push(performance.now());
         if (Thought.active) Thought.zoomOut();
         if (S.substate === THINKING_SUB) { S.substate = ""; break; }
@@ -278,6 +286,7 @@
       case "reasoning":
         // Denkkette: nicht in die Antwort, sondern in den Orb (hineinzoomen) und später aufklappbar im Chat
         Thought.add(ev.id, ev.text || "");
+        orb.token();  // Denk-Puls folgt auch dem Gedankengang
         if (S.substate !== THINKING_SUB) S.substate = THINKING_SUB;
         else return;
         break;
@@ -287,6 +296,7 @@
       case "assistant_end":
         Thought.finish(ev.id);
         finishAssistant(ev.id, ev.cancelled);
+        S.serverState = "idle";  // Antwort fertig = bereit, auch wenn das „idle“ des Servers noch aussteht
         if (S.substate === THINKING_SUB) S.substate = "";
         setTimeout(loadStatus, 300);
         if (!$("chat-title").textContent) {
@@ -299,8 +309,7 @@
         if (!$("tab-memory").classList.contains("hidden")) loadReminders();
         break;
       case "tool_call":
-        if (Thought.active) Thought.zoomOut();
-        toolCall(ev);
+        toolCall(ev);  // im Denkmodus bleibt der Zoom – das Werkzeug erscheint als Chip im Gedankenkasten
         break;
       case "tool_output":
         toolOutput(ev);
@@ -357,6 +366,10 @@
         S.substate = "";
         loadStatus();
         break;
+      case "models_changed":
+        if (!modelMenu.classList.contains("hidden") && !modelMenu.querySelector(".fit-ok, .fit-tight, .fit-big")) openModelMenu();
+        loadStatus();
+        return;
       case "model_pull":
         modelPullEvent(ev);
         return;
@@ -383,6 +396,15 @@
         break;
       case "chats_changed":
         if (!$("tab-chats").classList.contains("hidden")) loadChats();
+        return;
+      case "routines_changed":
+        if (!$("tab-planner").classList.contains("hidden")) loadRoutines();
+        return;
+      case "routine_done":
+        orb.removeSatellite("rt:" + ev.name, ev.status === "error");
+        toast(ev.status === "error" ? L(`Routine „${ev.name}“ fehlgeschlagen`, `Routine “${ev.name}” failed`)
+          : L(`Routine „${ev.name}“ erledigt – im VERLAUF`, `Routine “${ev.name}” done – see HISTORY`));
+        if (!$("tab-planner").classList.contains("hidden")) loadRoutines();
         return;
     }
     refresh();
@@ -431,7 +453,8 @@
   function renderMarkdown(src) {
     const blocks = [];
     let text = src.replace(/```[\w-]*\n?([\s\S]*?)(```|$)/g, (_, code) => {
-      blocks.push(`<pre>${escapeHtml(code.replace(/\n$/, ""))}</pre>`);
+      blocks.push(`<div class="code"><button class="copy" type="button" title="${L("Kopieren", "Copy")}">⧉</button>`
+        + `<pre>${escapeHtml(code.replace(/\n$/, ""))}</pre></div>`);
       return `\u0000${blocks.length - 1}\u0000`;
     });
     text = escapeHtml(text)
@@ -452,11 +475,34 @@
 
   function scrollChat() { chat.scrollTop = chat.scrollHeight; }
 
+  // Kopieren-Knopf an Code-Blöcken (Ereignis-Delegation, auch für später gerenderte Nachrichten)
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".code .copy");
+    if (!btn) return;
+    const text = btn.parentElement.querySelector("pre").textContent;
+    try { await navigator.clipboard.writeText(text); } catch {
+      const r = document.createRange(); r.selectNodeContents(btn.parentElement.querySelector("pre"));
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); document.execCommand("copy"); sel.removeAllRanges();
+    }
+    btn.textContent = "✔"; btn.classList.add("done");
+    setTimeout(() => { btn.textContent = "⧉"; btn.classList.remove("done"); }, 1200);
+  });
+
+  // Ecken eines Panels kurz aufleuchten lassen (neue Nachricht / neue Aktivität)
+  function flashPanel(el) {
+    const panel = el && el.closest(".panel");
+    if (!panel) return;
+    panel.classList.remove("flash");
+    void panel.offsetWidth;  // Animation neu starten
+    panel.classList.add("flash");
+  }
+
   function addMsg(cls, who, html) {
     const el = document.createElement("div");
     el.className = "msg " + cls;
     el.innerHTML = `<div class="who">${who}</div><div class="tools"></div><div class="body">${html}</div>`;
     chat.appendChild(el);
+    flashPanel(chat);
     scrollChat();
     return el;
   }
@@ -519,6 +565,7 @@
         clearTimeout(this.outTimer);
         $("thought-text").textContent = "";
         document.querySelector(".core").classList.add("zoomed");
+        orb.setZoom(true);  // Satelliten kreisen dann um den Gedankenkasten
       }
       this.text += text;
       if (!this.queued) {
@@ -542,7 +589,7 @@
       // kurz stehen lassen, damit das Zoomen nicht flackert
       const wait = Math.max(0, 700 - (performance.now() - this.since));
       clearTimeout(this.outTimer);
-      this.outTimer = setTimeout(() => document.querySelector(".core").classList.remove("zoomed"), wait);
+      this.outTimer = setTimeout(() => { document.querySelector(".core").classList.remove("zoomed"); orb.setZoom(false); }, wait);
     },
     finish(id) {
       this.zoomOut();
@@ -593,7 +640,27 @@
     return entries.map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join("  ");
   }
 
+  // Kurzname für den Werkzeug-Satelliten am Orb
+  const SAT_GROUPS = [
+    [/^(web_search|fetch_url|open_website)$/, ["WEB", "WEB"]], [/^paperless_/, ["PAPERLESS", "PAPERLESS"]],
+    [/^mail_/, ["MAIL", "MAIL"]], [/^obsidian_/, ["OBSIDIAN", "OBSIDIAN"]], [/^trilium_/, ["TRILIUM", "TRILIUM"]],
+    [/^ha_/, ["SMART HOME", "SMART HOME"]], [/^calendar_/, ["KALENDER", "CALENDAR"]], [/^run_shell$/, ["SHELL", "SHELL"]],
+    [/(package|system_update)/, ["PAKETE", "PACKAGES"]], [/(file|folder)/, ["DATEIEN", "FILES"]],
+    [/^weather/, ["WETTER", "WEATHER"]], [/^routine_/, ["ROUTINEN", "ROUTINES"]], [/reminder/, ["ERINNERUNG", "REMINDER"]],
+    [/(remember|recall|forget|memory)/, ["GEDÄCHTNIS", "MEMORY"]],
+  ];
+  function satLabel(name) {
+    const hit = SAT_GROUPS.find(([rx]) => rx.test(name));
+    return hit ? hit[1][EN ? 1 : 0] : name.split("_")[0].toUpperCase();
+  }
+
+  // Symbol je Aktionsart (weitere Symbole: ICONS in orb.js); Gedächtnis leuchtet im Kern statt als Satellit
+  const ICON_GROUPS = { shell: "cli", packages: "cli", sysadmin: "cli", system: "cli", power: "cli", web: "cloud",
+                        mail: "mail", paperless: "paperless" };
+
   function toolCall(ev) {
+    if (ev.group === "memory_tools") orb.memoryGlow(ev.id, true, satLabel(ev.name));
+    else orb.addSatellite(ev.id, satLabel(ev.name), ICON_GROUPS[ev.group] || null);
     const empty = activity.querySelector(".empty");
     if (empty) empty.remove();
     const el = document.createElement("div");
@@ -606,12 +673,14 @@
       <button class="toggle-out" title="${L("Ausgabe ein-/ausblenden", "Show/hide output")}">▾</button></span></div>
       <div class="act-args"></div><pre class="act-out"></pre>`;
     el.querySelector(".act-args").textContent = fmtArgs(ev.name, ev.args);
+    if (ev.routine) el.querySelector(".act-name").textContent = `⟳ ${ev.routine} · ${ev.name}`;
     el.querySelector(".toggle-out").onclick = () => el.classList.toggle("open");
     activity.prepend(el);
+    flashPanel(activity);
     acts[ev.id] = el;
     while (activity.children.length > 60) activity.lastChild.remove();
 
-    const a = S.currentMsg && assistants[S.currentMsg];
+    const a = !ev.routine && S.currentMsg && assistants[S.currentMsg];
     if (a) {
       const chip = document.createElement("span");
       chip.className = "tool-chip running";
@@ -630,6 +699,8 @@
   }
 
   function toolResult(ev) {
+    orb.removeSatellite(ev.id, ev.status === "error" || ev.status === "blocked");
+    orb.memoryGlow(ev.id, false);
     const el = acts[ev.id];
     if (el) {
       el.className = "act " + ev.status;
@@ -642,20 +713,56 @@
   }
 
   // ---------------------------------------------------------------- Bestätigung
+  // Felder, die der Nutzer vor dem Bestätigen noch ändern darf (z. B. mail_send)
+  const EDIT_FIELDS = {
+    to: [L("AN", "TO"), "input"], cc: [L("CC", "CC"), "input"],
+    subject: [L("BETREFF", "SUBJECT"), "input"], body: [L("TEXT", "TEXT"), "textarea"],
+  };
+  const APPROVE_HTML = $("confirm-yes").innerHTML;
+
   function openConfirm(ev) {
     S.confirm = ev;
     S.confirmListenSent = false;
-    $("confirm-summary").textContent = L(`Soll ich ${ev.summary} ausführen?`, `Shall I run ${ev.summary}?`);
+    const editable = (ev.editable || []).filter((k) => EDIT_FIELDS[k]);
+    const form = $("confirm-form");
+    form.innerHTML = "";
+    for (const key of editable) {
+      const [label, kind] = EDIT_FIELDS[key];
+      const row = document.createElement("label");
+      row.innerHTML = `<span>${label}</span>`;
+      const field = document.createElement(kind);
+      if (kind === "input") field.type = "text";
+      field.dataset.key = key;
+      field.value = ev.args[key] ?? "";
+      field.spellcheck = key === "body" || key === "subject";
+      row.appendChild(field);
+      form.appendChild(row);
+    }
+    form.classList.toggle("hidden", !editable.length);
+    $("confirm-cmd").classList.toggle("hidden", !!editable.length);
+    document.querySelector(".confirm-modal").classList.toggle("editing", !!editable.length);
+    $("confirm-yes").innerHTML = editable.length && ev.name === "mail_send"
+      ? `${L("SENDEN", "SEND")} <kbd>Strg+Enter</kbd>` : editable.length ? `${L("AUSFÜHREN", "RUN")} <kbd>Strg+Enter</kbd>` : APPROVE_HTML;
+    $("confirm-summary").textContent = ev.name === "mail_send"
+      ? L("Mail prüfen, bei Bedarf ändern und senden:", "Check the e-mail, edit it if needed and send it:")
+      : L(`Soll ich ${ev.summary} ausführen?`, `Shall I run ${ev.summary}?`);
     $("confirm-cmd").textContent = ev.name === "run_shell" ? ev.args.command : `${ev.name}(${JSON.stringify(ev.args, null, 2)})`;
-    $("confirm-reason").textContent = ev.reason ? "Grund: " + ev.reason : "";
-    $("confirm-voice").textContent = A.micReady ? L("oder sag „Ja“ bzw. „Nein“", "or say “yes” or “no”") : "";
+    $("confirm-reason").textContent = ev.reason && !editable.length ? L("Grund: ", "Reason: ") + ev.reason : "";
+    $("confirm-voice").textContent = editable.length ? L("Senden nur per Klick – „Nein“ bricht ab.", "Send only by click – “no” cancels.")
+      : A.micReady ? L("oder sag „Ja“ bzw. „Nein“", "or say “yes” or “no”") : "";
     $("confirm-voice").classList.remove("listening");
     $("confirm").classList.remove("hidden");
     const act = acts[ev.id];
     if (act) act.querySelector(".act-status").textContent = STATUS_TEXT.waiting;
-    setTimeout(() => $("confirm-yes").focus(), 50);
+    setTimeout(() => (form.querySelector("input, textarea") || $("confirm-yes")).focus(), 50);
     refresh();
     if (!S.tts) onSpeechDrained();
+  }
+
+  function editedFields() {
+    const out = {};
+    for (const f of $("confirm-form").querySelectorAll("[data-key]")) out[f.dataset.key] = f.value;
+    return out;
   }
 
   function closeConfirm(id) {
@@ -669,7 +776,16 @@
 
   function answerConfirm(approved) {
     if (!S.confirm) return;
-    send({ type: "confirm", id: S.confirm.id, approved });
+    const editing = !$("confirm-form").classList.contains("hidden");
+    const args = editing && approved ? editedFields() : null;
+    if (args && "to" in args && !args.to.trim()) {
+      const to = $("confirm-form").querySelector('[data-key="to"]');
+      to.classList.add("invalid");
+      to.focus();
+      toast(L("Bitte einen Empfänger eintragen.", "Please enter a recipient."));
+      return;
+    }
+    send(args ? { type: "confirm", id: S.confirm.id, approved, args } : { type: "confirm", id: S.confirm.id, approved });
     const act = acts[S.confirm.id];
     if (act && approved) act.querySelector(".act-status").textContent = STATUS_TEXT.running;
     closeConfirm();
@@ -758,10 +874,18 @@
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); $("pw-cancel").click(); }
   });
 
+  // Leertaste = Push-to-talk – aber nie, während man tippt (Chat, Planer, Briefing …) oder ein Knopf den Fokus hat
+  function typingTarget(el) {
+    return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(el.tagName));
+  }
+
   document.addEventListener("keydown", (e) => {
     if (!$("boot").classList.contains("hidden")) return;
     if (pwId) return;  // Passwortfeld hat Vorrang (kein Push-to-talk mit Leertaste)
     if (S.confirm) {
+      // im bearbeitbaren Fenster: Enter schreibt (neue Zeile), Strg/Cmd+Enter sendet
+      const inForm = $("confirm-form").contains(document.activeElement);
+      if (e.key === "Enter" && inForm && !(e.ctrlKey || e.metaKey)) return;
       if (e.key === "Enter") { e.preventDefault(); answerConfirm(true); }
       if (e.key === "Escape") { e.preventDefault(); answerConfirm(false); }
       return;
@@ -772,7 +896,7 @@
       stopSpeech(true);
       return;
     }
-    if (e.code === "Space" && !e.repeat && document.activeElement !== $("input")) {
+    if (e.code === "Space" && !e.repeat && !typingTarget(document.activeElement)) {
       e.preventDefault();
       startPtt();
     }
@@ -832,9 +956,9 @@
       $("tab-chats").classList.toggle("hidden", tab.dataset.tab !== "chats");
       if (tab.dataset.tab === "chats") loadChats();
       $("tab-memory").classList.toggle("hidden", tab.dataset.tab !== "memory");
-      $("tab-voice").classList.toggle("hidden", tab.dataset.tab !== "voice");
+      $("tab-planner").classList.toggle("hidden", tab.dataset.tab !== "planner");
+      if (tab.dataset.tab === "planner") loadPlanner();
       if (tab.dataset.tab === "memory") loadMemory();
-      if (tab.dataset.tab === "voice") loadVoices();
     };
   });
 
@@ -869,61 +993,213 @@
   $("fx-amount").onchange = () => sendVoiceSettings();
   renderFx();
 
-  async function loadVoices() {
-    const list = $("voices");
+  // Stimmen-Menü an der VOICE-Pille: auswählen, anhören, löschen, hinzufügen (wie das Modell-Menü)
+  const voiceMenu = $("voice-menu");
+  async function openVoiceMenu(catalog = false) {
+    closeModelMenu();
+    const list = $("voice-list");
     let data;
-    try {
-      data = await getJSON("/api/voices");
-    } catch {
-      list.innerHTML = `<li class="empty">${L("Stimmen nicht ladbar.", "Could not load voices.")}</li>`;
-      return;
-    }
+    try { data = await getJSON("/api/voices"); } catch { toast(L("Stimmen nicht ladbar", "Could not load voices")); return; }
+    const st = S.status && S.status.voice;
+    list.innerHTML = `<div class="mm-title">${catalog ? L("STIMME HINZUFÜGEN", "ADD VOICE") : L("STIMME WÄHLEN", "CHOOSE VOICE")}</div>
+      <div class="mm-hint"></div>`;
+    list.querySelector(".mm-hint").textContent = st ? [
+      st.stt ? L("Spracherkennung ✔", "Speech recognition ✔") : L("Spracherkennung aus", "Speech recognition off"),
+      st.wake ? L("Wake-Word ✔", "Wake word ✔") : L("Wake-Word aus", "Wake word off")].join(" · ") : "";
     if (!data.available) {
-      list.innerHTML = `<li class="empty">${L("Piper-Sprachausgabe ist deaktiviert – es spricht der Browser.", "Piper speech output is disabled – the browser speaks instead.")}</li>`;
+      list.insertAdjacentHTML("beforeend", `<div class="mm-hint">${L("Piper-Sprachausgabe ist deaktiviert – es spricht der Browser.",
+        "Piper speech output is disabled – the browser speaks instead.")}</div>`);
+    } else if (!catalog) {
+      if (!S.voiceName) S.voiceName = data.current;
+      for (const v of data.voices.filter((x) => x.installed)) list.appendChild(voiceRow(v, data.current));
+      const add = document.createElement("button");
+      add.className = "model-item add";
+      add.textContent = L("+ STIMME HINZUFÜGEN …", "+ ADD VOICE …");
+      add.onclick = (e) => { e.stopPropagation(); openVoiceMenu(true); };
+      list.appendChild(add);
+      // eigene Stimme (z. B. von huggingface.co): .onnx + .onnx.json wählen oder aufs Menü ziehen
+      const up = document.createElement("button");
+      up.className = "model-item add vm-upload";
+      up.innerHTML = `<div>${L("⬆ EIGENE STIMME HOCHLADEN …", "⬆ UPLOAD OWN VOICE …")}</div><div class="mi-note"></div>`;
+      up.querySelector(".mi-note").textContent = L("Piper-Stimme, z. B. von huggingface.co – beide Dateien (.onnx + .onnx.json), auch per Drag & Drop",
+        "Piper voice, e.g. from huggingface.co – both files (.onnx + .onnx.json), drag & drop works too");
+      up.onclick = (e) => {
+        e.stopPropagation();
+        const input = document.createElement("input");
+        input.type = "file";
+        input.multiple = true;
+        input.accept = ".onnx,.json";
+        input.onchange = () => uploadVoice([...input.files]);
+        input.click();
+      };
+      list.appendChild(up);
+    } else {
+      // ganzer Piper-Katalog: Auswahl (empfohlen) zuerst, dann alle weiteren nach Region, mit Suchfeld
+      const missing = data.voices.filter((x) => !x.installed);
+      const tools = document.createElement("div");
+      tools.className = "vm-tools";
+      tools.innerHTML = `<input type="search" class="vm-search" placeholder="${L("Stimme suchen …", "Search voices …")}">
+        <a href="https://rhasspy.github.io/piper-samples/" target="_blank" rel="noopener">${L("Probehören ↗", "Listen to samples ↗")}</a>`;
+      list.appendChild(tools);
+      const box = document.createElement("div");
+      list.appendChild(box);
+      const render = (q) => {
+        box.innerHTML = "";
+        const hits = missing.filter((v) => !q || `${v.label} ${v.name} ${v.description}`.toLowerCase().includes(q));
+        if (!hits.length) {
+          box.innerHTML = `<div class="mm-hint">${missing.length ? L("Keine Treffer.", "No matches.")
+            : L("Alle Stimmen sind installiert.", "All voices are installed.")}</div>`;
+        }
+        let group = null;
+        for (const v of hits) {
+          const g = v.recommended ? L("EMPFOHLEN", "RECOMMENDED") : (v.locale || "").toUpperCase();
+          if (g !== group) {
+            group = g;
+            box.insertAdjacentHTML("beforeend", `<div class="mm-title vm-group"></div>`);
+            box.lastElementChild.textContent = g;
+          }
+          box.appendChild(catalogItem(v));
+        }
+      };
+      const search = tools.querySelector(".vm-search");
+      search.onclick = (e) => e.stopPropagation();
+      search.oninput = () => render(search.value.trim().toLowerCase());
+      render("");
+      const back = document.createElement("button");
+      back.className = "model-item add";
+      back.textContent = L("← ZURÜCK", "← BACK");
+      back.onclick = (e) => { e.stopPropagation(); openVoiceMenu(); };
+      list.appendChild(back);
+    }
+    voiceMenu.classList.toggle("catalog", catalog);
+    voiceMenu.classList.remove("hidden");
+    $("pill-voice").setAttribute("aria-expanded", "true");
+  }
+
+  function catalogItem(v) {
+    const b = voiceItem(v, v.download_mb ? `~${v.download_mb} MB` : "");
+    b.onclick = async (e) => {
+      e.stopPropagation();
+      b.disabled = true;
+      b.querySelector(".mi-tag").textContent = L("LÄDT …", "LOADING …");
+      try {
+        await api("POST", `/api/voices/${encodeURIComponent(v.name)}/install`);
+        toast(L(`✔ ${v.label} installiert`, `✔ ${v.label} installed`));
+        loadStatus();
+        openVoiceMenu();
+      } catch { b.disabled = false; b.querySelector(".mi-tag").textContent = v.download_mb ? `~${v.download_mb} MB` : ""; }
+    };
+    return b;
+  }
+
+  function voiceItem(v, tag) {
+    const b = document.createElement("button");
+    b.className = "model-item";
+    b.innerHTML = `<div class="mi-head"><span class="mi-name"></span><span class="mi-tag"></span></div><div class="mi-sub"></div>`;
+    b.querySelector(".mi-name").textContent = v.label;
+    b.querySelector(".mi-tag").textContent = tag;
+    b.querySelector(".mi-sub").textContent = v.description + (v.size_mb ? ` · ${v.size_mb} MB` : "");
+    return b;
+  }
+
+  function voiceRow(v, current) {
+    const active = v.name === current;
+    const b = voiceItem(v, active ? L("AKTIV", "ACTIVE") : v.male === null ? "" : v.male ? L("MÄNNLICH", "MALE") : L("WEIBLICH", "FEMALE"));
+    if (active) b.classList.add("active");
+    b.onclick = (e) => {
+      e.stopPropagation();
+      if (active) return;
+      S.voiceName = v.name;
+      store.set("voice", v.name);
+      sendVoiceSettings();
+      toast(L(`Stimme: ${v.label}`, `Voice: ${v.label}`));
+      setTimeout(() => openVoiceMenu(), 150);
+    };
+    const row = document.createElement("div");
+    row.className = "model-row";
+    const play = document.createElement("button");
+    play.className = "model-del voice-play";
+    play.textContent = "▶";
+    play.title = L("Anhören", "Preview");
+    play.onclick = (e) => { e.stopPropagation(); previewVoice(v.name); };
+    const del = document.createElement("button");
+    del.className = "model-del";
+    del.textContent = "🗑";
+    del.disabled = active;
+    del.title = active ? L("Aktive Stimme – erst eine andere wählen", "Active voice – choose another one first") : L("Stimme löschen", "Delete voice");
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(L(`Stimme ${v.label} löschen?`, `Delete voice ${v.label}?`))) return;
+      try {
+        await api("DELETE", `/api/voices/${encodeURIComponent(v.name)}`);
+        toast(L(`✔ ${v.label} gelöscht`, `✔ ${v.label} deleted`));
+        openVoiceMenu();
+      } catch { /* Meldung kommt von api() */ }
+    };
+    row.append(b, play, del);
+    return row;
+  }
+
+  // Upload: erst die Konfiguration, dann das Modell (roher Datenstrom, Fortschritt im Menü)
+  function putFile(url, file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", url);
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) return resolve(JSON.parse(xhr.responseText || "{}"));
+        let msg = `${L("Fehler", "Error")} ${xhr.status}`;
+        try { msg = JSON.parse(xhr.responseText).detail || msg; } catch { /* egal */ }
+        reject(new Error(msg));
+      };
+      xhr.onerror = () => reject(new Error(L("Verbindung unterbrochen", "Connection lost")));
+      xhr.send(file);
+    });
+  }
+
+  async function uploadVoice(files) {
+    const model = files.find((f) => f.name.toLowerCase().endsWith(".onnx"));
+    const config = files.find((f) => f.name.toLowerCase().endsWith(".json"));
+    if (!model || !config) {
+      toast(L("Bitte beide Dateien wählen: .onnx und .onnx.json", "Please choose both files: .onnx and .onnx.json"));
       return;
     }
-    if (!S.voiceName) S.voiceName = data.current;
-    list.innerHTML = "";
-    for (const v of data.voices) {
-      const li = document.createElement("li");
-      const current = v.name === data.current;
-      li.className = "voice" + (current ? " current" : "");
-      li.innerHTML = `<div class="voice-head"><span class="voice-name"></span><span class="voice-tag">${current ? L("AKTIV", "ACTIVE") : v.installed ? L("INSTALLIERT", "INSTALLED") : v.male ? L("MÄNNLICH", "MALE") : L("WEIBLICH", "FEMALE")}</span></div>
-        <div class="voice-desc"></div><div class="voice-actions"></div>`;
-      li.querySelector(".voice-name").textContent = v.label;
-      li.querySelector(".voice-desc").textContent = v.description;
-      const actions = li.querySelector(".voice-actions");
-      const btn = (label, fn) => {
-        const b = document.createElement("button");
-        b.className = "ghost";
-        b.textContent = label;
-        b.onclick = async () => { b.disabled = true; try { await fn(b); } finally { b.disabled = false; } };
-        actions.appendChild(b);
-        return b;
-      };
-      if (v.installed) {
-        btn(L("ANHÖREN", "PREVIEW"), () => previewVoice(v.name));
-        if (!current) btn(L("AUSWÄHLEN", "SELECT"), async () => {
-          S.voiceName = v.name;
-          store.set("voice", v.name);
-          sendVoiceSettings();
-          setTimeout(loadVoices, 150);
-        });
-      } else {
-        btn(L("INSTALLIEREN", "INSTALL"), async (b) => {
-          b.textContent = L("LÄDT …", "LOADING …");
-          const r = await fetch(`/api/voices/${encodeURIComponent(v.name)}/install`, { method: "POST" });
-          if (!r.ok) {
-            const err = await r.json().catch(() => ({}));
-            toast(err.detail || L("Installation fehlgeschlagen", "Installation failed"));
-          }
-          loadVoices();
-          loadStatus();
-        });
-      }
-      list.appendChild(li);
+    const name = model.name.replace(/\.onnx$/i, "").replace(/[^A-Za-z0-9_.-]/g, "_").replace(/\.\.+/g, ".").replace(/^[^A-Za-z0-9]+/, "").slice(0, 80);
+    const up = voiceMenu.querySelector(".vm-upload");
+    const note = up && up.querySelector(".mi-note");
+    const show = (text) => { if (note) note.textContent = text; };
+    if (up) up.disabled = true;
+    try {
+      const base = `/api/voices/upload/${encodeURIComponent(name)}`;
+      show(L("Lade Konfiguration hoch …", "Uploading configuration …"));
+      await putFile(`${base}/config`, config, () => {});
+      await putFile(`${base}/model`, model, (p) => show(L(`Lade ${name} hoch … ${Math.floor(p * 100)} %`, `Uploading ${name} … ${Math.floor(p * 100)} %`)));
+      toast(L(`✔ Stimme ${name} hinzugefügt`, `✔ Voice ${name} added`));
+      openVoiceMenu();
+    } catch (err) {
+      toast(err.message);
+      if (up) up.disabled = false;
+      show(L("Hochladen fehlgeschlagen – nochmal versuchen?", "Upload failed – try again?"));
     }
   }
+
+  voiceMenu.addEventListener("dragover", (e) => { e.preventDefault(); voiceMenu.classList.add("drop"); });
+  voiceMenu.addEventListener("dragleave", () => voiceMenu.classList.remove("drop"));
+  voiceMenu.addEventListener("drop", (e) => {
+    e.preventDefault();
+    voiceMenu.classList.remove("drop");
+    uploadVoice([...e.dataTransfer.files]);
+  });
+
+  function closeVoiceMenu() {
+    voiceMenu.classList.add("hidden");
+    $("pill-voice").setAttribute("aria-expanded", "false");
+  }
+  $("pill-voice").onclick = (e) => {
+    e.stopPropagation();
+    voiceMenu.classList.contains("hidden") ? openVoiceMenu() : closeVoiceMenu();
+  };
+  document.addEventListener("click", (e) => { if (!voiceMenu.contains(e.target)) closeVoiceMenu(); });
 
   async function previewVoice(name) {
     await initAudio();
@@ -958,13 +1234,16 @@
     setTile("ctx", c.used / 1000, {
       pct,
       digits: 1,
-      sub: `${Math.round(pct)} %` + (c.trimmed ? L(" · gekürzt", " · trimmed") : ""),
+      sub: `${Math.round(pct)} %` + (c.trimmed ? L(" · gekürzt", " · trimmed") : c.summarized ? L(" · verdichtet", " · condensed") : ""),
       title: [
         L(`Prompt ca. ${c.used} von ${c.budget} Token Budget (Fenster ${c.window}, Rest bleibt für die Antwort)`,
           `Prompt approx. ${c.used} of ${c.budget} token budget (window ${c.window}, the rest is kept for the answer)`),
         `System ${p.system ?? "?"} · Tools ${p.tools ?? "?"} · ${L("Gedächtnis", "Memory")} ${p.memory ?? "?"} · `
           + `${L("Verlauf", "History")} ${p.history ?? "?"}`,
-        c.real ? L("Laut Modell-Server: ", "According to the model server: ") + `${c.real} Token` : "",
+        c.real ? L("Laut Modell-Server: ", "According to the model server: ") + `${c.real} Token`
+          + (c.cached ? L(`, davon ${c.cached} aus dem Cache (schneller)`, `, ${c.cached} of them from the cache (faster)`) : "") : "",
+        c.summarized ? L("Älterer Verlauf ist in einer Zusammenfassung verdichtet – Details holt das Gedächtnis bei Bedarf zurück.",
+                         "Older history is condensed into a summary – memory brings back details when needed.") : "",
         c.trimmed ? L("Ältere Teile/lange Tool-Ergebnisse wurden gekürzt, damit alles passt.",
                       "Older parts/long tool results were trimmed so everything fits.") : "",
       ].filter(Boolean).join("\n"),
@@ -972,6 +1251,7 @@
     $("tele-ctx").querySelector(".tele-num").textContent = kTok(c.used);
     $("tele-ctx").querySelector(".tele-unit").textContent = "/" + Math.round(c.budget / 1000) + "k";
     $("tele-ctx").classList.toggle("warn", c.trimmed || (pct >= 80 && pct < 95));
+    orb.setContext(c.used / c.budget, !!c.summarized);
     pushSpark("ctx", Math.min(100, pct));
   }
 
@@ -1060,9 +1340,11 @@
   // ---------------------------------------------------------------- Modellauswahl
   const modelMenu = $("model-menu");
   async function openModelMenu() {
+    closeVoiceMenu();
     let data;
     try { data = await getJSON("/api/models"); } catch { toast(L("Modelle nicht ladbar", "Could not load models")); return; }
     modelMenu.innerHTML = `<div class="mm-title">${L("MODELL WÄHLEN", "CHOOSE MODEL")}</div>`;
+    for (const d of data.pulls || []) modelMenu.appendChild(pullRow(d));
     for (const p of data.profiles) {
       const b = document.createElement("button");
       b.className = "model-item" + (p.active ? " active" : "");
@@ -1071,14 +1353,25 @@
       b.querySelector(".mi-name").textContent = p.label;
       b.querySelector(".mi-tag").textContent = p.active ? L("AKTIV", "ACTIVE")
         : p.managed ? L("STARTET SERVER", "STARTS SERVER") : p.backend.toUpperCase();
-      b.querySelector(".mi-sub").textContent = `${p.backend} · ${p.model}`;
+      b.querySelector(".mi-sub").textContent = `${p.backend} · ${p.model}` + (p.size_gb ? ` · ${p.size_gb} GB` : "");
       b.onclick = async () => {
         closeModelMenu();
         if (p.active) return;
         const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/activate`, { method: "POST" });
         if (!r.ok && r.status !== 502) toast(L("Umschalten fehlgeschlagen", "Switching failed"));
       };
-      modelMenu.appendChild(b);
+      if (!p.deletable) { modelMenu.appendChild(b); continue; }
+      const row = document.createElement("div");
+      row.className = "model-row";
+      const del = document.createElement("button");
+      del.className = "model-del";
+      del.textContent = "🗑";
+      del.disabled = p.active || !!data.switching;
+      del.title = p.active ? L("Aktives Modell – erst ein anderes wählen", "Active model – choose another one first")
+        : L("Modell löschen", "Delete model");
+      del.onclick = (e) => { e.stopPropagation(); deleteModel(p); };
+      row.append(b, del);
+      modelMenu.appendChild(row);
     }
     if (data.active !== "demo") {
       const add = document.createElement("button");
@@ -1100,6 +1393,7 @@
       <div class="mm-hint"></div>`;
     modelMenu.querySelector(".mm-hint").textContent = gpuText + " · " +
       L("✔ passt · ~ teils im RAM (langsamer) · ✘ zu groß", "✔ fits · ~ partly in RAM (slower) · ✘ too big");
+    for (const tag of data.pulling) modelMenu.appendChild(pullRow({ tag }));
     const marks = { ok: "✔", tight: "~", big: "✘" };
     for (const p of data.presets) {
       const b = document.createElement("button");
@@ -1138,15 +1432,57 @@
     modelMenu.appendChild(back);
   }
 
+  async function deleteModel(p) {
+    const size = p.size_gb ? L(` Gibt ~${p.size_gb} GB frei.`, ` Frees ~${p.size_gb} GB.`) : "";
+    if (!confirm(L(`${p.label} löschen? Die Modelldateien werden entfernt.`, `Delete ${p.label}? The model files are removed.`) + size)) return;
+    try {
+      await api("DELETE", `/api/models/${encodeURIComponent(p.name)}`);
+      toast(L(`✔ ${p.label} gelöscht`, `✔ ${p.label} deleted`));
+      openModelMenu();
+    } catch { /* Meldung kommt von api() */ }
+  }
+
+  function pullPct(d) {
+    return d.total ? Math.floor((100 * (d.completed || 0)) / d.total) : null;
+  }
+
+  // Laufender Download im Modell-Menü: Fortschritt live (model_pull-Events) und Abbrechen
+  function pullRow(d) {
+    const row = document.createElement("div");
+    row.className = "model-pull";
+    row.dataset.tag = d.tag;
+    row.innerHTML = `<div class="mp-head"><span class="mp-text"></span>
+      <button class="mp-cancel">✕ ${L("ABBRECHEN", "CANCEL")}</button></div><div class="mp-bar"><i></i></div>`;
+    row.querySelector(".mp-cancel").onclick = async (e) => {
+      e.stopPropagation();
+      e.target.disabled = true;
+      try { await api("DELETE", `/api/models/pull/${encodeURIComponent(d.tag)}`); } catch { /* Meldung kommt von api() */ }
+    };
+    updatePullRow(row, d);
+    return row;
+  }
+
+  function updatePullRow(row, d) {
+    const pct = pullPct(d);
+    row.querySelector(".mp-text").textContent = `⬇ ${d.tag}` + (pct !== null ? ` · ${pct} %` : d.status ? ` · ${d.status}` : " …");
+    row.querySelector(".mp-bar i").style.width = (pct || 0) + "%";
+  }
+
   function modelPullEvent(ev) {
+    const row = [...modelMenu.querySelectorAll(".model-pull")].find((r) => r.dataset.tag === ev.tag);
+    if (row && (ev.done || ev.error || ev.cancelled)) row.remove();
+    else if (row) updatePullRow(row, ev);
+    if (ev.cancelled) { toast(L(`Download von ${ev.tag} abgebrochen`, `Download of ${ev.tag} cancelled`)); return; }
     if (ev.error) { toast(L(`✘ ${ev.tag}: `, `✘ ${ev.tag}: `) + ev.error); return; }
     if (ev.done) {
       toast(L(`✔ ${ev.tag} geladen – jetzt im Modell-Menü auswählbar.`, `✔ ${ev.tag} downloaded – now selectable in the model menu.`));
       addSystem(L(`Modell ${ev.tag} ist bereit (Menü LLM oben).`, `Model ${ev.tag} is ready (LLM menu at the top).`));
       return;
     }
-    const pct = ev.total ? ` ${Math.floor((100 * (ev.completed || 0)) / ev.total)} %` : "";
-    toast(L(`Lade ${ev.tag}: `, `Downloading ${ev.tag}: `) + (ev.status || "") + pct);
+    if (row) return;  // Menü offen: Fortschritt steht dort
+    const pct = pullPct(ev) !== null ? ` ${pullPct(ev)} %` : "";
+    toast(L(`Lade ${ev.tag}: `, `Downloading ${ev.tag}: `) + (ev.status || "") + pct
+      + L(" · abbrechen im LLM-Menü", " · cancel in the LLM menu"));
   }
 
   function closeModelMenu() {
@@ -1169,6 +1505,203 @@
   }
 
   // ---------------------------------------------------------------- REST
+  // ---------------------------------------------------------------- Planer: Routinen
+  const DAYS = L("Mo Di Mi Do Fr Sa So", "Mo Tu We Th Fr Sa Su").split(" ");
+  const R = { items: [], edit: null, days: new Set() };
+
+  function loadPlanner() {
+    loadRoutines();
+    loadReminders();
+    if ($("brief-box").open) loadBriefing();
+  }
+  $("brief-box").addEventListener("toggle", () => { if ($("brief-box").open) loadBriefing(); });
+
+  function renderDayChips() {
+    const box = $("rt-days");
+    box.innerHTML = "";
+    DAYS.forEach((d, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "rt-day" + (R.days.has(i) ? " on" : "");
+      b.textContent = d;
+      b.onclick = () => { R.days.has(i) ? R.days.delete(i) : R.days.add(i); renderDayChips(); };
+      box.appendChild(b);
+    });
+    const hint = document.createElement("span");
+    hint.className = "rt-day-hint";
+    hint.textContent = R.days.size ? "" : L("täglich", "daily");
+    box.appendChild(hint);
+  }
+
+  function openRoutineForm(r) {
+    R.edit = r ? r.id : null;
+    R.days = new Set(r ? r.days : []);
+    $("rt-name").value = r ? r.name : "";
+    $("rt-task").value = r ? r.task : "";
+    $("rt-time").value = r ? r.time : "08:00";
+    $("rt-date").value = r ? r.date : "";
+    $("rt-error").textContent = "";
+    renderDayChips();
+    $("rt-form").classList.remove("hidden");
+    $("rt-new").classList.add("hidden");
+    $("rt-task").focus();
+  }
+
+  function closeRoutineForm() {
+    R.edit = null;
+    $("rt-form").classList.add("hidden");
+    $("rt-new").classList.remove("hidden");
+  }
+
+  async function loadRoutines() {
+    try { R.items = await getJSON("/api/routines"); } catch { return; }
+    const ul = $("rt-list");
+    ul.innerHTML = "";
+    if (!R.items.length) {
+      ul.innerHTML = `<li class="empty">${L("Noch keine Routinen – z. B. „Werktags um 8 Linux-News suchen“.",
+                                             "No routines yet – e.g. “Search Linux news on weekdays at 8”.")}</li>`;
+      return;
+    }
+    for (const r of R.items) {
+      const li = document.createElement("li");
+      li.className = "rt-item" + (r.enabled ? "" : " off");
+      const status = r.last_status || "none";
+      li.innerHTML = `<input type="checkbox" ${r.enabled ? "checked" : ""} title="${L("aktiv / pausiert", "active / paused")}">
+        <div class="rt-main"><div class="rt-name"><span class="rt-dot ${status}"></span><span class="n"></span></div>
+          <div class="rt-meta"></div></div>
+        <button class="ghost" data-a="run" title="${L("jetzt ausführen", "run now")}">▶</button>
+        <button class="ghost" data-a="edit" title="${L("bearbeiten", "edit")}">✎</button>
+        <button class="ghost" data-a="del" title="${L("löschen", "delete")}">✕</button>`;
+      li.querySelector(".n").textContent = r.name;
+      // „morgen 08:00“ → „morgen“, wenn die Uhrzeit ohnehin im Zeitplan steht
+      const nextShort = r.next.endsWith(" " + r.time) ? r.next.slice(0, -r.time.length - 1) : r.next;
+      const next = r.enabled && r.next !== "–" ? ` · ${nextShort}` : r.enabled ? "" : ` · ${L("pausiert", "paused")}`;
+      li.querySelector(".rt-meta").textContent = r.schedule + next;
+      li.querySelector(".rt-meta").title = r.enabled && r.next !== "–" ? `${L("nächste Ausführung", "next run")}: ${r.next}` : "";
+      li.querySelector(".rt-main").title = r.task + (r.last_summary ? "\n\n" + L("Zuletzt: ", "Last: ") + r.last_summary : "");
+      li.querySelector(".rt-main").onclick = () => {
+        if (!r.chat_id) { toast(L("Noch kein Ergebnis – ▶ startet die Routine jetzt.", "No result yet – ▶ runs it now.")); return; }
+        api("POST", `/api/chats/${r.chat_id}/activate`).catch(() => {});
+      };
+      li.querySelector("input").onchange = (e) => api("PUT", `/api/routines/${r.id}`, { enabled: e.target.checked })
+        .then(loadRoutines).catch(() => toast(L("Speichern fehlgeschlagen", "Saving failed")));
+      li.querySelectorAll("button").forEach((b) => b.onclick = async () => {
+        if (b.dataset.a === "edit") return openRoutineForm(r);
+        if (b.dataset.a === "del") {
+          if (!confirm(L(`Routine „${r.name}“ löschen? Ihr Chat bleibt im Verlauf.`, `Delete routine “${r.name}”? Its chat stays in the history.`))) return;
+          await api("DELETE", `/api/routines/${r.id}`).catch(() => {});
+        } else {
+          await api("POST", `/api/routines/${r.id}/run`).catch(() => {});
+          toast(L(`Routine „${r.name}“ startet …`, `Starting routine “${r.name}” …`));
+        }
+        loadRoutines();
+      });
+      ul.appendChild(li);
+    }
+  }
+
+  $("rt-new").onclick = () => openRoutineForm(null);
+  $("rt-cancel").onclick = closeRoutineForm;
+  $("rt-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const body = { name: $("rt-name").value.trim(), task: $("rt-task").value.trim(), time: $("rt-time").value,
+                   days: [...R.days].sort(), date: $("rt-date").value };
+    if (!body.task) { $("rt-error").textContent = L("Bitte eine Aufgabe eintragen.", "Please enter a task."); return; }
+    const r = await fetch(R.edit ? `/api/routines/${R.edit}` : "/api/routines", {
+      method: R.edit ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) {
+      $("rt-error").textContent = (await r.json().catch(() => ({}))).detail || L("Speichern fehlgeschlagen", "Saving failed");
+      return;
+    }
+    closeRoutineForm();
+    loadRoutines();
+  };
+
+  // ---------------------------------------------------------------- Briefing-Einstellungen
+  const B = { sections: [], settings: null, timer: null };
+
+  function renderBriefing() {
+    const s = B.settings;
+    const order = [...s.sections, ...B.sections.map((x) => x.id).filter((id) => !s.sections.includes(id))];
+    const list = $("brief-list");
+    list.innerHTML = "";
+    order.forEach((id, i) => {
+      const info = B.sections.find((x) => x.id === id);
+      const on = s.sections.includes(id);
+      const li = document.createElement("li");
+      li.className = "brief-item" + (on ? "" : " off");
+      li.innerHTML = `<label><input type="checkbox" ${on ? "checked" : ""}> ${escapeHtml(info.label)}`
+        + (info.note ? ` <span class="brief-note">– ${escapeHtml(info.note)}</span>` : "") + `</label>`
+        + `<button class="ghost" data-move="-1" title="${L("nach oben", "move up")}" ${i === 0 ? "disabled" : ""}>▲</button>`
+        + `<button class="ghost" data-move="1" title="${L("nach unten", "move down")}" ${i === order.length - 1 ? "disabled" : ""}>▼</button>`;
+      li.querySelector("input").onchange = (e) => {
+        const cur = order.filter((x) => x === id ? e.target.checked : s.sections.includes(x));
+        saveBriefing({ sections: cur });
+      };
+      li.querySelectorAll("button").forEach((b) => b.onclick = () => {
+        const j = i + Number(b.dataset.move);
+        [order[i], order[j]] = [order[j], order[i]];
+        saveBriefing({ sections: order.filter((x) => s.sections.includes(x)) });
+      });
+      list.appendChild(li);
+    });
+    $("brief-days").value = s.lookahead_days;
+    $("brief-topics").value = s.news_topics.join(", ");
+    $("brief-count").value = s.news_count;
+    $("brief-inbox").value = s.inbox_tag;
+    $("brief-instr").value = s.instructions;
+  }
+
+  async function loadBriefing() {
+    try {
+      const data = await getJSON("/api/briefing");
+      B.sections = data.sections;
+      B.settings = data.settings;
+      $("brief-status").textContent = data.customized ? L("im Dashboard angepasst", "customised in the dashboard")
+                                                     : L("aus der Config", "from the config file");
+      renderBriefing();
+    } catch { $("brief-status").textContent = L("Laden fehlgeschlagen", "Loading failed"); }
+  }
+
+  async function saveBriefing(patch) {
+    B.settings = { ...B.settings, ...patch };
+    renderBriefing();
+    try {
+      const r = await fetch("/api/briefing", { method: "PUT", headers: { "Content-Type": "application/json" },
+                                               body: JSON.stringify(B.settings) });
+      if (!r.ok) throw new Error(r.status);
+      B.settings = (await r.json()).settings;
+      $("brief-status").textContent = L("✔ gespeichert", "✔ saved");
+    } catch { $("brief-status").textContent = L("Speichern fehlgeschlagen", "Saving failed"); }
+  }
+
+  function briefingFieldsChanged() {
+    clearTimeout(B.timer);
+    B.timer = setTimeout(() => saveBriefing({
+      lookahead_days: Number($("brief-days").value) || 0,
+      news_topics: $("brief-topics").value.split(",").map((t) => t.trim()).filter(Boolean),
+      news_count: Number($("brief-count").value) || 3,
+      inbox_tag: $("brief-inbox").value.trim(),
+      instructions: $("brief-instr").value.trim(),
+    }), 600);
+  }
+  ["brief-days", "brief-topics", "brief-count", "brief-inbox", "brief-instr"].forEach((id) => {
+    $(id).addEventListener("input", briefingFieldsChanged);
+  });
+  $("brief-reset").onclick = async () => {
+    await fetch("/api/briefing", { method: "DELETE" });
+    await loadBriefing();
+  };
+  $("brief-preview").onclick = async () => {
+    const out = $("brief-out");
+    out.classList.remove("hidden");
+    out.textContent = L("Briefing wird zusammengestellt …", "Putting the briefing together …");
+    try {
+      const r = await fetch("/api/briefing/preview", { method: "POST" });
+      out.textContent = (await r.json()).text;
+    } catch { out.textContent = L("Vorschau fehlgeschlagen", "Preview failed"); }
+  };
+
   async function getJSON(url) {
     const r = await fetch(url);
     if (!r.ok) throw new Error(r.status);
@@ -1177,7 +1710,8 @@
 
   function setPill(id, cls, text) {
     const el = $(id);
-    el.className = "pill " + cls;
+    el.classList.remove("ok", "warn", "bad");
+    el.classList.add(cls);
     el.querySelector("em").textContent = text;
   }
 
@@ -1195,6 +1729,9 @@
       const vCls = v.stt && v.tts ? "ok" : v.stt || v.tts ? "warn" : "bad";
       setPill("pill-voice", vCls, [v.stt ? "STT" : null, v.tts ? "TTS" : "TTS(Browser)", v.wake ? "WAKE" : null].filter(Boolean).join(" · "));
       setPill("pill-mem", "ok", `${st.memory.days} ${L("Tage", "days")} · ${st.memory.facts} ${L("Fakten", "facts")}`);
+      const tg = st.telegram || {};
+      if (tg.error && tg.error !== S.telegramError) toast("Telegram: " + tg.error);  // jedes Problem einmal melden
+      S.telegramError = tg.error || "";
       return st;
     } catch {
       setPill("pill-llm", "bad", "?");
@@ -1365,7 +1902,6 @@
   $("reminder-ok").onclick = () => $("reminder-banner").classList.add("hidden");
 
   async function loadMemory() {
-    loadReminders();
     try {
       const [facts, days] = await Promise.all([getJSON("/api/memory/facts"), getJSON("/api/memory/days")]);
       $("facts").innerHTML = facts.length
@@ -1437,6 +1973,7 @@
   $("boot-btn").onclick = async () => {
     await initAudio().catch(() => {});
     $("boot").classList.add("hidden");
+    orb.boot();
     if (S.wake) {
       if (await initMic()) send({ type: "wake", enabled: true });
       else { S.wake = false; store.set("wake", false); }

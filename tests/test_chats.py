@@ -168,3 +168,27 @@ def test_switch_blocked_while_busy(client):
 
 async def _release(agent):
     agent.lock.release()
+
+
+def test_chat_actions_while_a_routine_works_in_its_own_chat(cfg):
+    """Während eine Routine/Telegram-Anfrage in ihrem Chat arbeitet, betreffen Umbenennen, Favorisieren und
+    Löschen trotzdem den richtigen Chat – und der offene Chat des Nutzers wird nicht versehentlich überschrieben."""
+    from orbwise.memory import Memory
+
+    memory = Memory(cfg.memory, None)
+    mine = memory.conversation
+    mine.add({"role": "user", "content": "hallo"})
+    other = memory.new_chat()
+    other.add({"role": "user", "content": "zweiter"})
+    mine = memory.switch_chat(mine.chat_id)
+    with memory.in_chat("", "📱 Telegram") as conv:
+        assert memory.active is mine and memory.conversation is conv
+        memory.rename_chat(mine.chat_id, "Mein Chat")
+        memory.star_chat(mine.chat_id, True)
+        with pytest.raises(RuntimeError):
+            memory.forget_chat(conv.chat_id)  # der laufende Chat bleibt
+        memory.forget_chat(other.chat_id)
+    assert memory.conversation is mine and mine.meta["title"] == "Mein Chat" and mine.meta["starred"]
+    mine.save()
+    listed = {c["id"]: c for c in memory.chats.list("")}
+    assert listed[mine.chat_id]["title"] == "Mein Chat" and other.chat_id not in listed
