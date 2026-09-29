@@ -58,7 +58,8 @@ First public release.
   memory browser, voice settings – optimised for smooth rendering in Firefox.
 - Orb: start-up sequence (rings assemble, network ignites), shock-wave impulses on state changes (wake word, answer,
   tool, error), the voice shapes the main ring while speaking/listening, particles flow in/out, and satellites on
-  the ring show which tool or routine is running. HUD details: message glide-in, panel corners light up on
+  the ring show which tool or routine is running (larger, visible for at least 1.5 s; in thinking mode the tool
+  appears as a chip inside the thought view instead of zooming out); the side panel is narrower, the orb wider. HUD details: message glide-in, panel corners light up on
   activity, a subtle scanline and a copy button on code blocks – all within the same frame budget.
 - The status returns to "ready" as soon as the answer is complete (condensing runs silently afterwards), after the
   model has loaded or failed to load, and after reconnecting – no more stuck "thinking". The dashboard switches to

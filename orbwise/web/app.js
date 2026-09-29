@@ -262,7 +262,10 @@
         return;
       case "state":
         if (ev.routine) orb.addSatellite("rt:" + ev.routine, "⟳ " + ev.routine.toUpperCase());
-        if (ev.state === "idle") orb.clearSatellites("rt:");  // abgebrochene Werkzeuge nicht hängen lassen
+        if (ev.state === "idle") {  // abgebrochene Werkzeuge nicht hängen lassen
+          orb.clearSatellites("rt:");
+          for (const el of $("thought-tools").querySelectorAll(".thought-tool:not(.gone)")) thoughtToolDone({ id: el.id.slice(3), status: "ok" });
+        }
         S.serverState = ev.state === "confirm" ? S.serverState : ev.state;
         S.substate = ev.state === "executing" && ev.tool ? ev.tool : "";
         break;
@@ -304,8 +307,7 @@
         if (!$("tab-memory").classList.contains("hidden")) loadReminders();
         break;
       case "tool_call":
-        if (Thought.active) Thought.zoomOut();
-        toolCall(ev);
+        toolCall(ev);  // im Denkmodus bleibt der Zoom – das Werkzeug erscheint als Chip im Gedankenkasten
         break;
       case "tool_output":
         toolOutput(ev);
@@ -645,8 +647,26 @@
     return hit ? hit[1][EN ? 1 : 0] : name.split("_")[0].toUpperCase();
   }
 
+  function thoughtTool(ev) {
+    const el = document.createElement("span");
+    el.className = "thought-tool";
+    el.id = "tt-" + ev.id;
+    el.textContent = "⚙ " + satLabel(ev.name);
+    el.title = ev.name;
+    $("thought-tools").appendChild(el);
+  }
+
+  function thoughtToolDone(ev) {
+    const el = $("tt-" + ev.id);
+    if (!el) return;
+    el.classList.add(ev.status === "ok" ? "ok" : ev.status);
+    setTimeout(() => el.classList.add("gone"), 1500);
+    setTimeout(() => el.remove(), 2200);
+  }
+
   function toolCall(ev) {
     orb.addSatellite(ev.id, satLabel(ev.name));
+    thoughtTool(ev);
     const empty = activity.querySelector(".empty");
     if (empty) empty.remove();
     const el = document.createElement("div");
@@ -686,6 +706,7 @@
 
   function toolResult(ev) {
     orb.removeSatellite(ev.id, ev.status === "error" || ev.status === "blocked");
+    thoughtToolDone(ev);
     const el = acts[ev.id];
     if (el) {
       el.className = "act " + ev.status;

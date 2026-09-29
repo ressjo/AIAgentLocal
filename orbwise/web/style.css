@@ -110,7 +110,7 @@ button { font-family: inherit; cursor: pointer; }
 .layout {
   position: relative; z-index: 1;
   flex: 1; min-height: 0;
-  display: grid; grid-template-columns: minmax(280px, 1fr) minmax(340px, 1.35fr) minmax(280px, 1fr);
+  display: grid; grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.45fr) minmax(250px, .8fr);
   gap: 18px; padding: 18px 22px 10px;
 }
 .panel {
@@ -196,6 +196,19 @@ button { font-family: inherit; cursor: pointer; }
   transition: opacity .5s, transform .8s cubic-bezier(.2,.8,.2,1);
 }
 .core.zoomed .thought { opacity: 1; transform: translate(-50%, -50%) scale(1); pointer-events: auto; }
+/* Werkzeuge im Denkmodus: Satelliten am Ring sind beim Hineinzoomen außerhalb des Bildes – daher als Chips im Kasten */
+.thought-tools { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-bottom: 8px; min-height: 0; }
+.thought-tool {
+  font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .18em; padding: 3px 10px;
+  color: #e8f6ff; border: 1px solid rgba(63,208,255,.55); border-radius: 12px; background: rgba(63,208,255,.12);
+  box-shadow: 0 0 12px rgba(63,208,255,.35); animation: tool-pulse 1.2s ease-in-out infinite;
+  transition: opacity .6s;
+}
+.thought-tool.ok { animation: none; border-color: rgba(77,255,184,.55); box-shadow: 0 0 10px rgba(77,255,184,.3); }
+.thought-tool.error, .thought-tool.blocked, .thought-tool.denied { animation: none; color: var(--danger);
+  border-color: rgba(255,93,108,.55); box-shadow: 0 0 10px rgba(255,93,108,.3); }
+.thought-tool.gone { opacity: 0; }
+@keyframes tool-pulse { 50% { box-shadow: 0 0 20px rgba(63,208,255,.6); } }
 .thought-head { font-size: 11px; letter-spacing: .45em; color: #9aa6ff; text-align: center; margin-bottom: 8px;
                 text-shadow: 0 0 10px currentColor; }
 .thought-text {
@@ -208,7 +221,7 @@ button { font-family: inherit; cursor: pointer; }
 .thought-log summary { cursor: pointer; letter-spacing: .15em; font-size: 10px; }
 .thought-log pre { white-space: pre-wrap; font-family: var(--mono); font-size: 12px; max-height: 240px; overflow: auto;
                    margin: 6px 0 0; padding: 6px 8px; border-left: 2px solid rgba(154,166,255,.4); color: #aab8d8; }
-@media (prefers-reduced-motion: reduce) { #orb, .thought { transition: none; } }
+@media (prefers-reduced-motion: reduce) { #orb, .thought { transition: none; } .thought-tool { animation: none; } }
 .core-label { position: absolute; bottom: 9%; left: 0; right: 0; text-align: center; pointer-events: none; }
 .state { font-size: 20px; letter-spacing: .6em; color: var(--accent); text-shadow: 0 0 16px currentColor; padding-left: .6em; transition: color .4s; }
 .substate { margin-top: 4px; font-family: var(--mono); font-size: 12px; color: var(--muted); min-height: 1.2em; }

@@ -44,6 +44,7 @@
     error:     { c: [255, 93, 108], waves: 2, fire: 25 },
   };
   const MAX_SATELLITES = 6;
+  const SAT_MIN_SECONDS = 1.5;
 
   class NeuralNet {
     constructor(count) {
@@ -310,20 +311,25 @@
     }
 
     addSatellite(id, label) {
-      if (this.satellites.has(id)) { this.satellites.get(id).leaving = false; return; }
+      if (this.satellites.has(id)) { const s = this.satellites.get(id); s.leaving = false; s.leaveAt = null; return; }
       if (this.satellites.size >= MAX_SATELLITES) return;
       const n = this.satellites.size;
       this.satellites.set(id, { label: String(label).slice(0, 18), a: this.t * 0.25 - Math.PI / 2 + n * 0.6,
-                                alpha: 0, leaving: false, err: false });
+                                alpha: 0, leaving: false, err: false, born: this.t, leaveAt: null });
     }
 
     removeSatellite(id, failed = false) {
       const s = this.satellites.get(id);
-      if (s) { s.leaving = true; s.err = s.err || failed; }
+      if (!s) return;
+      s.err = s.err || failed;
+      // kurze Werkzeuge nicht nur aufblitzen lassen: mindestens ~1,5 s sichtbar
+      const wait = Math.max(0, SAT_MIN_SECONDS - (this.t - s.born));
+      if (wait > 0) s.leaveAt = this.t + wait;
+      else s.leaving = true;
     }
 
     clearSatellites(keepPrefix = "") {
-      for (const [id, s] of this.satellites) if (!keepPrefix || !id.startsWith(keepPrefix)) s.leaving = true;
+      for (const id of [...this.satellites.keys()]) if (!keepPrefix || !id.startsWith(keepPrefix)) this.removeSatellite(id);
     }
 
     _bootP(start, dur) {  // Fortschritt 0..1 eines Abschnitts der Startsequenz (1 = fertig bzw. keine Sequenz)
@@ -420,7 +426,8 @@
         s.a += d * (1 - Math.pow(0.05, dt));
       });
       for (const [id, s] of this.satellites) {
-        s.alpha = lerp(s.alpha, s.leaving ? 0 : 1, 1 - Math.pow(s.leaving ? 0.02 : 0.005, dt));
+        if (s.leaveAt !== null && this.t >= s.leaveAt) { s.leaving = true; s.leaveAt = null; }
+        s.alpha = lerp(s.alpha, s.leaving ? 0 : 1, 1 - Math.pow(s.leaving ? 0.02 : 0.0005, dt));
         if (s.leaving) s.a += dt * 0.6;
         if (s.leaving && s.alpha < 0.03) this.satellites.delete(id);
       }
@@ -442,17 +449,19 @@
       if (!c) {
         c = document.createElement("canvas");
         const g = c.getContext("2d");
-        const font = "600 10px ui-monospace, 'JetBrains Mono', monospace";
+        const font = "700 13px ui-monospace, 'JetBrains Mono', monospace";
         g.font = font;
-        const w = Math.ceil(g.measureText(text).width + text.length * 1.5) + 8;
-        c.width = w * 2; c.height = 28;
+        const w = Math.ceil(g.measureText(text).width + text.length * 2) + 10;
+        c.width = w * 2; c.height = 36;
         g.scale(2, 2);
         g.font = font;
-        g.fillStyle = "rgba(225,245,255,0.95)";
+        g.fillStyle = "rgba(235,250,255,0.98)";
+        g.shadowColor = "rgba(63,208,255,0.8)";
+        g.shadowBlur = 6;
         g.textBaseline = "middle";
-        let x = 4;
-        for (const ch of text) { g.fillText(ch, x, 7); x += g.measureText(ch).width + 1.5; }  // Sperrung
-        c.w = w; c.h = 14;
+        let x = 5;
+        for (const ch of text) { g.fillText(ch, x, 9); x += g.measureText(ch).width + 2; }  // Sperrung
+        c.w = w; c.h = 18;
         if (this.labels.size > 40) this.labels.clear();
         this.labels.set(text, c);
       }
@@ -658,13 +667,13 @@
       for (const s of this.satellites.values()) {
         const x = Math.cos(s.a) * rr, y = Math.sin(s.a) * rr;
         ctx.globalAlpha = s.alpha;
-        const size = 14 + 3 * Math.sin(this.t * 6 + s.a * 3);
+        const size = 22 + 4 * Math.sin(this.t * 6 + s.a * 3);
         ctx.drawImage(sprite, x - size, y - size, size * 2, size * 2);
         ctx.fillStyle = s.err ? "rgba(255,93,108,0.95)" : "rgba(255,255,255,0.9)";
-        ctx.beginPath(); ctx.arc(x, y, 2.6, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(x, y, 4, 0, TAU); ctx.fill();
         // Beschriftung zentriert über (obere Hälfte) bzw. unter (untere Hälfte) dem Punkt, nie auf dem Kopf
         const label = this._label(s.label);
-        const ly = y + (Math.sin(s.a) < 0 ? -label.h - 5 : 5);
+        const ly = y + (Math.sin(s.a) < 0 ? -label.h - 8 : 8);
         ctx.drawImage(label, x - label.w / 2, ly, label.w, label.h);
       }
       ctx.globalAlpha = 1;
