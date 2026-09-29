@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from . import askpass, metrics, prompts
 from .agent import Agent
 from .config import BRIEFING_SECTIONS, BriefingConfig, Config, env
-from .lang import set_lang
+from .lang import T, set_lang
 from .llm import FakeLLM, LLMError
 from .llm_router import LLMRouter
 from .memory import Memory
@@ -224,9 +224,12 @@ def remote_bind_warning(cfg: Config) -> str:
     die Host-Prüfung hält Browser-Angriffe ab, aber kein Gerät im LAN, das den Host-Header selbst setzt."""
     if is_loopback(cfg.host):
         return ""
-    return (f"host: {cfg.host} macht das Dashboard ohne Anmeldung im Netzwerk erreichbar – jedes Gerät dort könnte "
-            "Befehle auf diesem PC auslösen. Für unterwegs lieber Telegram, VPN (z. B. WireGuard/Tailscale) oder "
-            "einen SSH-Tunnel (ssh -L 8765:localhost:8765 pc) nutzen.")
+    return T(f"host: {cfg.host} macht das Dashboard ohne Anmeldung im Netzwerk erreichbar – jedes Gerät dort könnte "
+             "Befehle auf diesem PC auslösen. Für unterwegs lieber Telegram, VPN (z. B. WireGuard/Tailscale) oder "
+             "einen SSH-Tunnel (ssh -L 8765:localhost:8765 pc) nutzen.",
+             f"host: {cfg.host} makes the dashboard reachable on the network without a login – any device there could "
+             "run commands on this PC. For remote use prefer Telegram, a VPN (e.g. WireGuard/Tailscale) or an SSH "
+             "tunnel (ssh -L 8765:localhost:8765 pc).")
 
 
 def check_host(host: str | None, port: int) -> bool:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any
 
+from ..lang import T
 from ..routines import Routine, RoutineStore, days_label, parse_days, parse_time, when_label
 from .registry import CONFIRM, SAFE, ToolContext, tool
 
@@ -40,8 +41,8 @@ def _plan_text(args: dict) -> str:
 
 
 def _create_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
-    return CONFIRM, (f"Neue Routine „{args.get('name') or args.get('task', '')[:40]}“ – {_plan_text(args)}:\n"
-                     f"{args.get('task', '')}")
+    name = args.get("name") or args.get("task", "")[:40]
+    return CONFIRM, T(f"Neue Routine „{name}“", f"New routine “{name}”") + f" – {_plan_text(args)}:\n{args.get('task', '')}"
 
 
 def _find_one(ctx: ToolContext, which: str) -> Routine:
@@ -53,6 +54,9 @@ def _find_one(ctx: ToolContext, which: str) -> Routine:
     return hits[0]
 
 
+ROUTINE_ACTIONS_EN = {"ändern": "change", "löschen": "delete", "jetzt ausführen": "run now"}
+
+
 def _named_risk(action: str):
     def risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
         try:
@@ -61,7 +65,8 @@ def _named_risk(action: str):
         except ValueError:
             label = f"„{args.get('which', '')}“"
         changes = ", ".join(f"{k} → {v}" for k, v in args.items() if k != "which" and v not in (None, ""))
-        return CONFIRM, f"Routine {label} {action}" + (f": {changes}" if changes else "")
+        text = T(f"Routine {label} {action}", f"{ROUTINE_ACTIONS_EN.get(action, action)} routine {label}")
+        return CONFIRM, text + (f": {changes}" if changes else "")
     return risk
 
 

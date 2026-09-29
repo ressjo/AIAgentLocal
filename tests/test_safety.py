@@ -67,7 +67,9 @@ def test_secret_paths(tmp_path, monkeypatch):
     (tmp_path / "echt.txt").write_text("hallo")
     assert is_secret_path(link) and is_secret_path(ssh / "id_ed25519")
     assert not is_secret_path(tmp_path / "echt.txt") and not is_secret_path("~/Dokumente/Rechnung.pdf")
-    for p in ("~/.config/chromium/Default/Login Data", "/srv/backup/home/anna/.ssh/id_rsa", "~/server.pem",
+    for p in ("~/Backup/secrets.txt", "~/aws-credentials.csv", "~/Passwords.kdbx.bak",
+              "~/.local/share/keyrings-backup/login.keyring",
+              "~/.config/chromium/Default/Login Data", "/srv/backup/home/anna/.ssh/id_rsa", "~/server.pem",
               "~/.git-credentials", "/etc/NetworkManager/system-connections/Heim.nmconnection", "~/.docker/config.json"):
         assert is_secret_path(p), p
 
@@ -87,3 +89,29 @@ def test_file_tools_refuse_secrets(cfg, tmp_path):
     assert read.assess(ctx, {"path": str(tmp_path / "harmlos.txt")})[0] == B
     assert read.assess(ctx, {"path": "~/.config/orbwise/config.yaml"})[0] == B
     assert read.assess(ctx, {"path": "~/Dokumente/notiz.md"})[0] == S
+
+
+@pytest.mark.parametrize("cmd", [
+    "grep -r 'PRIVATE KEY' ~", "grep -rn TOKEN /proc/self/", "rg -uu token ~", "grep -R pass .",
+    "cd ~/.config/orbwise && cat config.yaml", "cd ~/.ssh && cat id_*", "cat ~/.ss{h,x}/id_rsa",
+    "ps eww", "ps auxe", "systemctl --user show orbwise", "systemctl cat orbwise", "cat $SOMEFILE",
+    "cat /proc/1234/environ",
+])
+def test_secret_bypasses_are_caught(cmd):
+    level, reason = classify_command(cmd)
+    assert level == CONFIRM and "Zugangsdaten" in reason
+
+
+def test_globs_are_expanded_like_the_shell(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".ssh").mkdir()
+    (tmp_path / ".ssh" / "id_ed25519").write_text("KEY")
+    assert classify_command("cat ~/.ss?/id_e*")[0] == CONFIRM
+    assert classify_command("cat ~/.ss*/*")[0] == CONFIRM
+
+
+@pytest.mark.parametrize("cmd", ["ps aux", "ps -ef", "systemctl status orbwise",
+                                 "systemctl show -p ActiveState orbwise", "rg TODO ~/Projekte/app",
+                                 "grep -i error /var/log/pacman.log", "echo environment"])
+def test_everyday_reads_stay_safe(cmd, tmp_path):
+    assert classify_command(cmd)[0] == SAFE

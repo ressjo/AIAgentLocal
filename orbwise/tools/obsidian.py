@@ -19,6 +19,7 @@ from urllib.parse import quote
 
 import yaml
 
+from ..lang import T
 from . import proc
 from .passages import _words, rank_passages, select_passages, split_passages
 from .registry import CONFIRM, ToolContext, tool
@@ -304,7 +305,8 @@ async def obsidian_append(
 
 
 def _update_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
-    return CONFIRM, f"überschreibt den Inhalt der Obsidian-Notiz '{args.get('note', '')}'"
+    note = args.get("note", "")
+    return CONFIRM, T(f"überschreibt den Inhalt der Obsidian-Notiz '{note}'", f"overwrites the Obsidian note '{note}'")
 
 
 @tool("Ersetzt den kompletten Inhalt einer Obsidian-Notiz (Frontmatter bleibt erhalten). "

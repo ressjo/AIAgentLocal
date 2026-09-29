@@ -31,6 +31,7 @@ from email.message import EmailMessage
 from email.utils import formataddr, formatdate, getaddresses, make_msgid, parseaddr, parsedate_to_datetime
 from typing import Annotated, Any, TypeVar
 
+from ..lang import T
 from .registry import CONFIRM, ToolContext, tool
 
 MAX_LIST, MAX_MANAGE = 30, 50
@@ -41,7 +42,7 @@ MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", 
 # (Ordner, UID) → „Absender – Betreff“ der zuletzt gezeigten Mails – für die Bestätigungsübersicht
 _SEEN: dict[tuple[str, int], str] = {}
 
-T = TypeVar("T")
+R = TypeVar("R")
 
 
 class MailError(RuntimeError):
@@ -327,8 +328,8 @@ def _size(n: int) -> str:
     return f"{n / 1024 / 1024:.1f} MB" if n >= 1024 * 1024 else f"{max(1, n // 1024)} KB"
 
 
-async def _run(cfg: Any, work: Callable[[MailClient], T]) -> T:
-    def job() -> T:
+async def _run(cfg: Any, work: Callable[[MailClient], R]) -> R:
+    def job() -> R:
         with MailClient(cfg) as client:
             return work(client)
     try:
@@ -482,6 +483,8 @@ async def mail_folders(ctx: ToolContext) -> str:
 
 ACTIONS = {"mark_read": "als gelesen markieren", "mark_unread": "als ungelesen markieren", "archive": "archivieren",
            "move": "verschieben nach", "label": "Label setzen", "trash": "in den Papierkorb"}
+ACTIONS_EN = {"mark_read": "mark as read", "mark_unread": "mark as unread", "archive": "archive",
+              "move": "move to", "label": "set label", "trash": "move to trash"}
 
 
 def _ids(value: Any) -> list[int]:
@@ -504,11 +507,13 @@ def _manage_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     folder = str(args.get("folder") or "INBOX")
     action = str(args.get("action") or "")
     target = str(args.get("target") or "")
-    what = ACTIONS.get(action, action) + (f" „{target}“" if action in ("move", "label") and target else "")
+    what = T(ACTIONS.get(action, action), ACTIONS_EN.get(action, action)) + (
+        f" „{target}“" if action in ("move", "label") and target else "")
     lines = [f"- {_SEEN.get((folder, u), f'UID {u}')}" for u in uids[:15]]
     if len(uids) > 15:
-        lines.append(f"- … und {len(uids) - 15} weitere")
-    return CONFIRM, f"{len(uids)} Mail{'s' if len(uids) != 1 else ''} in „{folder}“ {what}:\n" + "\n".join(lines)
+        lines.append(T(f"- … und {len(uids) - 15} weitere", f"- … and {len(uids) - 15} more"))
+    mails = f"{len(uids)} Mail{'s' if len(uids) != 1 else ''}"
+    return CONFIRM, T(f"{mails} in „{folder}“ {what}", f"{what}: {mails} in “{folder}”") + ":\n" + "\n".join(lines)
 
 
 @tool("Räumt Mails auf (nach Bestätigung): mark_read, mark_unread, archive, move (target = Ordner), "
@@ -558,8 +563,13 @@ def _paperless_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     uid = args.get("uid")
     which = _ids(args.get("attachments"))
     label = _SEEN.get((folder, int(uid))) if str(uid).isdigit() else None
-    part = f"Anhänge {', '.join(map(str, which))}" if which else "alle PDF-Anhänge"
-    return CONFIRM, f"{part} der Mail „{label or f'UID {uid}'}“ an Paperless übergeben"
+    mail = label or f"UID {uid}"
+    if which:
+        nums = ", ".join(map(str, which))
+        return CONFIRM, T(f"Anhänge {nums} der Mail „{mail}“ an Paperless übergeben",
+                          f"hand attachments {nums} of the mail “{mail}” over to Paperless")
+    return CONFIRM, T(f"alle PDF-Anhänge der Mail „{mail}“ an Paperless übergeben",
+                      f"hand all PDF attachments of the mail “{mail}” over to Paperless")
 
 
 @tool("Übergibt Anhänge einer Mail (Standard: alle PDFs) nach Bestätigung an Paperless.",
@@ -685,9 +695,8 @@ def smtp_send(cfg: Any, msg: EmailMessage, recipients: list[str]) -> None:
 
 def _send_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     to = str(args.get("to") or "?")
-    return CONFIRM, (f"Mail an {to} senden – Empfänger, Betreff und Text lassen sich im Fenster noch ändern." if
-                     getattr(ctx.cfg, "language", "de") != "en" else
-                     f"Send an e-mail to {to} – recipients, subject and text can still be edited in the dialog.")
+    return CONFIRM, T(f"Mail an {to} senden – Empfänger, Betreff und Text lassen sich im Fenster noch ändern.",
+                      f"Send an e-mail to {to} – recipients, subject and text can still be edited in the dialog.")
 
 
 @tool("Sendet eine E-Mail – immer erst nach Bestätigung: Der Nutzer sieht Empfänger, Betreff und Text in einem Fenster, "

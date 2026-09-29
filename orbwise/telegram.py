@@ -20,6 +20,7 @@ import logging
 import re
 import tempfile
 import time
+import traceback
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -61,12 +62,28 @@ def explain(error: str) -> str:
     return error
 
 
-def quiet_http_logs() -> None:
-    """httpx/httpcore protokollieren auf INFO jede Anfrage-URL – bei Telegram steckt darin der Bot-Token."""
-    for name in ("httpx", "httpcore"):
+class RedactToken(logging.Filter):
+    """Entfernt den Bot-Token aus jedem Log-Eintrag – Text, Argumente und Traceback. Hängt an den Loggern von
+    Orbwise-Telegram und httpx/httpcore (die mit -v jede Anfrage-URL samt Token protokollieren würden)."""
+
+    def __init__(self, token: str):
+        super().__init__()
+        self.token = token
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = redact(record.getMessage(), self.token)
+        record.args = ()
+        if record.exc_info:
+            record.exc_text = redact("".join(traceback.format_exception(*record.exc_info)).rstrip(), self.token)
+            record.exc_info = None
+        return True
+
+
+def protect_logs(token: str) -> None:
+    for name in (__name__, "httpx", "httpcore"):
         logger = logging.getLogger(name)
-        if logger.getEffectiveLevel() < logging.WARNING:
-            logger.setLevel(logging.WARNING)
+        if not any(isinstance(f, RedactToken) and f.token == token for f in logger.filters):
+            logger.addFilter(RedactToken(token))
 
 
 Runner = Callable[[str, Callable[[dict], Awaitable[None]], Callable[..., Awaitable[Any]]], Awaitable[str]]
@@ -100,7 +117,7 @@ class TelegramBot:
         editable(name) → True für Aktionen mit Bearbeitungsfenster (z. B. mail_send) – nur im Dashboard."""
         self.cfg = cfg
         self.t = cfg.telegram
-        quiet_http_logs()
+        protect_logs(self.t.secret or "")
         self.run = run
         self.describe = describe
         self.editable = editable
@@ -178,8 +195,8 @@ class TelegramBot:
             self.offset = max(self.offset, int(u.get("update_id", 0)) + 1)
             try:
                 await self.handle(u)
-            except Exception as e:  # noqa: BLE001 – ein kaputtes Update darf den Bot nicht stoppen
-                log.warning("Telegram-Update fehlgeschlagen: %s: %s", type(e).__name__, self.redact(e))
+            except Exception:  # noqa: BLE001 – ein kaputtes Update darf den Bot nicht stoppen
+                log.exception("Telegram-Update fehlgeschlagen")  # Token entfernt RedactToken
         return len(updates or [])
 
     async def check(self) -> None:

@@ -21,10 +21,11 @@ from typing import Annotated, Any
 
 import httpx
 
+from ..lang import T
 from . import proc
 from .netutil import client_kwargs, explain, html_instead_of_json, normalize_url
 from .registry import BLOCKED, CONFIRM, SAFE, ToolContext, tool
-from .secretpaths import SECRET_REASON, is_secret_path
+from .secretpaths import is_secret_path, secret_reason
 
 # Für Tests austauschbar (httpx.MockTransport)
 TRANSPORT: httpx.AsyncBaseTransport | None = None
@@ -352,10 +353,10 @@ def _in_telegram_inbox(cfg: Any, path: Path) -> bool:
 def _upload_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     path = Path(str(args.get("path") or "")).expanduser()
     if is_secret_path(path):
-        return BLOCKED, SECRET_REASON
+        return BLOCKED, secret_reason()
     if _in_telegram_inbox(ctx.cfg, path):
         return SAFE, ""  # selbst vom Handy geschickt → direkt ablegen
-    return CONFIRM, f"Datei {path} an Paperless übergeben"
+    return CONFIRM, T(f"Datei {path} an Paperless übergeben", f"hand file {path} over to Paperless")
 
 
 @tool("Legt eine lokale Datei (PDF, Foto, Office-Dokument) in Paperless ab – z. B. eine Datei, die der Nutzer per "
@@ -467,11 +468,14 @@ def _apply_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
             note = _new_entry(kind, name) if name else ""
             if note and note not in new:
                 new.append(note)
-    reason = f"Paperless-Metadaten ändern ({len(changes)} Dokument{'e' if len(changes) != 1 else ''}):\n" + "\n".join(lines)
+    n = len(changes)
+    reason = T(f"Paperless-Metadaten ändern ({n} Dokument{'e' if n != 1 else ''})",
+               f"change Paperless metadata ({n} document{'s' if n != 1 else ''})") + ":\n" + "\n".join(lines)
     if "?" in new:
-        reason += "\nFehlende Korrespondenten/Typen/Tags werden neu angelegt (vorhandene Namen noch nicht geprüft)."
+        reason += T("\nFehlende Korrespondenten/Typen/Tags werden neu angelegt (vorhandene Namen noch nicht geprüft).",
+                    "\nMissing correspondents/types/tags will be created (existing names not checked yet).")
     elif new:
-        reason += "\nNEU anlegen: " + "; ".join(new)
+        reason += T("\nNEU anlegen: ", "\nCREATE: ") + "; ".join(new)
     return CONFIRM, reason
 
 

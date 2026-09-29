@@ -17,6 +17,7 @@ from typing import Annotated, Any
 
 import httpx
 
+from ..lang import T
 from .netutil import client_kwargs, explain, normalize_url
 from .proc import clip
 from .registry import CONFIRM, ToolContext, tool
@@ -406,7 +407,8 @@ async def trilium_append(
 
 
 def _update_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
-    return CONFIRM, f"überschreibt den Inhalt der Trilium-Notiz '{args.get('note', '')}'"
+    note = args.get("note", "")
+    return CONFIRM, T(f"überschreibt den Inhalt der Trilium-Notiz '{note}'", f"overwrites the Trilium note '{note}'")
 
 
 @tool("Ersetzt den kompletten Inhalt einer Trilium-Notiz (und optional den Titel). Zum Ergänzen lieber trilium_append.",

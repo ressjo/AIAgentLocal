@@ -12,8 +12,9 @@ import re
 import shlex
 from pathlib import Path
 
+from ..lang import T
 from .registry import BLOCKED, CONFIRM, SAFE
-from .secretpaths import is_secret_path
+from .secretpaths import contains_secrets, expand_arg, is_secret_path
 
 SEPARATORS = {";", "&&", "||", "|", "&", "\n", "|&", ";;", "(", ")"}
 REDIRECTS = {">", ">>", ">|", "&>", "&>>"}
@@ -38,13 +39,15 @@ CRITICAL_PATHS = {"/", "/*", "~", "~/", "~/*", "$HOME", "${HOME}", "/home", "/et
                   "*", ".", "./", "./*", "..", "../", str(Path.home())}
 
 BLOCK_PATTERNS = [
-    (re.compile(r"--no-preserve-root"), "Löschen des Wurzelverzeichnisses"),
-    (re.compile(r"(^|[\s;&|(])mkfs(\.\w+)?\b"), "Formatieren eines Dateisystems"),
-    (re.compile(r"\bdd\b[^;&|]*\bof=/dev/(sd|nvme|hd|vd|mmcblk|disk)"), "Überschreiben eines Datenträgers"),
-    (re.compile(r">\s*/dev/(sd|nvme|hd|vd|mmcblk)"), "Überschreiben eines Datenträgers"),
-    (re.compile(r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:"), "Fork-Bombe"),
-    (re.compile(r"\b(wipefs|shred|blkdiscard)\b[^;&|]*/dev/"), "Löschen eines Datenträgers"),
-    (re.compile(r"\bch(mod|own|grp)\b[^;&|]*\s-\w*R\w*\b[^;&|]*\s/(\s|$|\*)"), "Rechte des ganzen Systems ändern"),
+    (re.compile(r"--no-preserve-root"), lambda: T("Löschen des Wurzelverzeichnisses", "deleting the root directory")),
+    (re.compile(r"(^|[\s;&|(])mkfs(\.\w+)?\b"), lambda: T("Formatieren eines Dateisystems", "formatting a file system")),
+    (re.compile(r"\bdd\b[^;&|]*\bof=/dev/(sd|nvme|hd|vd|mmcblk|disk)"),
+     lambda: T("Überschreiben eines Datenträgers", "overwriting a disk")),
+    (re.compile(r">\s*/dev/(sd|nvme|hd|vd|mmcblk)"), lambda: T("Überschreiben eines Datenträgers", "overwriting a disk")),
+    (re.compile(r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:"), lambda: T("Fork-Bombe", "fork bomb")),
+    (re.compile(r"\b(wipefs|shred|blkdiscard)\b[^;&|]*/dev/"), lambda: T("Löschen eines Datenträgers", "wiping a disk")),
+    (re.compile(r"\bch(mod|own|grp)\b[^;&|]*\s-\w*R\w*\b[^;&|]*\s/(\s|$|\*)"),
+     lambda: T("Rechte des ganzen Systems ändern", "changing permissions of the whole system")),
 ]
 
 # Befehle, die Dateiinhalte ausgeben – auf Schlüssel/Passwort-Dateien angewandt nur mit Rückfrage
@@ -52,12 +55,14 @@ READERS = {"cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "less", "more"
            "strings", "jq", "diff", "cmp", "sort", "uniq", "cut", "column", "tr", "sed", "awk", "base64", "od",
            "nl", "tac", "bat", "batcat", "view", "vim", "vi", "nano", "cp", "scp", "rsync", "tar", "zip", "curl"}
 SECRET_VARS = re.compile(r"\$\{?\w*(TOKEN|PASSW|SECRET|API_?KEY|PRIVATE)\w*", re.I)
-SECRETS_REASON = "liest Zugangsdaten (Schlüssel/Passwörter)"
+RECURSIVE_FLAGS = {"-r", "-R", "--recursive", "--dereference-recursive"}
 
 WARN_PATTERNS = [
-    (re.compile(r"\b(curl|wget)\b[^;&]*\|\s*(sudo\s+)?(ba|z|da|fi)?sh\b"), "führt ein Skript direkt aus dem Internet aus"),
-    (re.compile(r"\b(fdisk|parted|sgdisk|gdisk|cfdisk)\b"), "Partitionierungswerkzeug"),
-    (re.compile(r"\bpacman\b[^;&|]*\s-R\w*d\w*d"), "entfernt Pakete ohne Abhängigkeitsprüfung"),
+    (re.compile(r"\b(curl|wget)\b[^;&]*\|\s*(sudo\s+)?(ba|z|da|fi)?sh\b"),
+     lambda: T("führt ein Skript direkt aus dem Internet aus", "runs a script straight from the internet")),
+    (re.compile(r"\b(fdisk|parted|sgdisk|gdisk|cfdisk)\b"), lambda: T("Partitionierungswerkzeug", "partitioning tool")),
+    (re.compile(r"\bpacman\b[^;&|]*\s-R\w*d\w*d"),
+     lambda: T("entfernt Pakete ohne Abhängigkeitsprüfung", "removes packages without dependency checks")),
 ]
 
 
@@ -159,60 +164,99 @@ def _segment_is_safe(cmd: str, args: list[str]) -> bool:
     return cmd in SAFE_COMMANDS
 
 
+def _reads_secret(targets: list[str], cwd: str, recursive: bool) -> bool:
+    """Trifft eines der Ziele (nach cd, ~, $VAR, {a,b} und Globs wie die Shell) eine Geheimnis-Datei – oder
+    durchsucht es rekursiv einen Ordner, in dem welche liegen? Unauflösbare Pfade gelten als verdächtig."""
+    for arg in targets:
+        paths = expand_arg(arg, cwd)
+        if paths is None:
+            return True
+        for p in paths:
+            if is_secret_path(p) or (recursive and contains_secrets(p)):
+                return True
+    return False
+
+
+def _prints_secrets(name: str, args: list[str], cwd: str) -> bool:
+    if name == "printenv":
+        return True
+    if name == "nmcli":  # -s / --show-secrets zeigt WLAN- und VPN-Passwörter
+        return any(a == "--show-secrets" or (a.startswith("-") and not a.startswith("--") and "s" in a)
+                   for a in args)
+    if name == "ps":  # BSD-Modifikator „e“ (ps eww, ps auxe) gibt die Umgebung jedes Prozesses aus
+        return any(a.isalpha() and "e" in a for a in args if not a.startswith("-"))
+    if name == "systemctl":  # Units und Manager-Umgebung können Environment=…TOKEN enthalten
+        sub = next((a for a in args if not a.startswith("-")), "")
+        return sub in ("cat", "show-environment") or (sub == "show" and not any(
+            a in ("-p", "--property") or a.startswith("--property=") or (a.startswith("-p") and len(a) > 2)
+            for a in args))
+    if name not in READERS:
+        return False
+    targets = [a for a in args if not a.startswith("-") and a not in REDIRECTS and a != "<"]
+    recursive = name == "rg" or (name in ("grep", "egrep", "fgrep") and any(
+        a in RECURSIVE_FLAGS or (a.startswith("-") and not a.startswith("--") and set(a[1:]) & {"r", "R"})
+        for a in args))
+    if recursive and len(targets) <= 1:
+        targets = [*targets, "."]  # ohne Pfad durchsuchen grep -r und rg das aktuelle Verzeichnis
+    return _reads_secret(targets, cwd, recursive)
+
+
 def classify_command(command: str) -> tuple[str, str]:
     cmd = command.strip()
     if not cmd:
-        return BLOCKED, "leerer Befehl"
+        return BLOCKED, T("leerer Befehl", "empty command")
     for pattern, reason in BLOCK_PATTERNS:
         if pattern.search(cmd):
-            return BLOCKED, reason
+            return BLOCKED, reason()
     try:
         tokens = _tokens(cmd)
     except ValueError:
-        return CONFIRM, "Befehl konnte nicht sicher analysiert werden"
+        return CONFIRM, T("Befehl konnte nicht sicher analysiert werden", "the command could not be analysed safely")
 
     segments = _segments(tokens)
     reasons: list[str] = []
+    secrets = T("liest Zugangsdaten (Schlüssel/Passwörter)", "reads credentials (keys/passwords)")
+    cwd = os.path.expanduser("~")  # run_shell startet im Home
     for seg in segments:
         core, root = _strip_wrappers(seg)
+        for i, t in enumerate(seg[:-1]):  # Eingabeumleitung: cat < ~/.ssh/id_rsa
+            if t == "<" and _reads_secret([seg[i + 1]], cwd, recursive=False):
+                reasons.append(secrets)
         if not core:
             if any(os.path.basename(t) == "env" for t in seg):
-                reasons.append(SECRETS_REASON)  # „env“ allein gibt alle Umgebungsvariablen samt Tokens aus
+                reasons.append(secrets)  # „env“ allein gibt alle Umgebungsvariablen samt Tokens aus
             continue
         name = os.path.basename(core[0])
         args = core[1:]
-        if name == "printenv" or (name == "nmcli" and any(a in ("-s", "--show-secrets") or
-                                                          (a.startswith("-") and not a.startswith("--") and "s" in a)
-                                                          for a in args)):
-            reasons.append(SECRETS_REASON)
-        elif name in READERS and any(is_secret_path(a) for a in args if not a.startswith("-")):
-            reasons.append(SECRETS_REASON)
+        if name in ("cd", "pushd"):  # spätere relative Pfade beziehen sich auf den neuen Ordner
+            target = next((a for a in args if not a.startswith("-")), "~")
+            cwd = os.path.join(cwd, os.path.expanduser(os.path.expandvars(target)))
+        if _prints_secrets(name, args, cwd):
+            reasons.append(secrets)
         if name == "rm" and _rm_is_catastrophic(args):
-            return BLOCKED, "rekursives Löschen eines Systemverzeichnisses"
+            return BLOCKED, T("rekursives Löschen eines Systemverzeichnisses", "recursive deletion of a system directory")
         if root:
-            reasons.append("benötigt Root-Rechte")
+            reasons.append(T("benötigt Root-Rechte", "needs root privileges"))
         elif name != "printenv" and not _segment_is_safe(name, [a for a in args if a not in REDIRECTS]):
-            reasons.append(f"'{name}' kann das System verändern")
+            reasons.append(T(f"'{name}' kann das System verändern", f"'{name}' can change the system"))
 
     for i, t in enumerate(tokens):
-        if t in REDIRECTS or (t == ">" or t == ">>"):
+        if t in REDIRECTS:
             target = tokens[i + 1] if i + 1 < len(tokens) else ""
             if target not in ("/dev/null",) and not target.startswith("&"):
-                reasons.append("schreibt in eine Datei")
+                reasons.append(T("schreibt in eine Datei", "writes to a file"))
                 break
-        if t == "<" and i + 1 < len(tokens) and is_secret_path(tokens[i + 1]):
-            reasons.append(SECRETS_REASON)
-    if SECRET_VARS.search(cmd) or "/environ" in cmd:
-        reasons.append(SECRETS_REASON)
+    if SECRET_VARS.search(cmd) or re.search(r"\benviron\b", cmd):
+        reasons.append(secrets)
     if "$(" in cmd or "`" in cmd:
-        reasons.append("enthält Befehlsersetzung")
+        reasons.append(T("enthält Befehlsersetzung", "contains command substitution"))
     for pattern, reason in WARN_PATTERNS:
         if pattern.search(cmd):
-            reasons.append(f"ACHTUNG: {reason}")
+            reasons.append(T("ACHTUNG: ", "WARNING: ") + reason())
 
     if reasons:
         return CONFIRM, "; ".join(dict.fromkeys(reasons))
-    return SAFE, "nur lesender Befehl"
+    return SAFE, T("nur lesender Befehl", "read-only command")
 
 
 _SUDO_RE = re.compile(r"(^|[;&|(]\s*|\s)sudo((?:\s+(?:-[ugpCrtUDRTh]\s+[^\s-]\S*|-[A-Za-z]+))*)\s+")

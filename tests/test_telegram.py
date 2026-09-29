@@ -84,9 +84,15 @@ def test_token_never_leaks(cfg, tg, caplog):
 
     with caplog.at_level("DEBUG"):
         run(scenario())
-    import logging
-    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
-    assert TOKEN not in caplog.text and "404" in caplog.text
+        # auch Tracebacks und httpx-Logs (orbwise serve -v) werden bereinigt
+        import logging
+        try:
+            raise RuntimeError(f"kaputt: https://api.telegram.org/bot{TOKEN}/getFile")
+        except RuntimeError:
+            logging.getLogger("orbwise.telegram").exception("Fehler mit %s", TOKEN)
+        logging.getLogger("httpx").info("HTTP Request: POST https://api.telegram.org/bot%s/getUpdates", TOKEN)
+    assert "404" in caplog.text and "kaputt" in caplog.text and "Traceback" in caplog.text
+    assert TOKEN not in caplog.text
     assert all(TOKEN not in t for t in tg.texts())
 
 
@@ -270,7 +276,8 @@ def test_send_file_tool(cfg, tg, tmp_path, monkeypatch):
     spec = get_tool("telegram_send_file")
     ctx = ToolContext(cfg=cfg, memory=None)
     assert spec.assess(ctx, {"path": str(doc)})[0] == SAFE
-    for secret in ("~/.ssh/id_ed25519", "/home/a/.gnupg/x", "~/.config/orbwise/config.yaml", "/proj/.env"):
+    for secret in ("~/.ssh/id_ed25519", "/home/a/.gnupg/x", "~/.config/orbwise/config.yaml", "/proj/.env",
+                   "~/.config/otherapp/config.yaml", "~/Backup/secrets.txt", "/etc/wireguard/wg0.conf"):
         assert spec.assess(ctx, {"path": secret})[0] == BLOCKED
 
 

@@ -9,6 +9,7 @@ import shutil
 from pathlib import Path
 from typing import Annotated
 
+from ..lang import T
 from . import proc
 from .packages import package_manager, privileged
 from .registry import BLOCKED, CONFIRM, SAFE, ToolContext, tool
@@ -61,11 +62,11 @@ async def top_processes(
 def _kill_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     target = str(args.get("target", "")).strip()
     if target.isdigit() and int(target) in (0, 1, os.getpid(), os.getppid()):
-        return BLOCKED, "Systemprozess bzw. Orbwise selbst"
+        return BLOCKED, T("Systemprozess bzw. Orbwise selbst", "system process or Orbwise itself")
     if target.lower() in ("orbwise", "jarvis", "systemd", "init", "kwin_wayland", "gnome-shell", "plasmashell", "xorg", "xwayland"):
-        return BLOCKED, "würde die Sitzung oder Orbwise beenden"
+        return BLOCKED, T("würde die Sitzung oder Orbwise beenden", "would end the session or Orbwise")
     force = " (erzwungen, SIGKILL)" if args.get("force") else ""
-    return CONFIRM, f"Prozess beenden: {target}{force}"
+    return CONFIRM, T("Prozess beenden: ", "end process: ") + f"{target}{force}"
 
 
 @tool("Beendet einen Prozess per PID oder exaktem Prozessnamen (erst sanft, mit force=true hart).", risk=_kill_risk)
@@ -123,10 +124,12 @@ def _service_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     unit = _unit(str(args.get("name", "")))
     action = str(args.get("action", "")).lower()
     if action not in SERVICE_ACTIONS or not NAME_RE.match(unit or "-"):
-        return SAFE, "ungültige Angaben werden abgelehnt"
+        return SAFE, T("ungültige Angaben werden abgelehnt", "invalid input is rejected")
     if unit in CRITICAL_SERVICES and action in ("stop", "restart", "disable"):
-        return BLOCKED, f"'{unit}' zu {action}en würde die Sitzung (und Orbwise) beenden"
-    return CONFIRM, f"Dienst {unit}: {action}" + (" (Benutzerdienst)" if args.get("user") else " (Root-Rechte)")
+        return BLOCKED, T(f"'{unit}' zu {action}en würde die Sitzung (und Orbwise) beenden",
+                          f"{action} '{unit}' would end the session (and Orbwise)")
+    return CONFIRM, T(f"Dienst {unit}: {action}", f"service {unit}: {action}") + (
+        T(" (Benutzerdienst)", " (user service)") if args.get("user") else T(" (Root-Rechte)", " (root privileges)"))
 
 
 @tool("Startet, stoppt, startet neu, lädt neu, aktiviert oder deaktiviert einen systemd-Dienst.", risk=_service_risk)
@@ -296,7 +299,8 @@ async def disk_usage(
 
 
 def _cleanup_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
-    return (CONFIRM, "Paket-Cache, verwaiste Pakete und alte Journal-Logs löschen") if args.get("apply") \
+    return (CONFIRM, T("Paket-Cache, verwaiste Pakete und alte Journal-Logs löschen",
+                       "delete package cache, orphaned packages and old journal logs")) if args.get("apply") \
         else (SAFE, "nur Analyse")
 
 

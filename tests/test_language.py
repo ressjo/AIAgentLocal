@@ -56,11 +56,25 @@ def test_served_page_uses_language(cfg, monkeypatch):
         assert '<html lang="en">' in r.text and "COMMUNICATION" in r.text
 
 
-def test_confirmation_reasons_are_translated():
-    from orbwise.lang import reason_en
+def test_confirmation_reasons_follow_the_language(cfg):
+    """Rückfrage-Begründungen entstehen direkt in der eingestellten Sprache."""
+    from orbwise.lang import set_lang
+    from orbwise.tools.registry import ToolContext, get_tool, load_all_tools
     from orbwise.tools.safety import classify_command
 
-    assert reason_en(classify_command("sudo pacman -Syu")[1]) == "needs root privileges"
-    assert reason_en("'kill' kann das System verändern; schreibt in eine Datei") == \
-        "'kill' can change the system; writes to a file"
-    assert reason_en("etwas Unbekanntes") == "etwas Unbekanntes"
+    load_all_tools()
+    ctx = ToolContext(cfg=cfg, memory=None)
+    try:
+        set_lang("en")
+        assert classify_command("sudo pacman -Syu")[1] == "needs root privileges"
+        assert classify_command("kill 12; echo x > f")[1] == "'kill' can change the system; writes to a file"
+        assert classify_command("rm -rf /")[1] == "recursive deletion of a system directory"
+        assert get_tool("system_update").assess(ctx, {})[1] == "system update with root privileges"
+        assert get_tool("power").assess(ctx, {"action": "poweroff", "delay_minutes": 5})[1] == \
+            "shut down the computer in 5 minutes"
+        assert "install packages: htop" == get_tool("install_package").assess(ctx, {"names": "htop"})[1]
+        set_lang("de")
+        assert classify_command("sudo pacman -Syu")[1] == "benötigt Root-Rechte"
+        assert get_tool("power").assess(ctx, {"action": "reboot"})[1] == "Rechner neu starten"
+    finally:
+        set_lang("de")

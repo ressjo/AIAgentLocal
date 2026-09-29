@@ -12,7 +12,7 @@ from typing import Annotated
 
 from . import proc
 from .registry import BLOCKED, CONFIRM, SAFE, ToolContext, tool
-from .secretpaths import SECRET_REASON, is_secret_path
+from .secretpaths import is_secret_path, secret_reason
 
 TEXT_LIMIT = 8000
 SKIP_DIRS = {".git", "node_modules", ".cache", "__pycache__", ".venv", ".local/share/Trash", ".steam"}
@@ -167,7 +167,7 @@ async def list_directory(ctx: ToolContext, path: Annotated[str, "Verzeichnis, z.
 
 def _read_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     if is_secret_path(str(args.get("path") or "")):
-        return BLOCKED, SECRET_REASON
+        return BLOCKED, secret_reason()
     return SAFE, ""
 
 

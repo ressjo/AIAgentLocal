@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from .registry import BLOCKED, SAFE, ToolContext, tool
-from .secretpaths import SECRET_REASON, is_secret_path
+from .secretpaths import is_secret_path, secret_reason
 
 MAX_FILE = 50_000_000  # Grenze der Telegram-Bot-API
+CONFIG_NAMES = {"config.yaml", "config.yml", "config.json", "config.toml", "config.ini", "settings.json"}
 
 
 def _enabled(cfg: Any) -> bool:
@@ -18,8 +19,10 @@ def _enabled(cfg: Any) -> bool:
 
 def _risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     # Geheimnisse verlassen den PC nie – auch nicht aufs eigene Handy
-    if is_secret_path(str(args.get("path") or "")):
-        return BLOCKED, SECRET_REASON
+    path = str(args.get("path") or "")
+    # beim Verschicken strenger als beim Lesen: auch Konfigurationsdateien anderer Programme bleiben daheim
+    if is_secret_path(path) or Path(path).name.lower() in CONFIG_NAMES or path.lower().endswith((".conf", ".env")):
+        return BLOCKED, secret_reason()
     return SAFE, ""
 
 
