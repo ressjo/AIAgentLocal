@@ -61,7 +61,8 @@ First public release.
   every reminder is also sent to the phone, actions that need confirmation get ✅/❌ buttons; only your own chat ID
   is served, no open port needed (long polling). Files in both directions: PDFs, documents and photos sent to the
   bot are saved (and can go straight into Paperless), and Orbwise can send local files or Paperless documents to the
-  phone (never keys or password stores).
+  phone (never keys or password stores). `/stop` (or "stop") from the phone cancels what is running – there and on
+  the PC.
 - **E-mail** via IMAP – **Proton Mail through the Proton Mail Bridge** or any other mailbox: list unread mails,
   search, read (without marking as read), ask about a mail, archive/move/label/trash and PDF attachments to
   Paperless after confirmation, unread mails in the briefing. Mail content is passed to the model as untrusted

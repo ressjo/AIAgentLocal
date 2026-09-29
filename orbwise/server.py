@@ -191,16 +191,22 @@ class Hub:
             if not self.agent.lock.locked():
                 await self.broadcast({"type": "state", "state": "idle"})
 
-    async def stop(self) -> None:
+    async def stop(self) -> int:
+        """Alles Laufende abbrechen (STOP im Dashboard, /stop per Telegram). Liefert, wie viel gestoppt wurde."""
+        stopped = 0
         if self.askpass:
             self.askpass.cancel_all()
         for fut in self.pending.values():
             if not fut.done():
                 fut.set_result(False)
+                stopped += 1
         for task in list(self.tasks):
-            task.cancel()
+            if not task.done():
+                task.cancel()
+                stopped += 1
         self.speaker.stop()
         await self.broadcast({"type": "audio_stop"})
+        return stopped
 
 
 def check_host(host: str | None, port: int) -> bool:
@@ -359,7 +365,8 @@ def create_app(cfg: Config) -> FastAPI:
 
         telegram_bot = TelegramBot(
             cfg, run_telegram, lambda name, args: describe_call(name, args, cfg), tool_editable,
-            transcribe=(lambda data: transcribe_voice(stt, data)) if stt else None)
+            transcribe=(lambda data: transcribe_voice(stt, data)) if stt else None,
+            on_stop=hub.stop)  # /stop vom Handy stoppt auch, was am PC läuft
         agent.services["telegram"] = telegram_bot  # für telegram_send_file
 
     async def fire_reminder(r, now) -> None:

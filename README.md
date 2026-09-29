@@ -467,6 +467,8 @@ polling), so no port has to be opened on your router – but the PC with Orbwise
 the phone run in their own chat **"📱 Telegram"** in HISTORY (your open chat in the dashboard stays untouched), and
 **voice messages** are transcribed with Whisper. **Every reminder** is also sent to the phone. Actions that need
 confirmation come with **✅ Run / ❌ Deny** buttons; sending e-mail is only possible in the dashboard (edit dialog).
+**`/stop`** (or just "stop") cancels whatever is running – the request from the phone, open confirmations, and
+everything running on the PC (dashboard requests, routines, speech output) – like STOP in the dashboard.
 Tip: tell Orbwise once when you start work ("I start work at 8") – it remembers that for "at work" reminders.
 
 **Files in both directions:**

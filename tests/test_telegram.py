@@ -18,9 +18,9 @@ def tg(cfg):
     return FakeTelegram()
 
 
-def make_bot(cfg, fake, run_fn, transcribe=None):
+def make_bot(cfg, fake, run_fn, transcribe=None, on_stop=None):
     return TelegramBot(cfg, run_fn, lambda n, a: f"die Aktion {n}", lambda n: n == "mail_send",
-                       transcribe=transcribe, transport=fake.transport, poll_timeout=0)
+                       transcribe=transcribe, transport=fake.transport, poll_timeout=0, on_stop=on_stop)
 
 
 def test_split_text():
@@ -272,3 +272,76 @@ def test_send_paperless_document_and_upload_from_inbox(cfg, tg, tmp_path, monkey
     spec, ctx = get_tool("paperless_upload"), ToolContext(cfg=cfg, memory=None)
     assert spec.assess(ctx, {"path": str(scan)})[0] == SAFE          # vom Handy geschickt
     assert spec.assess(ctx, {"path": "/etc/hosts"})[0] == CONFIRM    # beliebige Datei: nachfragen
+
+
+# ---------------------------------------------------------------- Stoppen
+
+def test_stop_from_the_phone(cfg, tg):
+    started, pc_stops = asyncio.Event(), []
+    confirmations = []
+
+    async def slow(text, emit, confirm):
+        if text == "Rückfrage":
+            confirmations.append(await confirm("c1", "install_package", {"names": "htop"}, ""))
+            return "nach Rückfrage"
+        started.set()
+        await asyncio.sleep(30)  # hängt – bis /stop kommt
+        return "zu spät"
+
+    async def on_stop():
+        pc_stops.append(1)
+        return 0  # am PC lief nichts
+
+    async def scenario():
+        bot = make_bot(cfg, tg, slow, on_stop=on_stop)
+        worker = asyncio.create_task(bot._worker())
+        # 1. nichts läuft
+        tg.user_message(ME, "stopp")
+        await bot.poll_once()
+        # 2. laufende Anfrage abbrechen – die wartende gleich mit
+        tg.user_message(ME, "Durchsuche alles")
+        tg.user_message(ME, "Und noch was")
+        await bot.poll_once()
+        await started.wait()
+        tg.user_message(ME, "/stop")
+        await bot.poll_once()
+        await asyncio.sleep(0.1)
+        # 3. während einer offenen Knopf-Rückfrage: die ganze Anfrage wird abgebrochen
+        tg.user_message(ME, "Rückfrage")
+        await bot.poll_once()
+        await wait_for(lambda: tg.buttons())
+        tg.user_message(ME, "Stop!")
+        await bot.poll_once()
+        await asyncio.sleep(0.1)
+        assert not bot.pending and (bot.current is None or bot.current.done())
+        worker.cancel()
+
+    run(scenario())
+    texts = tg.texts()
+    assert texts[0] == "Es läuft gerade nichts."
+    assert texts.count("⏹ Gestoppt.") == 2 and "zu spät" not in texts
+    assert confirmations == [] and "nach Rückfrage" not in texts  # nichts ausgeführt
+    assert len(pc_stops) == 3  # jedes Mal auch am PC gestoppt
+
+
+def test_stop_from_the_phone_cancels_pc_tasks(cfg, tg, monkeypatch):
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.setattr(TelegramBot, "TRANSPORT", tg.transport)
+    from orbwise.server import create_app
+    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
+        hub = client.app.state.hub
+
+        async def start_pc_task():
+            task = asyncio.create_task(asyncio.sleep(60))  # z. B. eine laufende Routine
+            hub.tasks.add(task)
+            return task
+
+        async def is_cancelled(task):
+            await asyncio.sleep(0.05)
+            return task.cancelled()
+
+        task = client.portal.call(start_pc_task)
+        tg.user_message(ME, "/stop")
+        client.portal.call(wait_for, lambda: "⏹ Gestoppt." in tg.texts(), 8.0)
+        assert client.portal.call(is_cancelled, task)

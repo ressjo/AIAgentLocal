@@ -33,6 +33,7 @@ MAX_TEXT = 4000          # Telegram erlaubt 4096 Zeichen je Nachricht
 MAX_DOWNLOAD = 20_000_000  # Bots dürfen Dateien bis 20 MB abholen …
 MAX_UPLOAD = 50_000_000    # … und bis 50 MB senden
 FILE_CONTEXT_SECONDS = 900  # eine Datei ohne Text gilt 15 min als Bezug für die nächste Nachricht
+STOP_WORDS = {"/stop", "stop", "stopp", "halt", "abbrechen", "abbruch", "cancel"}
 CONFIRM_TIMEOUT = 300    # so lange wartet eine Rückfrage auf den Knopf
 CHAT_TITLE = "📱 Telegram"
 
@@ -75,7 +76,8 @@ class TelegramBot:
 
     def __init__(self, cfg: Any, run: Runner, describe: Callable[[str, dict], str],
                  editable: Callable[[str], bool], transcribe: Callable[[bytes], Awaitable[str]] | None = None,
-                 transport: httpx.AsyncBaseTransport | None = None, poll_timeout: int = 30):
+                 transport: httpx.AsyncBaseTransport | None = None, poll_timeout: int = 30,
+                 on_stop: Callable[[], Awaitable[int]] | None = None):
         """run(text, emit, confirm) → Antwort: führt eine Anfrage im Telegram-Chat aus (Agent).
         describe(name, args) → lesbare Beschreibung einer Aktion für die Rückfrage.
         editable(name) → True für Aktionen mit Bearbeitungsfenster (z. B. mail_send) – nur im Dashboard."""
@@ -85,6 +87,8 @@ class TelegramBot:
         self.describe = describe
         self.editable = editable
         self.transcribe = transcribe
+        self.on_stop = on_stop  # stoppt, was am PC läuft (Dashboard-Anfragen, Routinen, Sprachausgabe)
+        self.current: asyncio.Task | None = None  # laufende Anfrage vom Handy
         self.poll_timeout = poll_timeout
         self.client = httpx.AsyncClient(base_url=f"{API}/bot{self.t.secret}/", transport=transport or self.TRANSPORT,
                                         timeout=httpx.Timeout(poll_timeout + 15))
@@ -218,9 +222,14 @@ class TelegramBot:
         text = (msg.get("text") or "").strip()
         if text in ("/start", "/help"):
             await self.send(self.L("Hallo! Schreib oder sprich mir einfach, was du brauchst – z. B. „Erinner mich "
-                                   "morgen um 9 an den Zahnarzt“. Erinnerungen kommen hierher.",
+                                   "morgen um 9 an den Zahnarzt“. Erinnerungen kommen hierher. Mit /stop (oder "
+                                   "„stopp“) brichst du ab, was gerade läuft – auch am PC.",
                                    "Hi! Just write or speak what you need – e.g. “Remind me tomorrow at 9 about the "
-                                   "dentist”. Reminders arrive here."))
+                                   "dentist”. Reminders arrive here. /stop (or “stop”) cancels whatever is running – "
+                                   "on the PC too."))
+            return
+        if text.lower().strip(" .!") in STOP_WORDS:
+            await self.stop()  # sofort – nicht hinter der laufenden Anfrage anstellen
             return
         if msg.get("document") or msg.get("photo"):
             path = await self._receive_file(msg)
@@ -297,14 +306,44 @@ class TelegramBot:
         while True:
             text, _ = await self.queue.get()
             typing = asyncio.create_task(self._typing())
+            self.current = asyncio.create_task(self.run(text, self._emit, self._confirm))
             try:
-                answer = await self.run(text, self._emit, self._confirm)
-            except Exception as e:  # noqa: BLE001
-                log.exception("Telegram-Anfrage fehlgeschlagen")
-                answer = self.L(f"Da ist etwas schiefgegangen: {e}", f"Something went wrong: {e}")
+                await asyncio.wait({self.current})  # wirft nicht, wenn nur die Anfrage abgebrochen wurde
+            except asyncio.CancelledError:
+                self.current.cancel()
+                raise
             finally:
                 typing.cancel()
+            if self.current.cancelled():
+                continue  # per /stop abgebrochen – „Gestoppt“ ist schon gesendet
+            error = self.current.exception()
+            if error:
+                log.error("Telegram-Anfrage fehlgeschlagen: %s", error)
+                answer = self.L(f"Da ist etwas schiefgegangen: {error}", f"Something went wrong: {error}")
+            else:
+                answer = self.current.result()
             await self.notify(answer or self.L("(keine Antwort)", "(no answer)"))
+
+    async def stop(self) -> None:
+        """/stop: laufende Anfrage vom Handy, wartende Anfragen, offene Knopf-Rückfragen – und was am PC läuft."""
+        stopped = 0
+        if self.current and not self.current.done():
+            self.current.cancel()
+            stopped += 1
+        while not self.queue.empty():
+            self.queue.get_nowait()
+            stopped += 1
+        for fut in self.pending.values():
+            if not fut.done():
+                fut.set_result(False)
+        if self.on_stop:
+            try:
+                stopped += int(await self.on_stop() or 0)
+            except Exception as e:  # noqa: BLE001
+                log.warning("Stoppen am PC fehlgeschlagen: %s", e)
+        self.last_file = None
+        await self.notify(self.L("⏹ Gestoppt." if stopped else "Es läuft gerade nichts.",
+                                 "⏹ Stopped." if stopped else "Nothing is running right now."))
 
     async def _typing(self) -> None:
         with contextlib.suppress(Exception):
@@ -335,16 +374,18 @@ class TelegramBot:
         except (httpx.HTTPError, RuntimeError):
             self.pending.pop(key, None)
             return False
+        status = self.L("⏹ abgebrochen", "⏹ cancelled")
         try:
             approved = await asyncio.wait_for(fut, timeout=CONFIRM_TIMEOUT)
+            status = self.L("✅ ausgeführt", "✅ approved") if approved else self.L("❌ abgelehnt", "❌ denied")
         except asyncio.TimeoutError:
             approved = False
+            status = self.L("❌ keine Antwort – abgelehnt", "❌ no answer – denied")
         finally:
             self.pending.pop(key, None)
-        with contextlib.suppress(Exception):  # Knöpfe entfernen, Entscheidung anzeigen
-            status = self.L("✅ ausgeführt", "✅ approved") if approved else self.L("❌ abgelehnt", "❌ denied")
-            await self.call("editMessageText", chat_id=self.t.chat_id, message_id=sent[-1]["message_id"],
-                            text=f"{sent[-1].get('text', text)}\n\n→ {status}")
+            with contextlib.suppress(Exception):  # Knöpfe entfernen, Entscheidung anzeigen (auch nach /stop)
+                await self.call("editMessageText", chat_id=self.t.chat_id, message_id=sent[-1]["message_id"],
+                                text=f"{sent[-1].get('text', text)}\n\n→ {status}")
         return approved
 
     async def _callback(self, cq: dict) -> None:
