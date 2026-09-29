@@ -258,9 +258,15 @@ llama-server, **don't** pass `--reasoning-budget 0`, which disables reasoning se
 
 ## Voice & Jarvis effect
 
-Click the **VOICE** pill at the top to select, preview (▶), delete (🗑) or add Piper voices – English (Alan, Northern
-English male, Ryan, Joe, Jenny, Amy) or German (Thorsten, Pavoque, Karlsson, Kerstin, Ramona). They are stored
-in `~/.local/share/orbwise/voices/`; drop your own Piper voices (`.onnx` + `.onnx.json`) there and they appear too.
+Click the **VOICE** pill at the top to select, preview (▶), delete (🗑) or add Piper voices. **+ ADD VOICE** lists
+a recommended selection – English (Alan, Northern English male, Ryan, Joe, Jenny, Amy) or German (Thorsten, Pavoque,
+Karlsson, Kerstin, Ramona) – followed by **every official Piper voice** of your language from the
+[piper-voices catalogue](https://huggingface.co/rhasspy/piper-voices), grouped by region, with download size and a
+search field ([listen to samples](https://rhasspy.github.io/piper-samples/)). The catalogue is cached for a day and
+the selection still works offline.
+
+Voices are stored in `~/.local/share/orbwise/voices/`. To add your own (e.g. a self-trained one), put both files –
+`<name>.onnx` and `<name>.onnx.json` – into that folder; it appears in the menu as "own voice" without a restart.
 
 The **Jarvis effect** (on/off + strength, in the same menu) adds a slightly deeper, sonorous tone, a light room reverb, a subtle
 chorus and a "digital" shimmer.

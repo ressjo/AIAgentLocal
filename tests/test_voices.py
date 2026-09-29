@@ -1,4 +1,5 @@
 import json
+import os
 
 import httpx
 import pytest
@@ -7,6 +8,29 @@ from fastapi.testclient import TestClient
 
 from orbwise.voice import catalog
 from orbwise.voice.tts import PiperTTS
+
+REAL_FETCH = catalog.fetch_catalog
+
+
+SAMPLE = {  # Auszug im Format von piper-voices/voices.json
+    "de_DE-thorsten-high": {"language": {"code": "de_DE"}, "quality": "high", "num_speakers": 1,
+                            "files": {"x.onnx": {"size_bytes": 114_000_000}, "x.json": {"size_bytes": 5000}}},
+    "de_DE-eva_k-x_low": {"language": {"code": "de_DE"}, "quality": "x_low", "num_speakers": 1,
+                          "files": {"x.onnx": {"size_bytes": 20_600_000}}},
+    "de_DE-mls-medium": {"language": {"code": "de_DE"}, "quality": "medium", "num_speakers": 236,
+                         "files": {"x.onnx": {"size_bytes": 77_000_000}}},
+    "en_GB-cori-high": {"language": {"code": "en_GB"}, "quality": "high", "num_speakers": 1,
+                        "files": {"x.onnx": {"size_bytes": 114_000_000}}},
+}
+
+
+@pytest.fixture(autouse=True)
+def offline_catalog(monkeypatch):
+    """Kein Netz in Tests: der Katalog kommt aus SAMPLE (einzelne Tests prüfen fetch_catalog selbst)."""
+    async def fake(cache_dir, transport=None):
+        return SAMPLE
+    monkeypatch.setattr(catalog, "fetch_catalog", fake)
+    monkeypatch.setattr(catalog, "_last_failure", 0.0)
 
 
 def test_catalog_urls():
@@ -72,7 +96,7 @@ def test_voice_endpoints(client, monkeypatch):
 
     installed = []
 
-    async def fake_install(name, voices_dir, transport=None):
+    async def fake_install(name, voices_dir, transport=None, extra=None):
         installed.append(name)
         (voices_dir).mkdir(parents=True, exist_ok=True)
         (voices_dir / f"{name}.onnx").write_bytes(b"x")
@@ -106,3 +130,68 @@ def test_delete_voice(client, tmp_path):
     assert not (voices / "de_DE-pavoque-low.onnx").exists() and not (voices / "de_DE-pavoque-low.onnx.json").exists()
     assert (voices / "de_DE-thorsten-high.onnx").exists()
     assert client.delete("/api/voices/de_DE-pavoque-low", headers={"Origin": "http://evil.example"}).status_code == 403
+
+
+def test_fetch_catalog_caches_and_works_offline(tmp_path, monkeypatch):
+    calls = []
+
+    def handler(req):
+        calls.append(req.url.path)
+        return httpx.Response(200, json=SAMPLE)
+
+    ok = httpx.MockTransport(handler)
+    assert run(REAL_FETCH(tmp_path, ok)) == SAMPLE and (tmp_path / catalog.CATALOG_FILE).exists()
+    assert run(REAL_FETCH(tmp_path, ok)) == SAMPLE and len(calls) == 1  # 24 h aus dem Cache
+    assert calls == ["/rhasspy/piper-voices/resolve/main/voices.json"]
+
+    def down(req):
+        raise httpx.ConnectError("offline")
+
+    old = (tmp_path / catalog.CATALOG_FILE)
+    stale = catalog.time.time() - 2 * catalog.CATALOG_MAX_AGE
+    os.utime(old, (stale, stale))  # Cache veraltet → neu laden scheitert → alte Kopie
+    assert run(REAL_FETCH(tmp_path, httpx.MockTransport(down))) == SAMPLE
+    assert run(REAL_FETCH(tmp_path / "leer", httpx.MockTransport(down))) == {}  # kurz danach: kein neuer Versuch
+
+
+def test_voice_list_with_full_catalog(tmp_path):
+    (tmp_path / "de_DE-eva_k-x_low.onnx").write_bytes(b"x")
+    items = catalog.voice_list(tmp_path, "de_DE-eva_k-x_low", "de", SAMPLE)
+    names = [v["name"] for v in items]
+    assert names[:7] == [v.name for v in catalog.CATALOG if v.language == "de"]  # Auswahl zuerst
+    assert items[0]["recommended"] and items[0]["download_mb"] == 114
+    eva = next(v for v in items if v["name"] == "de_DE-eva_k-x_low")
+    assert eva["label"] == "Eva K" and eva["description"] == "de_DE · Qualität x_low" and not eva["recommended"]
+    assert eva["installed"] and eva["current"] and eva["download_mb"] == 21
+    mls = next(v for v in items if v["name"] == "de_DE-mls-medium")
+    assert "236 Sprecher" in mls["description"]
+    assert "en_GB-cori-high" not in names  # andere Sprache
+    assert names.count("de_DE-eva_k-x_low") == 1  # nicht zusätzlich als „Eigene Stimme“
+
+
+def test_install_voice_from_full_catalog(tmp_path):
+    seen = []
+
+    def handler(req):
+        seen.append(req.url.path)
+        return httpx.Response(200, content=b"M")
+
+    run(catalog.install_voice("de_DE-eva_k-x_low", tmp_path, httpx.MockTransport(handler), extra=SAMPLE))
+    assert seen[0] == "/rhasspy/piper-voices/resolve/main/de/de_DE/eva_k/x_low/de_DE-eva_k-x_low.onnx"
+    assert (tmp_path / "de_DE-eva_k-x_low.onnx.json").exists()
+    with pytest.raises(ValueError):  # nicht im Katalog
+        run(catalog.install_voice("de_DE-fremd-low", tmp_path, httpx.MockTransport(handler), extra=SAMPLE))
+
+
+def test_install_endpoint_checks_catalog(client, monkeypatch):
+    installed = []
+
+    async def fake_install(name, voices_dir, transport=None, extra=None):
+        installed.append(name)
+
+    monkeypatch.setattr(catalog, "install_voice", fake_install)
+    assert client.post("/api/voices/de_DE-eva_k-x_low/install").status_code == 200
+    assert client.post("/api/voices/de_DE-fremd-low/install").status_code == 404
+    assert installed == ["de_DE-eva_k-x_low"]
+    names = [v["name"] for v in client.get("/api/voices").json()["voices"]]
+    assert "de_DE-eva_k-x_low" in names and "en_GB-cori-high" not in names

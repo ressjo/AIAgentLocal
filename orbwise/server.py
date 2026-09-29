@@ -818,7 +818,8 @@ def create_app(cfg: Config) -> FastAPI:
         if not tts:
             return {"available": False, "voices": []}
         tts.available()
-        voices = catalog.voice_list(tts.voices_dir, tts.current, cfg.language)
+        extra = await catalog.fetch_catalog(tts.voices_dir)
+        voices = catalog.voice_list(tts.voices_dir, tts.current, cfg.language, extra)
         for v in voices:
             f = tts.path(v["name"])
             v["size_mb"] = round(f.stat().st_size / 1e6) if v["installed"] and f.exists() else None
@@ -837,10 +838,11 @@ def create_app(cfg: Config) -> FastAPI:
     async def install_voice(name: str):
         if not tts:
             raise HTTPException(400, "Sprachausgabe ist deaktiviert")
-        if name not in catalog.BY_NAME:
+        extra = {} if name in catalog.BY_NAME else await catalog.fetch_catalog(tts.voices_dir)
+        if not catalog.installable(name, extra):  # nur Auswahl + offizieller Piper-Katalog
             raise HTTPException(404, "Unbekannte Stimme")
         try:
-            await catalog.install_voice(name, tts.voices_dir)
+            await catalog.install_voice(name, tts.voices_dir, extra=extra)
         except Exception as e:  # noqa: BLE001
             raise HTTPException(502, f"Download fehlgeschlagen: {e}") from e
         return {"ok": True}

@@ -963,23 +963,37 @@
       add.onclick = (e) => { e.stopPropagation(); openVoiceMenu(true); };
       list.appendChild(add);
     } else {
+      // ganzer Piper-Katalog: Auswahl (empfohlen) zuerst, dann alle weiteren nach Region, mit Suchfeld
       const missing = data.voices.filter((x) => !x.installed);
-      if (!missing.length) list.insertAdjacentHTML("beforeend", `<div class="mm-hint">${L("Alle Stimmen sind installiert.", "All voices are installed.")}</div>`);
-      for (const v of missing) {
-        const b = voiceItem(v, v.male ? L("MÄNNLICH", "MALE") : L("WEIBLICH", "FEMALE"));
-        b.onclick = async (e) => {
-          e.stopPropagation();
-          b.disabled = true;
-          b.querySelector(".mi-tag").textContent = L("LÄDT …", "LOADING …");
-          try {
-            await api("POST", `/api/voices/${encodeURIComponent(v.name)}/install`);
-            toast(L(`✔ ${v.label} installiert`, `✔ ${v.label} installed`));
-            loadStatus();
-            openVoiceMenu();
-          } catch { b.disabled = false; b.querySelector(".mi-tag").textContent = ""; }
-        };
-        list.appendChild(b);
-      }
+      const tools = document.createElement("div");
+      tools.className = "vm-tools";
+      tools.innerHTML = `<input type="search" class="vm-search" placeholder="${L("Stimme suchen …", "Search voices …")}">
+        <a href="https://rhasspy.github.io/piper-samples/" target="_blank" rel="noopener">${L("Probehören ↗", "Listen to samples ↗")}</a>`;
+      list.appendChild(tools);
+      const box = document.createElement("div");
+      list.appendChild(box);
+      const render = (q) => {
+        box.innerHTML = "";
+        const hits = missing.filter((v) => !q || `${v.label} ${v.name} ${v.description}`.toLowerCase().includes(q));
+        if (!hits.length) {
+          box.innerHTML = `<div class="mm-hint">${missing.length ? L("Keine Treffer.", "No matches.")
+            : L("Alle Stimmen sind installiert.", "All voices are installed.")}</div>`;
+        }
+        let group = null;
+        for (const v of hits) {
+          const g = v.recommended ? L("EMPFOHLEN", "RECOMMENDED") : (v.locale || "").toUpperCase();
+          if (g !== group) {
+            group = g;
+            box.insertAdjacentHTML("beforeend", `<div class="mm-title vm-group"></div>`);
+            box.lastElementChild.textContent = g;
+          }
+          box.appendChild(catalogItem(v));
+        }
+      };
+      const search = tools.querySelector(".vm-search");
+      search.onclick = (e) => e.stopPropagation();
+      search.oninput = () => render(search.value.trim().toLowerCase());
+      render("");
       const back = document.createElement("button");
       back.className = "model-item add";
       back.textContent = L("← ZURÜCK", "← BACK");
@@ -989,6 +1003,22 @@
     voiceMenu.classList.toggle("catalog", catalog);
     voiceMenu.classList.remove("hidden");
     $("pill-voice").setAttribute("aria-expanded", "true");
+  }
+
+  function catalogItem(v) {
+    const b = voiceItem(v, v.download_mb ? `~${v.download_mb} MB` : "");
+    b.onclick = async (e) => {
+      e.stopPropagation();
+      b.disabled = true;
+      b.querySelector(".mi-tag").textContent = L("LÄDT …", "LOADING …");
+      try {
+        await api("POST", `/api/voices/${encodeURIComponent(v.name)}/install`);
+        toast(L(`✔ ${v.label} installiert`, `✔ ${v.label} installed`));
+        loadStatus();
+        openVoiceMenu();
+      } catch { b.disabled = false; b.querySelector(".mi-tag").textContent = v.download_mb ? `~${v.download_mb} MB` : ""; }
+    };
+    return b;
   }
 
   function voiceItem(v, tag) {
@@ -1003,7 +1033,7 @@
 
   function voiceRow(v, current) {
     const active = v.name === current;
-    const b = voiceItem(v, active ? L("AKTIV", "ACTIVE") : v.male ? L("MÄNNLICH", "MALE") : L("WEIBLICH", "FEMALE"));
+    const b = voiceItem(v, active ? L("AKTIV", "ACTIVE") : v.male === null ? "" : v.male ? L("MÄNNLICH", "MALE") : L("WEIBLICH", "FEMALE"));
     if (active) b.classList.add("active");
     b.onclick = (e) => {
       e.stopPropagation();

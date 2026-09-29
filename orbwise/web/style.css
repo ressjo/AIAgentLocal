@@ -96,6 +96,12 @@ button { font-family: inherit; cursor: pointer; }
 .voice-menu .fx-row { padding: 2px 8px 0; }
 .voice-menu .fx-hint { padding: 0 8px 6px; font-size: 12px; }
 .voice-menu.catalog .fx-row, .voice-menu.catalog .fx-hint, .voice-menu.catalog > .mm-title { display: none; }
+.vm-tools { display: flex; align-items: center; gap: 10px; padding: 2px 8px 6px; }
+.vm-search { flex: 1; min-width: 0; background: rgba(2,10,18,.7); border: 1px solid var(--line); color: var(--text);
+             padding: 6px 8px; font: inherit; font-size: 13px; }
+.vm-search:focus { outline: none; border-color: var(--accent); }
+.vm-tools a { color: var(--accent); font-size: 12px; white-space: nowrap; text-decoration: none; }
+.vm-group { margin-top: 6px; }
 .voice-play:hover:not(:disabled) { color: var(--accent); border-color: var(--panel-border); background: rgba(63,208,255,.08); }
 .model-row .model-item { flex: 1; min-width: 0; }
 .model-del { flex: none; width: 34px; border: 1px solid transparent; background: none; color: var(--muted); cursor: pointer;
