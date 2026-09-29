@@ -12,6 +12,7 @@ from __future__ import annotations
 import difflib
 import html
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -22,7 +23,7 @@ import httpx
 
 from . import proc
 from .netutil import client_kwargs, explain, html_instead_of_json, normalize_url
-from .registry import CONFIRM, ToolContext, tool
+from .registry import CONFIRM, SAFE, ToolContext, tool
 
 # Für Tests austauschbar (httpx.MockTransport)
 TRANSPORT: httpx.AsyncBaseTransport | None = None
@@ -317,6 +318,64 @@ async def paperless_open(
         if ok:
             return f"Geöffnet: „{doc.get('title')}“ ({target})"
         return f"Heruntergeladen nach {target}, Öffnen fehlgeschlagen ({err})."
+
+    return await _guard(run())
+
+
+async def download_document(cfg: Any, document_id: int, original: bool = False) -> tuple[str, bytes]:
+    """PDF (bzw. Original) eines Dokuments holen – liefert (Dateiname, Inhalt)."""
+    async with PaperlessClient(cfg) as pc:
+        doc = await pc.document(document_id)
+        ext = (Path(doc.get("original_file_name") or "").suffix or ".pdf") if original else ".pdf"
+        r = await pc.request("GET", f"/documents/{doc['id']}/download/", params={"original": "true"} if original else None)
+        if r.status_code >= 400:
+            raise PaperlessError(f"Download fehlgeschlagen ({r.status_code}).")
+        return _safe_name(doc["id"], doc.get("title", ""), ext), r.content
+
+
+UPLOAD_TYPES = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp", ".gif", ".txt", ".eml",
+                ".doc", ".docx", ".odt", ".xls", ".xlsx", ".ods", ".ppt", ".pptx", ".odp"}
+MAX_UPLOAD = 200_000_000
+
+
+def _in_telegram_inbox(cfg: Any, path: Path) -> bool:
+    tg = getattr(cfg, "telegram", None)
+    if tg is None:
+        return False
+    try:
+        return path.resolve().is_relative_to(tg.inbox.resolve())
+    except OSError:
+        return False
+
+
+def _upload_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
+    path = Path(str(args.get("path") or "")).expanduser()
+    if _in_telegram_inbox(ctx.cfg, path):
+        return SAFE, ""  # selbst vom Handy geschickt → direkt ablegen
+    return CONFIRM, f"Datei {path} an Paperless übergeben"
+
+
+@tool("Legt eine lokale Datei (PDF, Foto, Office-Dokument) in Paperless ab – z. B. eine Datei, die der Nutzer per "
+      "Telegram geschickt hat. Paperless erkennt Text und Metadaten danach im Hintergrund.",
+      risk=_upload_risk, enabled=_enabled)
+async def paperless_upload(
+    ctx: ToolContext,
+    path: Annotated[str, "Pfad der Datei"],
+    title: Annotated[str, "Titel (optional; leer = Paperless wählt selbst)"] = "",
+) -> str:
+    p = Path(path).expanduser()
+    if not p.is_file():
+        return f"Datei nicht gefunden: {p}"
+    if p.suffix.lower() not in UPLOAD_TYPES:
+        return f"Paperless nimmt {p.suffix or 'diese Dateien'} nicht an (PDF, Bilder, Office-Dokumente gehen)."
+    if p.stat().st_size > MAX_UPLOAD:
+        return "Die Datei ist zu groß (höchstens 200 MB)."
+
+    async def run() -> str:
+        ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+        async with PaperlessClient(ctx.cfg) as pc:
+            task = await pc.upload(p.name, p.read_bytes(), ctype, title)
+        return f"An Paperless übergeben: {p.name} (Aufgabe {task}) – Paperless verarbeitet es gleich."
 
     return await _guard(run())
 

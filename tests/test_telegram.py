@@ -172,3 +172,103 @@ def test_startup_check_and_errors_are_reported(cfg, tg, monkeypatch):
 
     status = run(broken())
     assert not status["running"] and "Token ungültig" in status["error"]
+
+
+# ---------------------------------------------------------------- Dateien
+
+def test_files_from_the_phone_are_saved(cfg, tg, tmp_path):
+    cfg.telegram.inbox_dir = tmp_path / "inbox"
+    asked = []
+
+    async def run_fn(text, emit, confirm):
+        asked.append(text)
+        return "erledigt"
+
+    async def scenario():
+        bot = make_bot(cfg, tg, run_fn)
+        worker = asyncio.create_task(bot._worker())
+        # mit Beschriftung → direkt als Anfrage mit Hinweis auf die Datei
+        tg.user_file(ME, "doc-1", b"%PDF-1.7 rechnung", name="Rechnung März.pdf", caption="ab in Paperless")
+        # ohne Beschriftung → speichern, nachfragen; die nächste Nachricht bezieht sich darauf
+        tg.user_file(ME, "doc-2", b"%PDF vertrag", name="../../etc/passwd")
+        tg.user_file(ME, "photo-1", b"JPEGDATA", photo=True)
+        await bot.poll_once()
+        tg.user_message(ME, "fass das Foto zusammen")
+        await bot.poll_once()
+        tg.user_file(ME, "big", b"x", name="riesig.iso", size=30_000_000)
+        await bot.poll_once()
+        await wait_for(lambda: len(asked) == 2)
+        worker.cancel()
+
+    run(scenario())
+    inbox = tmp_path / "inbox"
+    saved = sorted(p.name for p in inbox.iterdir())
+    assert any(n.startswith("foto-") for n in saved) and "Rechnung März.pdf" in saved
+    assert "passwd" in saved and len(saved) == 3  # „../../etc/passwd“ landet entschärft im Eingangsordner
+    assert (inbox / "Rechnung März.pdf").read_bytes() == b"%PDF-1.7 rechnung"
+    assert asked[0].startswith("[Datei vom Handy empfangen und gespeichert unter") and asked[0].endswith("ab in Paperless")
+    assert "foto-" in asked[1] and asked[1].endswith("fass das Foto zusammen")
+    assert any("📥 Gespeichert:" in t and "Schreib mir, was damit passieren soll" in t for t in tg.texts())
+    assert any("zu groß" in t for t in tg.texts()) and not (inbox / "riesig.iso").exists()
+
+
+def test_send_file_tool(cfg, tg, tmp_path, monkeypatch):
+    from orbwise.tools import telegram_tools
+    from orbwise.tools.registry import BLOCKED, SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
+
+    load_all_tools()
+    assert "telegram_send_file" in {s["function"]["name"] for s in tool_schemas(cfg)}
+    doc = tmp_path / "Plan.pdf"
+    doc.write_bytes(b"%PDF-1.7 plan")
+
+    async def scenario():
+        bot = make_bot(cfg, tg, None)
+        ctx = ToolContext(cfg=cfg, memory=None, services={"telegram": bot})
+        ok = await telegram_tools.telegram_send_file(ctx, path=str(doc), caption="Der Plan")
+        missing = await telegram_tools.telegram_send_file(ctx, path=str(tmp_path / "fehlt.pdf"))
+        return ok, missing
+
+    ok, missing = run(scenario())
+    assert ok.startswith("Aufs Handy geschickt: Plan.pdf") and "nicht gefunden" in missing
+    assert tg.documents[0]["filename"] == "Plan.pdf" and b"%PDF-1.7 plan" in tg.documents[0]["raw"]
+    assert b"Der Plan" in tg.documents[0]["raw"]
+    spec = get_tool("telegram_send_file")
+    ctx = ToolContext(cfg=cfg, memory=None)
+    assert spec.assess(ctx, {"path": str(doc)})[0] == SAFE
+    for secret in ("~/.ssh/id_ed25519", "/home/a/.gnupg/x", "~/.config/orbwise/config.yaml", "/proj/.env"):
+        assert spec.assess(ctx, {"path": secret})[0] == BLOCKED
+
+
+def test_send_paperless_document_and_upload_from_inbox(cfg, tg, tmp_path, monkeypatch):
+    from fake_paperless import TOKEN as PL_TOKEN
+    from fake_paperless import FakePaperless
+
+    from orbwise.tools import paperless as pl
+    from orbwise.tools import telegram_tools
+    from orbwise.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools
+
+    fake = FakePaperless()
+    monkeypatch.setattr(pl, "TRANSPORT", fake.transport())
+    monkeypatch.setattr(pl, "_KNOWN", {})
+    cfg.paperless.url, cfg.paperless.token = "http://paperless.local:8000", PL_TOKEN
+    cfg.telegram.inbox_dir = tmp_path / "inbox"
+    (tmp_path / "inbox").mkdir()
+    scan = tmp_path / "inbox" / "Brief.pdf"
+    scan.write_bytes(b"%PDF brief")
+    load_all_tools()
+    doc_id = fake.docs[0]["id"]
+
+    async def scenario():
+        bot = make_bot(cfg, tg, None)
+        ctx = ToolContext(cfg=cfg, memory=None, services={"telegram": bot})
+        sent = await telegram_tools.telegram_send_file(ctx, paperless_id=doc_id)
+        uploaded = await pl.paperless_upload(ctx, path=str(scan), title="Brief vom Amt")
+        return sent, uploaded
+
+    sent, uploaded = run(scenario())
+    assert sent.startswith("Aufs Handy geschickt:") and tg.documents[0]["filename"].endswith(".pdf")
+    assert b"%PDF-1.7 archiv" in tg.documents[0]["raw"]
+    assert uploaded.startswith("An Paperless übergeben: Brief.pdf") and fake.uploads[-1]["title"] == "Brief vom Amt"
+    spec, ctx = get_tool("paperless_upload"), ToolContext(cfg=cfg, memory=None)
+    assert spec.assess(ctx, {"path": str(scan)})[0] == SAFE          # vom Handy geschickt
+    assert spec.assess(ctx, {"path": "/etc/hosts"})[0] == CONFIRM    # beliebige Datei: nachfragen

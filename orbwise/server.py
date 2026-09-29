@@ -360,6 +360,7 @@ def create_app(cfg: Config) -> FastAPI:
         telegram_bot = TelegramBot(
             cfg, run_telegram, lambda name, args: describe_call(name, args, cfg), tool_editable,
             transcribe=(lambda data: transcribe_voice(stt, data)) if stt else None)
+        agent.services["telegram"] = telegram_bot  # für telegram_send_file
 
     async def fire_reminder(r, now) -> None:
         late = (now - r.due_dt).total_seconds() > 120

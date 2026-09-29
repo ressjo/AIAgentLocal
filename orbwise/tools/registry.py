@@ -175,6 +175,7 @@ def load_all_tools() -> dict[str, ToolSpec]:
         shell,
         sysadmin,
         system,
+        telegram_tools,
         trilium,
         weather,
         web,

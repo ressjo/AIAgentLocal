@@ -318,6 +318,12 @@ class TelegramConfig(BaseModel):
     # Token von @BotFather (oder $ORBWISE_TELEGRAM_TOKEN); chat_id nennt der Bot nach „/start“.
     token: str = ""
     chat_id: int = 0
+    # Hierhin speichert der Bot Dateien und Fotos, die du vom Handy schickst
+    inbox_dir: Path | None = None
+
+    @property
+    def inbox(self) -> Path:
+        return (self.inbox_dir or Path.home() / "Downloads" / "Orbwise-Telegram").expanduser()
 
     @property
     def secret(self) -> str:

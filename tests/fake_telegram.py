@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import time
 
 import httpx
@@ -17,6 +18,7 @@ class FakeTelegram:
         self.actions: list[str] = []
         self.next_id = 1
         self.files = {"voice-1": b"OggS-fake"}
+        self.documents: list[dict] = []  # per sendDocument verschickte Dateien
 
     def user_message(self, chat_id: int, text: str = "", voice: str | None = None) -> None:
         msg = {"message_id": self.next_id, "chat": {"id": chat_id}}
@@ -24,6 +26,20 @@ class FakeTelegram:
             msg["text"] = text
         if voice:
             msg["voice"] = {"file_id": voice}
+        self.updates.append({"update_id": self.next_id, "message": msg})
+        self.next_id += 1
+
+    def user_file(self, chat_id: int, file_id: str, data: bytes, name: str = "", caption: str = "",
+                  photo: bool = False, size: int | None = None) -> None:
+        self.files[file_id] = data
+        msg = {"message_id": self.next_id, "chat": {"id": chat_id}}
+        info = {"file_id": file_id, "file_size": len(data) if size is None else size}
+        if photo:
+            msg["photo"] = [{**info, "file_size": 10, "width": 90}, {**info, "width": 1280}]
+        else:
+            msg["document"] = {**info, "file_name": name}
+        if caption:
+            msg["caption"] = caption
         self.updates.append({"update_id": self.next_id, "message": msg})
         self.next_id += 1
 
@@ -47,6 +63,13 @@ class FakeTelegram:
         if "/file/bot" in path:
             return httpx.Response(200, content=self.files.get(path.rsplit("/", 1)[-1], b""))
         method = path.rsplit("/", 1)[-1]
+        if method == "sendDocument":
+            raw = request.read()
+            name = re.search(rb'name="document"; filename="([^"]+)"', raw)
+            content = raw.split(b"\r\n\r\n", 3)[-1] if b"\r\n\r\n" in raw else b""
+            doc = {"filename": name.group(1).decode() if name else "", "raw": raw, "content": content}
+            self.documents.append(doc)
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": 5000 + len(self.documents)}})
         body = json.loads(request.content or b"{}")
         if f"/bot{TOKEN}/" not in path:
             return httpx.Response(401, json={"ok": False, "description": "Unauthorized"})

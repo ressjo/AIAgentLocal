@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 # eine Mail könnte versteckte Anweisungen enthalten (z. B. Daten per fetch_url nach außen schicken).
 TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_briefing"}
 TAINT_GUARDED = {"shell", "web", "files", "apps", "obsidian", "trilium", "calendar_tools", "homeassistant",
-                 "memory_tools", "reminder_tools", "power"}
+                 "memory_tools", "reminder_tools", "power", "telegram_tools"}
 
 ANSWER_RESERVE = 1500  # Token, die im Kontextfenster für die Antwort frei bleiben
 Emit = Callable[[dict], Awaitable[None]]

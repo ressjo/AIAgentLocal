@@ -468,6 +468,14 @@ the phone run in their own chat **"📱 Telegram"** in HISTORY (your open chat i
 **voice messages** are transcribed with Whisper. **Every reminder** is also sent to the phone. Actions that need
 confirmation come with **✅ Run / ❌ Deny** buttons; sending e-mail is only possible in the dashboard (edit dialog).
 Tip: tell Orbwise once when you start work ("I start work at 8") – it remembers that for "at work" reminders.
+
+**Files in both directions:**
+- *Phone → PC:* send a PDF, document or photo to the bot. It is saved in `~/Downloads/Orbwise-Telegram/`
+  (`telegram.inbox_dir`). Add a caption such as "put it into Paperless" or "summarise it" – or send the text right
+  afterwards. Files from the phone go to Paperless without an extra question (up to 20 MB, a Telegram limit).
+- *PC → phone:* "Send me the electricity bill" (from Paperless, as PDF) or "Send me ~/Documents/plan.pdf" – from the
+  phone or from the dashboard. Only to your own chat, up to 50 MB; keys, password stores and config files are never
+  sent. Uploading arbitrary local files to Paperless asks first.
 Messages pass through Telegram's servers (not end-to-end encrypted), so keep that in mind for sensitive content.
 
 **No reply to `/start`?** Run `orbwise doctor` – it checks the token live and whether a webhook is set. Orbwise

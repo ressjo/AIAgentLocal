@@ -16,7 +16,9 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import tempfile
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -28,6 +30,9 @@ log = logging.getLogger(__name__)
 
 API = "https://api.telegram.org"
 MAX_TEXT = 4000          # Telegram erlaubt 4096 Zeichen je Nachricht
+MAX_DOWNLOAD = 20_000_000  # Bots dürfen Dateien bis 20 MB abholen …
+MAX_UPLOAD = 50_000_000    # … und bis 50 MB senden
+FILE_CONTEXT_SECONDS = 900  # eine Datei ohne Text gilt 15 min als Bezug für die nächste Nachricht
 CONFIRM_TIMEOUT = 300    # so lange wartet eine Rückfrage auf den Knopf
 CHAT_TITLE = "📱 Telegram"
 
@@ -89,6 +94,7 @@ class TelegramBot:
         self.en = getattr(cfg, "language", "de") == "en"
         # für /api/status und die Oberfläche: läuft der Bot, wie heißt er, was ist das letzte Problem?
         self.status: dict[str, Any] = {"running": False, "bot": "", "error": "", "chat_id": self.t.chat_id}
+        self.last_file: tuple[Path, float] | None = None  # zuletzt empfangene Datei (für „ab in Paperless“ danach)
 
     def L(self, de: str, en: str) -> str:
         return en if self.en else de
@@ -109,6 +115,23 @@ class TelegramBot:
         for part in split_text(text):
             out.append(await self.call("sendMessage", chat_id=chat_id or self.t.chat_id, text=part, **extra))
         return out
+
+    async def send_file(self, data: bytes, filename: str, caption: str = "") -> dict:
+        """Datei an den eigenen Chat schicken (sendDocument, bis 50 MB)."""
+        if len(data) > MAX_UPLOAD:
+            raise RuntimeError(f"Datei zu groß für Telegram ({len(data) // 1_000_000} MB, höchstens 50 MB).")
+        form = {"chat_id": str(self.t.chat_id)}
+        if caption:
+            form["caption"] = caption[:1000]
+        r = await self.client.post("sendDocument", data=form, files={"document": (filename, data)},
+                                   timeout=httpx.Timeout(120))
+        try:
+            result = r.json()
+        except ValueError:
+            raise RuntimeError(f"Telegram sendDocument: HTTP {r.status_code}") from None
+        if not result.get("ok"):
+            raise RuntimeError(f"Telegram sendDocument: {result.get('description', r.status_code)}")
+        return result["result"]
 
     async def notify(self, text: str) -> bool:
         """Nachricht an den Nutzer (z. B. Erinnerung). False, wenn der Bot nicht eingerichtet ist oder es scheitert."""
@@ -199,13 +222,61 @@ class TelegramBot:
                                    "Hi! Just write or speak what you need – e.g. “Remind me tomorrow at 9 about the "
                                    "dentist”. Reminders arrive here."))
             return
+        if msg.get("document") or msg.get("photo"):
+            path = await self._receive_file(msg)
+            if not path:
+                return
+            caption = (msg.get("caption") or "").strip()
+            if not caption:
+                self.last_file = (path, time.monotonic())
+                await self.send(self.L(f"📥 Gespeichert: {path}\nSchreib mir, was damit passieren soll – z. B. "
+                                       "„ab in Paperless“ oder „fass zusammen“.",
+                                       f"📥 Saved: {path}\nTell me what to do with it – e.g. “put it into "
+                                       "Paperless” or “summarise it”."))
+                return
+            await self.send(f"📥 {path.name}")
+            await self.queue.put((self._file_note(path) + caption, msg.get("message_id", 0)))
+            return
         if not text and (msg.get("voice") or msg.get("audio")):
             text = await self._voice(msg.get("voice") or msg.get("audio"))
             if not text:
                 return
             await self.send(f"🎙 „{text}“")
         if text:
+            if self.last_file and time.monotonic() - self.last_file[1] < FILE_CONTEXT_SECONDS:
+                text = self._file_note(self.last_file[0]) + text  # Bezug auf die eben geschickte Datei
+            self.last_file = None
             await self.queue.put((text, msg.get("message_id", 0)))
+
+    def _file_note(self, path: Path) -> str:
+        size = path.stat().st_size if path.exists() else 0
+        return self.L(f"[Datei vom Handy empfangen und gespeichert unter {path} ({size // 1024} KB)]\n",
+                      f"[File received from the phone and saved as {path} ({size // 1024} KB)]\n")
+
+    async def _receive_file(self, msg: dict) -> Path | None:
+        """Dokument/Foto herunterladen und im Eingangsordner ablegen (Name bereinigt, nie überschreiben)."""
+        if msg.get("document"):
+            item = msg["document"]
+            name = item.get("file_name") or "datei"
+        else:
+            item = max(msg["photo"], key=lambda p: p.get("file_size", 0) or p.get("width", 0))
+            name = time.strftime("foto-%Y%m%d-%H%M%S.jpg")
+        if (item.get("file_size") or 0) > MAX_DOWNLOAD:
+            await self.send(self.L("Die Datei ist zu groß – Telegram-Bots können nur Dateien bis 20 MB abholen.",
+                                   "The file is too big – Telegram bots can only fetch files up to 20 MB."))
+            return None
+        info = await self.call("getFile", file_id=item["file_id"])
+        r = await self.client.get(f"{API}/file/bot{self.t.secret}/{info['file_path']}", timeout=httpx.Timeout(120))
+        r.raise_for_status()
+        inbox = self.t.inbox
+        inbox.mkdir(parents=True, exist_ok=True)
+        stem, dot, ext = re.sub(r"[^\w\-. ]+", "_", Path(name).name).strip(" ._").rpartition(".")
+        stem, ext = (stem, "." + ext) if dot and stem else (ext or "datei", "")
+        target, n = inbox / f"{stem}{ext}", 1
+        while target.exists():
+            target, n = inbox / f"{stem}-{n}{ext}", n + 1
+        target.write_bytes(r.content)
+        return target
 
     async def _voice(self, voice: dict) -> str:
         if not self.transcribe:
