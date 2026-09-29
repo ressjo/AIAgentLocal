@@ -291,6 +291,8 @@ class Agent:
 
         answer = "\n\n".join(spoken)
         await emit({"type": "assistant_end", "id": msg_id, "text": answer})
+        # Antwort ist fertig – das Nachbereiten (Tagebuch, Verdichten per LLM) läuft still im Hintergrund
+        await emit({"type": "state", "state": "idle"})
         conv.age_tool_results()  # lange Tool-Ergebnisse älterer Runden auf einen Auszug kürzen
         conv.save()
         await self.memory.log_exchange(user_text, answer, tool_notes)

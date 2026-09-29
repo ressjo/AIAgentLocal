@@ -239,6 +239,11 @@ def create_app(cfg: Config) -> FastAPI:
     async def model_progress(text: str) -> None:
         await hub.broadcast({"type": "model_progress", "text": text})
 
+    async def idle_if_free() -> None:
+        """Oberfläche auf „bereit“ setzen – nur, wenn gerade keine Anfrage läuft."""
+        if not agent.lock.locked():
+            await hub.broadcast({"type": "state", "state": "idle"})
+
     async def start_model() -> None:
         # Beim Start das aktive Profil vorbereiten (z. B. llama-server starten); Chats warten so lange
         name = llm.active
@@ -246,9 +251,13 @@ def create_app(cfg: Config) -> FastAPI:
         try:
             async with agent.lock:
                 await llm.start(model_progress)
+            await hub.broadcast({"type": "model_active", "name": name})
+        except LLMError as e:
+            log.warning("Modell-Start fehlgeschlagen: %s", e)
+            await hub.broadcast({"type": "model_error", "name": name, "text": str(e)})
         finally:
             llm.switching = None
-        await hub.broadcast({"type": "model_active", "name": name})
+            await idle_if_free()  # wer sich während des Ladens verbunden hat, sah „denke nach“
 
     async def fire_reminder(r, now) -> None:
         late = (now - r.due_dt).total_seconds() > 120
@@ -508,6 +517,7 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(502, str(e)) from e
         finally:
             llm.switching = None
+            await idle_if_free()
         await hub.broadcast({"type": "model_active", "name": name})
         return {"ok": True, "active": llm.active}
 

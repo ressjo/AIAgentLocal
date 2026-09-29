@@ -60,6 +60,8 @@ First public release.
   tool, error), the voice shapes the main ring while speaking/listening, particles flow in/out, and satellites on
   the ring show which tool or routine is running. HUD details: message glide-in, panel corners light up on
   activity, a subtle scanline and a copy button on code blocks – all within the same frame budget.
+- The status returns to "ready" as soon as the answer is complete (condensing runs silently afterwards), after the
+  model has loaded or failed to load, and after reconnecting – no more stuck "thinking".
 
 ### Installation
 - Installer for Arch-based and Debian/Ubuntu-based systems that asks for the language, the GPU (NVIDIA/AMD/CPU,

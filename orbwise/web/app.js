@@ -252,7 +252,7 @@
   function handle(ev) {
     switch (ev.type) {
       case "hello":
-        if (ev.busy) S.serverState = "thinking";
+        S.serverState = ev.busy ? "thinking" : "idle";  // tatsächlichen Zustand übernehmen (auch nach Neuverbinden)
         if (ev.context) showContext(ev.context);
         break;
       case "context":

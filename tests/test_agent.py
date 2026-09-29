@@ -29,7 +29,7 @@ def test_plain_answer_logged_to_journal(cfg, llm, memory):
     answer, events, _ = run(collect(agent, "Hallo Jarvis"))
     assert "Hallo Jarvis" in answer
     assert any(e["type"] == "token" for e in events)
-    assert events[-1]["type"] == "assistant_end"
+    assert [e["type"] for e in events][-2:] == ["assistant_end", "state"] and events[-1]["state"] == "idle"
     day = memory.journal.days()[0]
     assert "Hallo Jarvis" in memory.journal.read(day)
 
