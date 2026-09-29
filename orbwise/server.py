@@ -242,9 +242,28 @@ def create_app(cfg: Config) -> FastAPI:
     hub.askpass = broker
     background: list[asyncio.Task] = []
 
+    async def heal_index() -> None:
+        """Beschädigter Suchindex wurde leer neu angelegt → im Hintergrund aus den Gedächtnis-Dateien füllen."""
+        if not memory.index.needs_rebuild:
+            return
+        en = cfg.language == "en"
+        await hub.broadcast({"type": "memory", "text": "Search index was damaged – rebuilding it from the memory files."
+                             if en else "Suchindex war beschädigt – wird aus den Gedächtnis-Dateien neu aufgebaut."})
+        try:
+            if await memory.heal_index_if_needed():
+                await hub.broadcast({"type": "memory", "text": "Search index rebuilt." if en
+                                     else "Suchindex neu aufgebaut."})
+        except Exception as e:  # noqa: BLE001
+            log.warning("Neuaufbau des Suchindex fehlgeschlagen: %s", e)
+
+    def heal_index_soon() -> None:
+        if memory.index.needs_rebuild:
+            background.append(asyncio.create_task(heal_index()))  # nicht an STOP gebunden
+
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         hub.speaker.start()
+        heal_index_soon()
         if isinstance(llm, LLMRouter):
             background.append(asyncio.create_task(start_model()))
         background.append(asyncio.create_task(summary_loop()))
@@ -639,6 +658,7 @@ def create_app(cfg: Config) -> FastAPI:
         if was_active:
             not_busy()
         days = memory.forget_chat(chat_id)
+        heal_index_soon()
         if was_active:
             await chat_switched()
         await hub.broadcast({"type": "chats_changed"})

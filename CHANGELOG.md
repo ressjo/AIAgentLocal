@@ -29,6 +29,9 @@ First public release.
   full-text/embedding index – no context-window overflow.
 - **Chat history**: several chats, continue old ones, star them, delete them completely (including memory).
 - Context budget follows the model's real context window; long tool results are trimmed instead of failing.
+- The search index repairs itself when damaged ("database disk image is malformed"): the full-text index is rebuilt,
+  a broken file is set aside and refilled from the Markdown memory files in the background; deleting chats never
+  fails because of it, `orbwise reindex` works on a broken file and `orbwise doctor` checks the index.
 - Cache-friendly prompts: time and retrieved memories are placed in front of the new message instead of the system
   prompt, so llama.cpp/Ollama reuse their prompt cache; old long tool results are aged to excerpts, condensing starts
   at ~85 % of the budget, and the token estimate calibrates itself from the server's real counts.

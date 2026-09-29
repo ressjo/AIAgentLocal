@@ -40,6 +40,7 @@ class Memory:
         self.chats = ChatStore(cfg.dir / "chats", legacy_session=cfg.dir / "session.json")
         self.conversation = self.chats.open_active()
         self.last_activity = time.time()
+        self._rebuilding = False
 
     def close(self) -> None:
         self.index.close()
@@ -104,12 +105,21 @@ class Memory:
         """Chat komplett vergessen: Datei, Tagebuch-Einträge, Suchindex, betroffene Tageszusammenfassungen
         (werden aus dem Rest neu erstellt). Gelernte Fakten bleiben. Liefert die betroffenen Tage."""
         self.chats.path(chat_id)  # prüft die ID
+        # Erst den Suchindex (nur ein Cache) – scheitert er, darf das Löschen nicht halb stehen bleiben
+        try:
+            self.index.delete_source(f"chat:{chat_id}")
+        except Exception as e:  # noqa: BLE001
+            log.warning("Suchindex beim Löschen nicht bereinigt (%s) – wird neu aufgebaut", e)
+            self.index.needs_rebuild = True
         days = self.journal.remove_chat(chat_id)
-        self.index.delete_source(f"chat:{chat_id}")
         for day in days:
             self.summaries.delete(day)
-            self.index.delete_source(f"summary:{day}")
+            with contextlib.suppress(Exception):
+                self.index.delete_source(f"summary:{day}")
         self.chats.delete(chat_id)
+        if not self.index.needs_rebuild and not self.index.healthy():
+            # Löschen lief durch, die Datei ist aber trotzdem beschädigt → jetzt reparieren statt beim nächsten Fehler
+            self.index.heal("Prüfung nach dem Löschen")
         if chat_id == self.conversation.chat_id:
             self.conversation = self.chats.create()
         return days
@@ -199,8 +209,20 @@ class Memory:
         return done
 
     # ---------- Wartung ----------
+    async def heal_index_if_needed(self) -> bool:
+        """War der Suchindex beschädigt und wurde leer neu angelegt: aus den Markdown-Dateien wieder aufbauen."""
+        if not self.index.needs_rebuild or self._rebuilding:
+            return False
+        self._rebuilding = True
+        try:
+            n = await self.rebuild_index()
+            log.info("Suchindex neu aufgebaut: %s Einträge", n)
+        finally:
+            self._rebuilding = False
+        return True
+
     async def rebuild_index(self) -> int:
-        self.index.clear()
+        self.index.reset()  # Datei frisch anlegen – klappt auch, wenn sie beschädigt ist
         for day in sorted(self.journal.days()):
             entries = self.journal.entries(day)
             block: list[str] = []
@@ -223,4 +245,5 @@ class Memory:
             await self.index.add("summary", day, f"summary:{day}", body,
                                  created=datetime.strptime(day, "%Y-%m-%d").timestamp() + 86399)
         await self.reindex_facts()
+        self.index.needs_rebuild = False
         return self.index.count()

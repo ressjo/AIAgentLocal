@@ -219,6 +219,8 @@ def cmd_doctor(args) -> None:
         print(T("  – kein NAS-Pfad konfiguriert", "  – no NAS path configured") + " (tools.nas_paths)")
     for p in cfg.tools.nas_paths:
         line(p.exists() and p.is_dir() and any(p.iterdir()), f"{p} " + T("gemountet", "mounted"), T("Mount prüfen", "check the mount"))
+    from .memory.index import check_file
+    line(check_file(cfg.memory.dir / "index.sqlite"), T("Gedächtnis-Suchindex", "Memory search index"), "orbwise reindex")
 
 
 def cmd_reindex(args) -> None:
