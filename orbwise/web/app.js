@@ -653,8 +653,12 @@
     return hit ? hit[1][EN ? 1 : 0] : name.split("_")[0].toUpperCase();
   }
 
+  // Symbol je Aktionsart (weitere Symbole: ICONS in orb.js); Gedächtnis leuchtet im Kern statt als Satellit
+  const ICON_GROUPS = { shell: "cli", packages: "cli", sysadmin: "cli", system: "cli", power: "cli", web: "cloud" };
+
   function toolCall(ev) {
-    orb.addSatellite(ev.id, satLabel(ev.name));
+    if (ev.group === "memory_tools") orb.memoryGlow(ev.id, true, satLabel(ev.name));
+    else orb.addSatellite(ev.id, satLabel(ev.name), ICON_GROUPS[ev.group] || null);
     const empty = activity.querySelector(".empty");
     if (empty) empty.remove();
     const el = document.createElement("div");
@@ -694,6 +698,7 @@
 
   function toolResult(ev) {
     orb.removeSatellite(ev.id, ev.status === "error" || ev.status === "blocked");
+    orb.memoryGlow(ev.id, false);
     const el = acts[ev.id];
     if (el) {
       el.className = "act " + ev.status;

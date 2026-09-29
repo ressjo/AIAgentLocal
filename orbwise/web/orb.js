@@ -44,6 +44,31 @@
     error:     { c: [255, 93, 108], waves: 2, fire: 25 },
   };
   const MAX_SATELLITES = 6;
+  const MEMORY_GOLD = [255, 196, 92];  // Gedächtnis: die inneren Neuronen leuchten golden
+
+  /* Symbole für Aktionen (Einheitsgröße ±1, einmal als Path2D gebaut). Weitere lassen sich hier ergänzen. */
+  const ICONS = {
+    cli() {  // Terminalfenster mit Titelleiste und Eingabezeichen
+      const frame = new Path2D();
+      frame.roundRect ? frame.roundRect(-1, -0.78, 2, 1.56, 0.18) : frame.rect(-1, -0.78, 2, 1.56);
+      frame.moveTo(-1, -0.45); frame.lineTo(1, -0.45);
+      frame.moveTo(-0.62, -0.18); frame.lineTo(-0.28, 0.06); frame.lineTo(-0.62, 0.3);
+      const cursor = new Path2D();
+      cursor.moveTo(-0.12, 0.34); cursor.lineTo(0.42, 0.34);
+      return { frame, cursor };
+    },
+    cloud() {  // Wolke aus drei Bögen und einer Grundlinie
+      const frame = new Path2D();
+      frame.moveTo(-0.6, 0.5);
+      frame.arc(-0.58, 0.16, 0.34, Math.PI / 2, Math.PI * 1.62);
+      frame.arc(0.02, -0.08, 0.5, Math.PI * 1.08, Math.PI * 1.93);
+      frame.arc(0.6, 0.18, 0.32, Math.PI * 1.45, Math.PI * 2.5);
+      frame.closePath();
+      return { frame, cursor: null };
+    },
+  };
+  const iconPaths = {};
+  const iconPath = (name) => iconPaths[name] || (iconPaths[name] = ICONS[name] ? ICONS[name]() : null);
   const SAT_MIN_SECONDS = 1.5;
 
   class NeuralNet {
@@ -81,7 +106,9 @@
         this.nodes[b].links.push(a);
       }
       // die innersten Neuronen: dort starten die Denk-Impulse
-      this.inner = this.nodes.map((n, i) => [n.d, i]).sort((a, b) => a[0] - b[0]).slice(0, 8).map((x) => x[1]);
+      const byDepth = this.nodes.map((n, i) => [n.d, i]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+      this.inner = byDepth.slice(0, 8);
+      this.core = byDepth.slice(0, 24);  // leuchten beim Erinnern golden
       this.pulses = [];
       this.maxPulses = MAX_PULSES;
       this.acc = 0;
@@ -116,6 +143,15 @@
       }
     }
 
+    /* Gedächtnis: ein Signal zwischen zwei Kern-Neuronen (bleibt innen, läuft nicht weiter). */
+    memoryPulse() {
+      if (this.pulses.length >= this.maxPulses) return;
+      const a = this.core[(Math.random() * this.core.length) | 0];
+      let b = this.core[(Math.random() * this.core.length) | 0];
+      if (a === b) b = this.core[(this.core.indexOf(a) + 1) % this.core.length];
+      this.pulses.push({ a, b, t: 0, v: 1.3 + Math.random() * 0.6, mem: true });
+    }
+
     burstOut() {
       this.fireOut(this.inner[(Math.random() * this.inner.length) | 0]);
     }
@@ -146,7 +182,8 @@
       for (const p of this.pulses) {
         p.t += dt * p.v;
         if (p.t >= 1) {
-          if (p.out) this.fireOut(p.b, p.v);
+          if (p.mem) this.nodes[p.b].fire = Math.max(this.nodes[p.b].fire, 0.6);
+          else if (p.out) this.fireOut(p.b, p.v);
           else this.fire(p.b, p.a, cfg.spread, cfg.speed);
         }
         else alive.push(p);
@@ -181,19 +218,20 @@
       calm.stroke(ctx, (al) => orb._rgba(al));
       hot.stroke(ctx, (al) => orb._rgba(al, 60));
       // Signale: Schweife gebündelt, Köpfe als ein Pfad
-      const trails = q.lines();
+      const trails = q.lines(), memTrails = q.lines();
       const heads = [];
       for (const p of this.pulses) {
         const na = this.nodes[p.a], nb = this.nodes[p.b];
         const t0 = Math.max(0, p.t - 0.22);
         const x = na.px + (nb.px - na.px) * p.t, y = na.py + (nb.py - na.py) * p.t;
         const depth = na.pz + (nb.pz - na.pz) * p.t;
-        trails.add(0.25 + depth * 0.55, na.px + (nb.px - na.px) * t0, na.py + (nb.py - na.py) * t0, x, y);
+        (p.mem ? memTrails : trails).add(0.25 + depth * 0.55, na.px + (nb.px - na.px) * t0, na.py + (nb.py - na.py) * t0, x, y);
         heads.push(x, y, 0.8 + depth * 1.3 + (p.out ? 0.9 : 0));
       }
       ctx.lineCap = "round";
       ctx.lineWidth = 1.6;
       trails.stroke(ctx, (al) => orb._rgba(al, 90));
+      if (orb.memLevel > 0.01) memTrails.stroke(ctx, (al) => `rgba(${MEMORY_GOLD.join(",")},${al})`);
       ctx.lineCap = "butt";
       if (heads.length) {
         ctx.fillStyle = "rgba(255,255,255,0.85)";
@@ -216,6 +254,18 @@
         }
       }
       ctx.globalAlpha = base;
+      // Erinnern: die Kern-Neuronen glühen golden und pulsieren
+      if (orb.memLevel > 0.01) {
+        const gold = orb._glowSprite(MEMORY_GOLD);
+        for (let k = 0; k < this.core.length; k++) {
+          const n = this.nodes[this.core[k]];
+          const beat = 0.65 + 0.35 * Math.sin(orb.t * 5 + k * 1.7);
+          const size = ((0.9 + n.pz * 1.6) * n.ps) * (6 + 5 * beat);
+          ctx.globalAlpha = base * orb.memLevel * (0.7 + 0.3 * beat);
+          ctx.drawImage(gold, n.px - size, n.py - size, size * 2, size * 2);
+        }
+        ctx.globalAlpha = base;
+      }
       // Neuronen – gebündelt nach Helligkeit
       const dots = q.dots();
       for (const n of this.nodes) {
@@ -288,6 +338,10 @@
       this.ctxShow = 0;
       this.ctxFlash = 0;
       this.summarized = false;
+      this.memIds = new Map();     // laufende Gedächtnis-Aktionen: id → {born, until}
+      this.memLevel = 0;           // 0..1, weich ein-/ausblenden
+      this.memAcc = 0;
+      this.memLabel = "";
       this.state = "offline";
       this.color = PALETTE.offline.c.slice();
       this.speed = PALETTE.offline.speed;
@@ -362,13 +416,25 @@
       this.summarized = summarized;
     }
 
-    addSatellite(id, label) {
+    /* Gedächtnis-Aktion: statt eines Satelliten leuchten die Neuronen im Kern. */
+    memoryGlow(id, on, label = "") {
+      if (on) {
+        this.memIds.set(id, { born: this.t, until: null });
+        if (label) this.memLabel = label;
+      } else if (this.memIds.has(id)) {
+        const m = this.memIds.get(id);  // schnelle Aktionen trotzdem ~1,5 s zeigen
+        m.until = m.born + SAT_MIN_SECONDS;
+      }
+    }
+
+    addSatellite(id, label, icon = null) {
       if (this.satellites.has(id)) { const s = this.satellites.get(id); s.leaving = false; s.leaveAt = null; return; }
       if (this.satellites.size >= MAX_SATELLITES) return;
       const n = this.satellites.size;
       this.satellites.set(id, { label: String(label).slice(0, 18), a: this.t * 0.25 - Math.PI / 2 + n * 0.6,
                                 alpha: 0, leaving: false, err: false, born: this.t, leaveAt: null,
-                                beam: 0, back: null });  // Strahl hinaus (0..1) · Rückfluss mit dem Ergebnis
+                                beam: 0, back: null,  // Strahl hinaus (0..1) · Rückfluss mit dem Ergebnis
+                                icon: ICONS[icon] ? icon : null, flash: 0 });
     }
 
     removeSatellite(id, failed = false) {
@@ -384,6 +450,7 @@
 
     clearSatellites(keepPrefix = "") {
       for (const id of [...this.satellites.keys()]) if (!keepPrefix || !id.startsWith(keepPrefix)) this.removeSatellite(id);
+      for (const id of [...this.memIds.keys()]) if (!keepPrefix || !id.startsWith(keepPrefix)) this.memoryGlow(id, false);
     }
 
     _bootP(start, dur) {  // Fortschritt 0..1 eines Abschnitts der Startsequenz (1 = fertig bzw. keine Sequenz)
@@ -476,6 +543,13 @@
       const want = (this.state === "speaking" || this.state === "listening") && this.level > 0.02 ? 1 : 0;
       this.deform = lerp(this.deform, want, 1 - Math.pow(0.02, dt));
       this.zoom = lerp(this.zoom, this.zoomTarget, 1 - Math.pow(0.02, dt));
+      // Gedächtnis: Kern glüht, Signale kreisen innen; klingt nach dem Ergebnis in ~1 s aus
+      for (const [id, m] of this.memIds) if (m.until !== null && this.t >= m.until) this.memIds.delete(id);
+      this.memLevel = lerp(this.memLevel, this.memIds.size ? 1 : 0, 1 - Math.pow(this.memIds.size ? 0.02 : 0.06, dt));
+      if (this.memIds.size && this.bootT === null) {
+        this.memAcc += dt * (this.reduced ? 2 : 7);
+        while (this.memAcc >= 1) { this.memAcc -= 1; this.net.memoryPulse(); }
+      } else this.memAcc = 0;
       // Denk-Puls: Impulse vom Kern nach außen, schneller mit jedem Token, ruhiger wenn der Stream stockt
       this.tokenEnergy *= Math.exp(-dt * 1.4);
       if (this.state === "thinking" && this.bootT === null) {
@@ -488,7 +562,11 @@
       for (const s of this.satellites.values()) {
         s.beam = Math.min(1, s.beam + dt * 2.2);
         // Rückfluss erst, wenn der Strahl angekommen ist (auch bei sehr schnellen Werkzeugen)
-        if (s.back !== null && s.back < 1 && s.beam >= 1) s.back = Math.min(1, s.back + dt * 1.8);
+        if (s.back !== null && s.back < 1 && s.beam >= 1) {
+          s.back = Math.min(1, s.back + dt * 1.8);
+          if (s.back >= 1) s.flash = 1;  // Ergebnis erreicht den Kern → Symbol blitzt auf
+        }
+        s.flash *= Math.exp(-dt * 2.5);
       }
       // Satelliten: gleichmäßig verteilt, weich ein-/ausblenden
       const live = [...this.satellites.values()].filter((s) => !s.leaving);
@@ -542,22 +620,27 @@
       return c;
     }
 
-    _glowSprite() {
-      const key = this.color.map((c) => (c / 8) | 0).join(",");
-      if (this._spriteKey !== key) {
-        const c = this._sprite || (this._sprite = document.createElement("canvas"));
+    _glowSprite(rgb = null) {
+      const col = rgb || this.color;
+      const key = col.map((c) => (c / 8) | 0).join(",");
+      this._sprites = this._sprites || new Map();
+      let c = this._sprites.get(key);
+      if (!c) {
+        if (this._sprites.size > 12) this._sprites.clear();  // Orb-Farbe gleitet → alte Stufen verwerfen
+        c = document.createElement("canvas");
         c.width = c.height = 64;
         const g = c.getContext("2d");
-        g.clearRect(0, 0, 64, 64);
+        const [r, gg, b] = col;
+        const rgba = (a, boost) => `rgba(${Math.min(255, r + boost) | 0},${Math.min(255, gg + boost) | 0},${Math.min(255, b + boost) | 0},${a})`;
         const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-        grad.addColorStop(0, this._rgba(1, 150));
-        grad.addColorStop(0.35, this._rgba(0.45, 60));
+        grad.addColorStop(0, rgba(1, 150));
+        grad.addColorStop(0.35, rgba(0.45, 60));
         grad.addColorStop(1, "rgba(0,0,0,0)");
         g.fillStyle = grad;
         g.fillRect(0, 0, 64, 64);
-        this._spriteKey = key;
+        this._sprites.set(key, c);
       }
-      return this._sprite;
+      return c;
     }
 
     _draw() {
@@ -705,6 +788,12 @@
       dots.fill(ctx, (al) => this._rgba(al, 50));
 
       ctx.globalAlpha = 1;
+      if (this.memLevel > 0.02 && this.memLabel) {
+        const label = this._label(this.memLabel);
+        ctx.globalAlpha = this.memLevel * 0.9;
+        ctx.drawImage(label, -label.w / 2, R * 0.66, label.w, label.h);
+        ctx.globalAlpha = 1;
+      }
       if (this.ctxFrac !== null) this._drawContextRing(R, bootSeg);
       if (!this.octx && this.satellites.size) this._drawSatellites(ctx, R, 0);
 
@@ -807,30 +896,63 @@
         const x = ca * g.rx, y = sa * g.ry;          // Satellit
         const x0 = ca * g.ix, y0 = sa * g.iy;        // Startpunkt des Strahls (Kern bzw. Kastenrand)
         const at = (t) => [x0 + (x - x0) * t, y0 + (y - y0) * t];
-        // Werkzeug-Strahl: ruhige, fließende Verbindung solange das Werkzeug läuft
+        // Werkzeug-Strahl: feine Spur, darauf fließen Lichtpunkte vom Kern ins Ziel, solange das Werkzeug läuft
         ctx.globalAlpha = s.alpha;
-        ctx.strokeStyle = `rgba(${col},0.22)`;
-        ctx.lineWidth = 1.2;
-        ctx.setLineDash([3, 9]);
-        ctx.lineDashOffset = -this.t * 38;
+        ctx.strokeStyle = `rgba(${col},0.12)`;
+        ctx.lineWidth = 1;
         const [bx, by] = at(s.beam);
         ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(bx, by); ctx.stroke();
-        ctx.setLineDash([]);
+        if (s.back === null || s.back < 1) {
+          const n = s.icon ? 8 : 4;
+          ctx.fillStyle = `rgba(${col},0.95)`;
+          ctx.beginPath();
+          for (let k = 0; k < n; k++) {
+            const t = ((this.t * 0.9 + k / n) % 1) * s.beam;
+            const [px, py] = at(t);
+            const r = (s.icon ? 2.1 : 1.6) * Math.sin(Math.PI * Math.min(1, t / Math.max(0.01, s.beam)));
+            if (r > 0.2) { ctx.moveTo(px + r, py); ctx.arc(px, py, r, 0, TAU); }
+          }
+          ctx.fill();
+        }
         // hinaus: heller Lichtkopf vom Kern zum Satelliten
         if (s.beam < 1) this._beamHead(ctx, at, s.beam, `${col}`);
         // zurück: Ergebnis fließt grün (ok) bzw. rot (Fehler) zum Kern
         if (s.back !== null && s.back < 1) this._beamHead(ctx, at, 1 - s.back, s.err ? "255,93,108" : "77,255,184", true);
-        // Satellit
-        const size = 22 + 4 * Math.sin(this.t * 6 + s.a * 3);
+        // Satellit: Symbol (z. B. Terminal, Wolke) oder leuchtender Punkt
+        const size = (s.icon ? 30 : 22) + 4 * Math.sin(this.t * 6 + s.a * 3);
         ctx.drawImage(sprite, x - size, y - size, size * 2, size * 2);
-        ctx.fillStyle = s.err ? "rgba(255,93,108,0.95)" : "rgba(255,255,255,0.9)";
-        ctx.beginPath(); ctx.arc(x, y, 4, 0, TAU); ctx.fill();
+        const pad = s.icon ? this._drawIcon(ctx, s, x, y, col) : 8;
+        if (!s.icon) {
+          ctx.fillStyle = s.err ? "rgba(255,93,108,0.95)" : "rgba(255,255,255,0.9)";
+          ctx.beginPath(); ctx.arc(x, y, 4, 0, TAU); ctx.fill();
+        }
         // Beschriftung zentriert über (obere Hälfte) bzw. unter (untere Hälfte) dem Punkt, nie auf dem Kopf
         const label = this._label(s.label);
-        const ly = y + (sa < 0 ? -label.h - 8 : 8);
+        const ly = y + (sa < 0 ? -label.h - pad : pad);
         ctx.drawImage(label, x - label.w / 2, ly, label.w, label.h);
       }
       ctx.globalAlpha = 1;
+    }
+
+    /* Symbol zeichnen; liefert den Abstand für die Beschriftung. Blitzt beim Ergebnis grün bzw. rot auf. */
+    _drawIcon(ctx, s, x, y, col) {
+      const paths = iconPath(s.icon);
+      const scale = 21;
+      const flashCol = s.err ? "255,93,108" : "77,255,184";
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(scale, scale);
+      ctx.lineJoin = ctx.lineCap = "round";
+      ctx.fillStyle = "rgba(2,10,18,0.78)";  // dunkler Grund, damit das Symbol vor dem Netz lesbar bleibt
+      ctx.fill(paths.frame);
+      for (const [width, alpha] of [[5, 0.14], [1.6, 0.95]]) {
+        ctx.lineWidth = width / scale;
+        ctx.strokeStyle = s.flash > 0.05 ? `rgba(${flashCol},${alpha})` : `rgba(${col},${alpha})`;
+        ctx.stroke(paths.frame);
+        if (paths.cursor && Math.sin(this.t * 7) > -0.2) ctx.stroke(paths.cursor);  // blinkender Cursor
+      }
+      ctx.restore();
+      return scale + 10;
     }
 
     _beamHead(ctx, at, t, rgb, back = false) {

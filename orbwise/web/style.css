@@ -38,15 +38,6 @@ body {
   /* bewusst statisch: ein animiertes, maskiertes Vollbild-Gitter zwingt Firefox zu ständigem Neuzeichnen */
 }
 
-/* Dezente Scanline hinter den Panels – nur transform (läuft ohne Neuzeichnen, auch in Firefox) */
-.scanline {
-  position: fixed; left: 0; right: 0; top: 0; height: 120px; pointer-events: none; z-index: 0;
-  background: linear-gradient(180deg, transparent, rgba(63,208,255,.03) 60%, rgba(63,208,255,.06) 88%, transparent);
-  transform: translateY(-130px); will-change: transform;
-  animation: scan 9s cubic-bezier(.4, 0, .6, 1) infinite;
-}
-@keyframes scan { 0%, 35% { transform: translateY(-130px); } 100% { transform: translateY(100vh); } }
-
 button { font-family: inherit; cursor: pointer; }
 .hidden { display: none !important; }
 
@@ -553,7 +544,6 @@ button { font-family: inherit; cursor: pointer; }
 }
 @media (prefers-reduced-motion: reduce) {
   .bg-grid { animation: none; }
-  .scanline { display: none; }
   .panel.flash::before, .panel.flash::after, .msg.assistant .body { animation: none; }
 }
 /* Kontext-Kachel: „12.3k/15k“ muss in die schmale Kachel passen */

@@ -393,7 +393,8 @@ class Agent:
         if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED:
             risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
         args_str = json.dumps(args, ensure_ascii=False)
-        await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": reason})
+        await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": reason,
+                    "group": spec.group})
 
         if risk == BLOCKED:
             result = f"BLOCKIERT ({reason}). Dieser Befehl wird aus Sicherheitsgründen nie ausgeführt."
