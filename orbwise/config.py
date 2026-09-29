@@ -313,6 +313,21 @@ class MailConfig(BaseModel):
 BRIEFING_SECTIONS = ("weather", "calendar", "reminders", "mail", "paperless_inbox", "news", "updates", "storage")
 
 
+class TelegramConfig(BaseModel):
+    # Telegram-Bot (optional): vom Handy fragen, Erinnerungen aufs Handy, Rückfragen per Knopf.
+    # Token von @BotFather (oder $ORBWISE_TELEGRAM_TOKEN); chat_id nennt der Bot nach „/start“.
+    token: str = ""
+    chat_id: int = 0
+
+    @property
+    def secret(self) -> str:
+        return self.token or env("TELEGRAM_TOKEN")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.secret and self.chat_id)
+
+
 class BriefingConfig(BaseModel):
     # Punkte in dieser Reihenfolge (Datum/Uhrzeit steht immer am Anfang); nicht eingerichtete Dienste entfallen
     sections: list[str] = Field(default_factory=lambda: list(BRIEFING_SECTIONS))
@@ -358,6 +373,7 @@ class Config(BaseModel):
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     briefing: BriefingConfig = Field(default_factory=BriefingConfig)
     mail: MailConfig = Field(default_factory=MailConfig)
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     # Zusätzliche Websites für open_website: Name → URL; "{q}" wird durch die Suche ersetzt
     websites: dict[str, str] = Field(default_factory=dict)
 

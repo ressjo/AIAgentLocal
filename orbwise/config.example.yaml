@@ -108,6 +108,10 @@ mail:                      # e-mail via IMAP – Proton Mail through the local P
   # smtp_security: starttls
   # from_address: ""       # empty = username
 
+telegram:                  # optional: chat from the phone, reminders on the phone, confirm via buttons
+  token: ""                # from @BotFather (/newbot) – or $ORBWISE_TELEGRAM_TOKEN
+  chat_id: 0               # the bot tells you this after "/start"; only this chat is served
+
 weather:
   location: ""             # default place for weather and the morning briefing, e.g. "Berlin"
 

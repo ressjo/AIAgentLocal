@@ -221,6 +221,9 @@ def cmd_doctor(args) -> None:
         line(p.exists() and p.is_dir() and any(p.iterdir()), f"{p} " + T("gemountet", "mounted"), T("Mount prüfen", "check the mount"))
     from .memory.index import check_file
     line(check_file(cfg.memory.dir / "index.sqlite"), T("Gedächtnis-Suchindex", "Memory search index"), "orbwise reindex")
+    if cfg.telegram.secret:
+        line(bool(cfg.telegram.chat_id), "Telegram-Bot", T("dem Bot „/start“ schreiben und telegram.chat_id eintragen",
+                                                           "send the bot “/start” and set telegram.chat_id"))
 
 
 def cmd_reindex(args) -> None:

@@ -44,6 +44,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation) |
 | **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional sending with an edit-and-confirm dialog |
+| **Telegram** | Chat with Orbwise from your phone (text or voice messages), reminders arrive on the phone, confirmations via buttons |
 | **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
 | **Trilium** | Search and read notes, create notes in the inbox, append to notes |
 | **Calendar** | iCloud or any CalDAV server: list events, find free time, create/change/delete events |
@@ -443,6 +444,31 @@ dashboard is open; otherwise the action is declined and the routine says what wo
 
 Routines run while Orbwise is running (autostart). A run that was missed because the PC was off is caught up only
 if it is at most an hour late. The PLANNER tab also lists your reminders and holds the briefing settings.
+
+### Telegram (phone)
+
+Talk to Orbwise from your phone and get reminders there – "Remind me tomorrow at work to call the tax office".
+
+1. In Telegram open **@BotFather**, send `/newbot`, pick a name and copy the **token**.
+2. Put it into the config (or `$ORBWISE_TELEGRAM_TOKEN`) and restart Orbwise:
+   ```yaml
+   telegram:
+     token: "123456:ABC…"
+   ```
+3. Send your new bot `/start` – it replies with your **chat ID**. Add it and restart again:
+   ```yaml
+   telegram:
+     token: "123456:ABC…"
+     chat_id: 123456789
+   ```
+
+The bot only answers this one chat; anyone else just gets told their chat ID. It fetches messages itself (long
+polling), so no port has to be opened on your router – but the PC with Orbwise must be running. Questions from
+the phone run in their own chat **"📱 Telegram"** in HISTORY (your open chat in the dashboard stays untouched), and
+**voice messages** are transcribed with Whisper. **Every reminder** is also sent to the phone. Actions that need
+confirmation come with **✅ Run / ❌ Deny** buttons; sending e-mail is only possible in the dashboard (edit dialog).
+Tip: tell Orbwise once when you start work ("I start work at 8") – it remembers that for "at work" reminders.
+Messages pass through Telegram's servers (not end-to-end encrypted), so keep that in mind for sensitive content.
 
 ### Morning briefing
 

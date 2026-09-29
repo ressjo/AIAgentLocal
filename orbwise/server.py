@@ -294,6 +294,8 @@ def create_app(cfg: Config) -> FastAPI:
         background.append(asyncio.create_task(metrics_loop()))
         background.append(asyncio.create_task(reminder_loop()))
         background.append(asyncio.create_task(routine_loop()))
+        if telegram_bot is not None:
+            background.append(asyncio.create_task(telegram_bot.serve()))
         if stt and env("SKIP_WARMUP") != "1":
             background.append(asyncio.create_task(asyncio.to_thread(stt.warmup)))
         yield
@@ -326,6 +328,39 @@ def create_app(cfg: Config) -> FastAPI:
             llm.switching = None
             await idle_if_free()  # wer sich während des Ladens verbunden hat, sah „denke nach“
 
+    # ---------- Telegram ----------
+    telegram_bot = None
+    if cfg.telegram.secret:
+        from .telegram import CHAT_TITLE, TelegramBot, chat_state_file, transcribe_voice
+        tg_state = chat_state_file(cfg)
+
+        async def run_telegram(text: str, emit, confirm) -> str:
+            """Anfrage vom Handy: eigener Chat „📱 Telegram“ – der offene Chat im Dashboard bleibt unberührt."""
+            try:
+                chat_id = json.loads(tg_state.read_text(encoding="utf-8")).get("chat_id", "")
+            except (OSError, ValueError):
+                chat_id = ""
+
+            async def emit_all(ev: dict) -> None:
+                await emit(ev)
+                if ev.get("type") in ("tool_call", "tool_result", "tool_output", "state"):
+                    await hub.broadcast({**ev, "routine": "Telegram"})  # Aktivität/Orb im Dashboard
+
+            answer, chat_id = await agent.run_in_chat(chat_id, CHAT_TITLE, text, emit_all, confirm)
+            tg_state.parent.mkdir(parents=True, exist_ok=True)
+            tg_state.write_text(json.dumps({"chat_id": chat_id}), encoding="utf-8")
+            await hub.broadcast({"type": "chats_changed"})
+            await idle_if_free()
+            return answer
+
+        def tool_editable(name: str) -> bool:
+            spec = get_tool(name)
+            return bool(spec and spec.editable)
+
+        telegram_bot = TelegramBot(
+            cfg, run_telegram, lambda name, args: describe_call(name, args, cfg), tool_editable,
+            transcribe=(lambda data: transcribe_voice(stt, data)) if stt else None)
+
     async def fire_reminder(r, now) -> None:
         late = (now - r.due_dt).total_seconds() > 120
         kind = prompts.spoken(cfg, "kind_timer" if r.kind == "timer" else "kind_reminder")
@@ -340,6 +375,8 @@ def create_app(cfg: Config) -> FastAPI:
             hub.speaker.say(spoken)
         else:
             hub.undelivered.append(event)
+        if telegram_bot is not None:  # immer zusätzlich aufs Handy
+            await telegram_bot.notify(("⏰ " if r.kind != "timer" else "⏱ ") + spoken)
         if shutil.which("notify-send"):
             await proc.launch(["notify-send", "--app-name=Orbwise", "--urgency=critical",
                                f"Orbwise – {kind}", r.text], wait=1)
@@ -444,6 +481,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     app = FastAPI(title="Orbwise", lifespan=lifespan)
     app.state.hub = hub
+    app.state.telegram = telegram_bot
     app.state.memory = memory
 
     @app.middleware("http")
