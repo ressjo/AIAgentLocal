@@ -231,6 +231,7 @@ def hints(cfg) -> str:
 SPOKEN = {
     "de": {
         "confirm": "Soll ich {what} ausführen?",
+        "confirm_shell": "Möchtest du folgenden Befehl ausführen?",
         "yes_no": "Bitte mit Ja oder Nein antworten.",
         "password": "Dafür brauche ich dein Passwort. Bitte gib es im Dashboard ein.",
         "reminder": "Erinnerung: {text}",
@@ -248,6 +249,7 @@ SPOKEN = {
     },
     "en": {
         "confirm": "Shall I run {what}?",
+        "confirm_shell": "Do you want to run the following command?",
         "yes_no": "Please answer yes or no.",
         "password": "I need your password for that. Please enter it in the dashboard.",
         "reminder": "Reminder: {text}",

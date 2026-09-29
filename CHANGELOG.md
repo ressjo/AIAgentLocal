@@ -23,6 +23,8 @@ First public release.
 ### Voice
 - Wake word "Hey Jarvis" (openWakeWord), push-to-talk, faster-whisper speech recognition.
 - Piper text-to-speech with installable German and English voices and an optional "Jarvis" voice effect.
+- Commands are not read aloud: a confirmation only asks "Do you want to run the following command?" (the command is
+  shown in the dialog), and command-like inline code in answers is skipped when speaking.
 
 ### Memory
 - Persistent memory as readable Markdown files (daily journal, daily summaries, facts) plus a hybrid

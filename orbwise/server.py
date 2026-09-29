@@ -59,6 +59,15 @@ CALL_TEXTS = {"run_shell": ("call_shell", "command"), "install_package": ("call_
               "trilium_update_note": ("call_trilium", "note"), "write_file": ("call_write", "path")}
 
 
+def spoken_confirm(name: str, args: dict, cfg=None) -> str:
+    """Gesprochene Rückfrage: Befehle werden nicht vorgelesen (sie stehen im Dialog), Pfade nur als Dateiname."""
+    if name == "run_shell":
+        return prompts.spoken(cfg, "confirm_shell")
+    if name == "write_file" and args.get("path"):
+        args = {**args, "path": Path(str(args["path"])).name}
+    return prompts.spoken(cfg, "confirm", what=describe_call(name, args, cfg))
+
+
 def describe_call(name: str, args: dict, cfg=None) -> str:
     key, field = CALL_TEXTS.get(name, ("call_other", ""))
     value = str(args.get(field, "")) if field else name
@@ -117,7 +126,7 @@ class Hub:
         self.pending[call_id] = fut
         await self.broadcast({"type": "confirm_request", "id": call_id, "name": name, "args": args,
                               "reason": reason, "summary": describe_call(name, args, self.cfg)})
-        self.speaker.say(prompts.spoken(self.cfg, "confirm", what=describe_call(name, args, self.cfg)))
+        self.speaker.say(spoken_confirm(name, args, self.cfg))
         try:
             return await asyncio.wait_for(fut, timeout=180)
         except asyncio.TimeoutError:

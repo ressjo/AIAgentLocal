@@ -17,14 +17,26 @@ from ..config import VoiceConfig
 log = logging.getLogger(__name__)
 
 
+# Inline-Code, der wie ein Befehl oder Pfad aussieht, wird nicht vorgelesen (steht ja im Chat)
+_COMMANDISH = re.compile(r"[\s/|$=~]|--")
+
+
+def _inline_code(m: re.Match) -> str:
+    code = m.group(1)
+    return " " if _COMMANDISH.search(code) or len(code) > 30 else code
+
+
 def clean_for_speech(text: str) -> str:
     text = re.sub(r"```.*?```", " ", text, flags=re.S)
     text = re.sub(r"https?://\S+", "Link", text)
-    text = re.sub(r"`([^`]*)`", r"\1", text)
+    text = re.sub(r"`([^`]*)`", _inline_code, text)
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
     text = re.sub(r"[*_#>|]+", " ", text)
     text = re.sub(r"^\s*[-•]\s+", "", text, flags=re.M)
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+([.,!?;:])", r"\1", text)  # „führe aus .“ → „führe aus.“
+    text = re.sub(r":\s*([.!?])", r"\1", text)  # „Befehl: .“ → „Befehl.“
+    return re.sub(r"^[\s:.,;]+$", "", text)
 
 
 class SentenceSplitter:
@@ -52,6 +64,8 @@ class SentenceSplitter:
             scan = self.buf if start < 0 else self.buf[:start]
             cut = None
             for m in self.BOUNDARY.finditer(scan):
+                if scan.count("`", 0, m.start()) % 2 and "\n" not in m.group(0):
+                    continue  # nicht mitten in `Inline-Code` trennen (z. B. `a; b`)
                 if m.start() >= self.MIN_CHARS or "\n" in m.group(0):
                     cut = m
                     break
