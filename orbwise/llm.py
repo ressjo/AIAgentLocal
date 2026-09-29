@@ -381,7 +381,8 @@ class FakeLLM:
     """Deterministisches Ersatz-LLM (ORBWISE_FAKE_LLM=1) für Tests und UI-Demo ohne Ollama.
 
     - "/tool <name> <json-args>" erzeugt einen Tool-Call
-    - "systemupdate" löst system_update aus, "welche dateien ..." find_files
+    - "systemupdate"/"update my system" löst system_update aus, "welche dateien ..." find_files,
+      "search the web for …"/"such im web nach …" web_search (für Demo-Screenshots)
     - nach einem Tool-Ergebnis wird dieses kurz zusammengefasst
     """
 
@@ -406,8 +407,13 @@ class FakeLLM:
             return {"role": "assistant", "content": "",
                     "tool_calls": [{"function": {"name": parts[1], "arguments": args}}]}
         low = text.lower()
-        if "systemupdate" in low:
-            return {"role": "assistant", "content": "Ich starte das Systemupdate.",
+        web = re.match(r"(search the web for|such im web nach)\s+(.+)", low)
+        if web:
+            return {"role": "assistant", "content": "",
+                    "tool_calls": [{"function": {"name": "web_search", "arguments": {"query": web.group(2)}}}]}
+        if "systemupdate" in low or "update my system" in low:
+            return {"role": "assistant", "content": "I'll start the system update." if self.en
+                    else "Ich starte das Systemupdate.",
                     "tool_calls": [{"function": {"name": "system_update", "arguments": {}}}]}
         if low.startswith("welche dateien"):
             return {"role": "assistant", "content": "",

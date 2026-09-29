@@ -1,10 +1,12 @@
 # Orbwise configuration – copy to ~/.config/orbwise/config.yaml (or run: orbwise init-config)
-# Every value is optional; anything not set uses the built-in default.
+# Every value is optional; anything not set uses the built-in default. Commented lines (# key: value) show the
+# default – remove the "#" to change them. Passwords and tokens stay empty here: enter your own, or use the
+# environment variables named next to them (ORBWISE_…), which keeps secrets out of this file.
 
 language: de             # de (Deutsch) | en (English) – assistant, speech recognition, voice and UI
 host: 127.0.0.1          # keep it local only – Orbwise can run commands on your machine!
 port: 8765
-# allow_remote: false     # only with true Orbwise starts on another address – the dashboard has no login!
+# allow_remote: false    # only with true Orbwise starts on another address – the dashboard has no login!
 assistant_name: Jarvis
 user_name: ""            # how Jarvis should address you, e.g. "Alex"
 persona_extra: ""        # extra personality instructions, e.g. "Call me 'boss'."
@@ -17,6 +19,8 @@ llm:
   temperature: 0.6
   num_ctx: 16384         # the model's context window
   think: false           # Qwen3 "thinking" by default (slower); the THINK button toggles it per request
+  # keep_alive: 30m        # how long Ollama keeps the model in (V)RAM after the last request
+  # request_timeout: 300   # seconds until a model request is given up
 
   # Optional: several model profiles. Switch by clicking the LLM pill or with `orbwise model <name>`.
   # Without profiles there is a single profile "standard" built from the values above.
@@ -30,23 +34,28 @@ llm:
   #     backend: openai                # any OpenAI-compatible server (llama-server, vLLM, LM Studio …)
   #     base_url: http://127.0.0.1:8080/v1
   #     model: bonsai
-  #     api_key: "a-long-random-password"   # same value as --api-key below
+  #     api_key: "<random-password>"   # make up a long random password – the same value as --api-key below
   #     num_ctx: 16384                 # optional – Orbwise reads the real size from the server
   #     embed_on_cpu: true             # run memory embeddings on the CPU (VRAM is scarce)
   #     unload_ollama: true            # unload Ollama models from VRAM first
+  #     # temperature: 0.6 · think: false – also per profile; empty = the values of the llm block
   #     server:                        # Orbwise starts/stops the server itself
-  #       command: ~/bonsai/scripts/start_llama_server.sh -np 1 --api-key a-long-random-password
+  #       command: ~/bonsai/scripts/start_llama_server.sh -np 1 --api-key <random-password>
   #       env:
   #         HSA_OVERRIDE_GFX_VERSION: "10.3.0"   # RX 6600/6650/6700 (gfx103x) → report as gfx1030
   #         BONSAI_CTX: "16384"          # context window; fall back to 8192 if the server runs out of VRAM
   #         BONSAI_KV4: "1"
   #         BONSAI_MMPROJ_CPU: "1"
   #       startup_timeout: 240
+  #       # cwd: ~/bonsai            # working directory for the command
+  #       # health_url: ""           # default: <base_url without /v1>/health
 
 memory:
   dir: ~/.local/share/orbwise/memory
   # context_budget_tokens: 11000  # only to cap the prompt – default: automatic from the model's context window
   retrieval_top_k: 6
+  # retrieval_max_tokens: 1500   # max. size of the recalled memory snippets per request
+  # facts_max_tokens: 1200       # max. size of the permanent facts (profile) in the prompt
   summarize_idle_minutes: 15
 
 voice:
@@ -56,9 +65,13 @@ voice:
   stt_device: cpu          # cuda on NVIDIA (faster-whisper); AMD GPUs: stay on cpu
   stt_compute_type: int8   # int8 on CPU, float16 on CUDA
   # tts_voice: ~/.local/share/orbwise/voices/de_DE-thorsten-high.onnx   # default depends on "language"
+                           # (easier: pick, download or upload voices in the VOICE menu of the dashboard)
+  # tts_length_scale: 0.95 # speaking rate: < 1 faster, > 1 slower
   wakeword_model: hey_jarvis
   wakeword_threshold: 0.5
   silence_ms: 900          # this much silence ends a recording
+  # max_record_seconds: 20 # a recording ends after this long at the latest
+  # no_speech_timeout_seconds: 5   # stop listening if nothing is said after the wake word
 
 tools:
   search_paths:
@@ -68,6 +81,8 @@ tools:
   package_manager: auto    # auto | pacman (Arch, Manjaro, EndeavourOS) | apt (Debian, Ubuntu, Mint)
   aur_helper: auto         # auto | yay | paru | none (Arch only)
   shell_timeout: 120
+  # update_timeout: 3600   # seconds for a full system update
+  # max_output_chars: 6000 # command output passed to the model is cut to this length
   max_steps: 25            # max. model steps (tool rounds) per request; then a summary + "continue"
   disabled: []             # switch off tools or whole groups, e.g. [sysadmin, open_ports] – saves context
   brave_api_key: ""        # Brave Search API key (api-dashboard.search.brave.com) – official API, no bot blocking
@@ -79,20 +94,26 @@ trilium:                   # Trilium / TriliumNext notes
   url: ""                  # e.g. http://localhost:8080 – leave empty to disable
   token: ""                # Trilium → Options → ETAPI → create token (or $ORBWISE_TRILIUM_TOKEN)
   verify_ssl: true         # HTTPS with a self-signed certificate: false (or the path to your CA file)
+  # timeout: 20
+  # max_chars: 8000        # longest note text passed to the model
 
 obsidian:                  # Obsidian notes – works directly on the vault folder, no plugin needed
   vault: ""                # e.g. ~/Obsidian/Notes – leave empty to disable
   inbox: Inbox             # folder inside the vault for new notes
+  # max_chars: 8000        # longest note text passed to the model
 
 paperless:                 # Paperless-ngx: search, ask and open documents (read-only)
   url: ""                  # e.g. http://nas.local:8000 – leave empty to disable
   token: ""                # Paperless → profile (top right) → API auth token (or $ORBWISE_PAPERLESS_TOKEN)
   verify_ssl: true
+  # timeout: 30
+  # max_chars: 5000        # longest document text passed to the model
 
 homeassistant:             # Home Assistant: lights, switches, heating, covers, scenes, sensors
   url: ""                  # e.g. http://homeassistant.local:8123 – leave empty to disable
   token: ""                # profile → Security → Long-lived access tokens (or $ORBWISE_HA_TOKEN)
   verify_ssl: true
+  # timeout: 15
 
 mail:                      # e-mail via IMAP – Proton Mail through the local Proton Mail Bridge (paid plan)
   host: 127.0.0.1          # Bridge defaults; any other IMAP server works too (then e.g. port 993, security: ssl)
@@ -101,6 +122,8 @@ mail:                      # e-mail via IMAP – Proton Mail through the local P
   username: ""             # e.g. you@proton.me – leave empty to disable
   password: ""             # Proton: the BRIDGE password shown in the Bridge app (or $ORBWISE_MAIL_PASSWORD)
   # verify_ssl: false      # default: not checked on localhost (Bridge certificate), checked everywhere else
+  # timeout: 30
+  # max_chars: 6000        # longest mail text passed to the model
   archive_folder: Archive
   trash_folder: Trash
   send_enabled: false      # true = Orbwise may draft and send mails – always via a dialog to edit To/Subject/Text
@@ -137,3 +160,4 @@ calendar:                  # iCloud calendar (or any other CalDAV server: Nextcl
                            # or use the environment variable ORBWISE_CALENDAR_PASSWORD instead
   calendars: []            # which calendars to read (empty = all)
   default_calendar: ""     # where new events go (empty = the first one)
+  # timeout: 20

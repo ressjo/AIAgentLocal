@@ -68,6 +68,9 @@ First public release.
   password stores, browser logins, cloud credentials and Orbwise's own config (also through symlinks); shell
   commands that read such files, `printenv`/`env`, token variables or Wi-Fi passwords (`nmcli -s`) need confirmation.
 - Orbwise refuses to listen on a non-local address unless `allow_remote: true` is set (the dashboard has no login).
+- Confirmation reasons are shown in English when `language: en`.
+- README: notice that Orbwise was built with AI help, extended disclaimer, complete feature list, new screenshots
+  (`scripts/screenshots.mjs` regenerates them); `config.example.yaml` now lists every option (secrets left empty).
 - **E-mail** via IMAP – **Proton Mail through the Proton Mail Bridge** or any other mailbox: list unread mails,
   search, read (without marking as read), ask about a mail, archive/move/label/trash and PDF attachments to
   Paperless after confirmation, unread mails in the briefing. Mail content is passed to the model as untrusted

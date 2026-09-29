@@ -9,8 +9,11 @@ German and English are supported (`language: de|en`). Out of the box the assista
 **"Jarvis"** and listens for "Hey Jarvis" – that is just its default persona; give it any name with
 `assistant_name` in the config.
 
-![Orbwise web interface](docs/screenshot.png)
-<sub>Screenshot in demo mode (`ORBWISE_FAKE_LLM=1`, no real model attached).</sub>
+![Orbwise web interface: the orb sends a web search to its cloud symbol](docs/screenshot.png)
+
+![Confirmation dialog before a system update](docs/screenshot-confirm.png)
+<sub>Screenshots in demo mode (`ORBWISE_FAKE_LLM=1`, no real model attached) – regenerate them with
+`node scripts/screenshots.mjs`.</sub>
 
 ```
 Browser (localhost:8765)                          Python backend (FastAPI, 127.0.0.1 only)
@@ -26,14 +29,18 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 > is not affiliated with or endorsed by Marvel or Disney and does not ship the film voice or any other copyrighted
 > material.
 >
-> ⚠ Orbwise can run commands on your computer (with root, if you allow it). Use it at your own risk – see the
-> [Disclaimer](#disclaimer).
+> ⚠ Orbwise can run commands on your computer (with root, if you allow it). Use it at your own risk, **without any
+> warranty or liability** – see the **[Disclaimer](#disclaimer)**.
+>
+> 🤖 **Built with AI.** Most of Orbwise's code, tests and documentation were written with an AI coding assistant
+> (Claude Code) and reviewed, tested and used by a human. It may still contain mistakes – please read what you
+> approve, and report bugs or send fixes via issues and pull requests.
 
 ## Features
 
 | Area | What Orbwise can do |
 |---|---|
-| **Voice** | "Hey Jarvis" wake word, microphone button or **hold the space bar** (push-to-talk). Answers are spoken sentence by sentence while the model is still writing; interrupt at any time. |
+| **Voice** | "Hey Jarvis" wake word, microphone button or **hold the space bar** (push-to-talk). Answers are spoken sentence by sentence while the model is still writing; interrupt at any time. Commands are not read out – only "Shall I run the following command?" |
 | **System** | Full system update (Arch: `pacman -Syu` + AUR via yay/paru, Debian/Ubuntu: `apt`), list/search/install/remove packages, system info, shutdown/reboot/suspend/lock |
 | **System & network** | Top processes and killing them, systemd services (status, start/stop/restart, logs), IP/gateway/DNS/Wi-Fi, ping, open ports, port checks, disk usage and clean-up |
 | **Files** | Find files by name (plocate/fd) or content (ripgrep), list folders, read/write text files, open files and URLs – also on a mounted **NAS** |
@@ -42,13 +49,16 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Everyday** | Weather (Open-Meteo), reminders and timers, a **morning briefing** with the items you choose (incl. news and your Paperless inbox) |
 | **Routines** | Tasks Orbwise does on its own at set times – "every weekday at 8, search Linux news" – each with its own chat |
 | **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
-| **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation) |
-| **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional sending with an edit-and-confirm dialog |
-| **Telegram** | Chat with Orbwise from your phone (text or voice messages), reminders arrive on the phone, confirmations via buttons |
+| **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation), upload local files or files sent from the phone |
+| **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, list folders, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional **writing and replying** (SMTP) – To, Cc, subject and text are editable in a dialog before anything is sent |
+| **Telegram** | Chat with Orbwise from your phone (text or voice messages, own chat in HISTORY), reminders also arrive on the phone, confirmations via ✅/❌ buttons, **files in both directions** (PDFs/photos → PC or Paperless, local files and Paperless documents → phone), `/stop` cancels what is running |
 | **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
-| **Trilium** | Search and read notes, create notes in the inbox, append to notes |
+| **Trilium** | Search and read notes, create notes in the inbox, append to and update notes |
 | **Calendar** | iCloud or any CalDAV server: list events, find free time, create/change/delete events |
-| **Memory** | Remembers everything permanently (see below), `remember` / `recall` / `forget`, **chat history** |
+| **Memory** | Remembers everything permanently (see below), `remember` / `recall` / `forget`, **chat history** with search, favourites, rename and delete; the search index repairs itself if it gets damaged |
+| **Dashboard** | Animated neural-network orb: thinking pulse, **tool symbols** next to the orb (CLI, cloud for the web, mail, Paperless) with a beam of dots flowing to them, golden neurons when memory is used, a **context ring** showing how full the model's context is; live chat, ACTIVITY (tool output), HISTORY, MEMORY and PLANNER (routines, reminders, briefing) tabs; live telemetry (tokens/s, context, GPU, VRAM, RAM, power) |
+| **Models & voices** | **LLM menu:** switch model profiles, download models with progress, cancel downloads, delete models · **VOICE menu:** choose, download (whole Piper catalogue), upload your own (`.onnx` + `.json`) and delete voices, "Jarvis" voice effect · **THINK** button for reasoning models |
+| **Safety** | Confirmation for everything that changes the system, blocklist for destructive commands, root only via a one-time password prompt, keys and passwords are never read or sent, local-only server – see [Security](#security) |
 
 ## Requirements
 
@@ -122,8 +132,8 @@ from now on. Your assistant keeps its name "Jarvis".
 - **Hold the microphone button / space bar** → speak → release. Tap once to listen until silence.
 - **SOUND** toggles speech output, **STOP** (or `Esc`) cancels the current task,
   **THINK** lets the model reason before answering (see [Thinking mode](#thinking-mode)).
-- Side panel: **ACTIVITY** (live tool output), **HISTORY** (chats), **MEMORY** (reminders, facts, journal),
-  **VOICE** (voices and the Jarvis effect).
+- Side panel: **ACTIVITY** (live tool output), **HISTORY** (chats), **MEMORY** (facts, journal),
+  **PLANNER** (routines, reminders, morning briefing). Top bar: **LLM** (models) and **VOICE** (voices, Jarvis effect).
 
 Examples:
 
@@ -526,7 +536,10 @@ Orbwise can run commands on your system, so:
 - **Blocklist:** `rm -rf /`, formatting or overwriting disks, fork bombs, `chmod -R … /` and similar are never run –
   not even after confirmation.
 - **Local only:** the server listens on `127.0.0.1` and checks the `Host` header and `Origin` – other websites
-  cannot send commands.
+  cannot send commands. Another address needs `allow_remote: true` (the dashboard has no login).
+- **Secrets:** files with keys and passwords (`~/.ssh`, `~/.gnupg`, password stores, browser logins, cloud
+  credentials, Orbwise's own config, …) are never read by the file tools or sent to the phone – symlinks included;
+  shell commands that print them, environment variables or Wi-Fi passwords need confirmation.
 - **Root privileges** (`privilege_cmd: dashboard`, default): after your confirmation a **password field** appears
   in the dashboard. It works through `sudo -A` with a small helper that uses a one-time token for exactly that
   command; the password goes straight to sudo and is never stored, logged or shown to the model. Alternatives:
@@ -550,8 +563,9 @@ See [SECURITY.md](SECURITY.md) for details and how to report vulnerabilities.
 
 ## Configuration
 
-All options with explanations: [`orbwise/config.example.yaml`](orbwise/config.example.yaml)
-(active file: `~/.config/orbwise/config.yaml`). The most important ones:
+**Every** option with its default and an explanation – all integrations included, passwords left empty – is in
+[`orbwise/config.example.yaml`](orbwise/config.example.yaml); `orbwise init-config` copies it to
+`~/.config/orbwise/config.yaml`. The most important ones:
 
 | Option | Meaning |
 |---|---|
@@ -567,6 +581,13 @@ All options with explanations: [`orbwise/config.example.yaml`](orbwise/config.ex
 | `tools.max_steps` | Max. tool rounds per request (default 25), then Orbwise summarises and offers to continue |
 | `tools.disabled` | Tools or groups to switch off, e.g. `[sysadmin, open_ports]` |
 | `user_name`, `persona_extra` | How the assistant addresses you and extra personality instructions (its name: `assistant_name`) |
+| `host`, `allow_remote` | Keep `127.0.0.1`; other addresses only with `allow_remote: true` |
+| `mail.send_enabled` | Let Orbwise write and send mails (always through the edit-and-confirm dialog) |
+| `telegram.token`, `telegram.chat_id` | Telegram bot, see [Telegram](#telegram-phone) |
+
+Passwords and tokens can also come from environment variables (`ORBWISE_MAIL_PASSWORD`, `ORBWISE_TELEGRAM_TOKEN`,
+`ORBWISE_PAPERLESS_TOKEN`, `ORBWISE_HA_TOKEN`, `ORBWISE_TRILIUM_TOKEN`, `ORBWISE_CALENDAR_PASSWORD`,
+`ORBWISE_BRAVE_API_KEY`) – then they don't have to be written into the config file at all.
 
 ## Commands
 
@@ -623,10 +644,18 @@ for confirmation before changing anything, but that only protects you if you rea
 - Read every confirmation dialog before clicking **Allow**.
 - Keep backups, and do not run Orbwise on production systems or computers that are not yours.
 - Keep `host: 127.0.0.1` – never expose Orbwise to a network or the internet (see [SECURITY.md](SECURITY.md)).
+- If you use the Telegram bot, your Telegram account can control this PC: enable two-step verification.
+- Sending mails, changing documents in Paperless or devices in Home Assistant acts in your name – check the dialog.
 - Check answers that matter (health, money, legal, security) against reliable sources.
 
-You use Orbwise at your own risk; the authors are not liable for any damage, data loss or costs resulting from
-its use, to the extent permitted by applicable law.
+**AI-generated code.** Large parts of Orbwise were written with the help of an AI coding assistant. The code is
+tested and reviewed, but there is no guarantee that it is correct, complete or secure. Check it yourself before
+relying on it.
+
+You use Orbwise at your own risk; the authors are not liable for any damage, data loss, costs or other
+consequences resulting from its use – including actions carried out through connected services (Telegram,
+e-mail, Paperless, Home Assistant, calendars) – to the extent permitted by applicable law. Orbwise is not
+affiliated with any of these services.
 
 ## Third-party components & licenses
 

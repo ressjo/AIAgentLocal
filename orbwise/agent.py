@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import prompts, toolselect
 from .config import Config
+from .lang import reason_en
 from .llm import ContextOverflow, LLMError, strip_think
 from .memory import Memory, est_tokens
 from .memory.context import TRIM_NOTE, msg_tokens
@@ -393,7 +394,8 @@ class Agent:
         if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED:
             risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
         args_str = json.dumps(args, ensure_ascii=False)
-        await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": reason,
+        shown = reason_en(reason) if self.cfg.language == "en" else reason  # für Oberfläche und Rückfrage
+        await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": shown,
                     "group": spec.group})
 
         if risk == BLOCKED:
@@ -403,7 +405,7 @@ class Agent:
         edited: list[str] = []
         if risk == CONFIRM:
             await emit({"type": "state", "state": "confirm"})
-            decision = await confirm(call_id, name, args, reason)
+            decision = await confirm(call_id, name, args, shown)
             changes = {}
             if isinstance(decision, tuple):  # (bestätigt, im Fenster bearbeitete Felder)
                 decision, changes = decision[0], decision[1] or {}

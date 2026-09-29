@@ -54,3 +54,13 @@ def test_served_page_uses_language(cfg, monkeypatch):
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         r = client.get("/")
         assert '<html lang="en">' in r.text and "COMMUNICATION" in r.text
+
+
+def test_confirmation_reasons_are_translated():
+    from orbwise.lang import reason_en
+    from orbwise.tools.safety import classify_command
+
+    assert reason_en(classify_command("sudo pacman -Syu")[1]) == "needs root privileges"
+    assert reason_en("'kill' kann das System verändern; schreibt in eine Datei") == \
+        "'kill' can change the system; writes to a file"
+    assert reason_en("etwas Unbekanntes") == "etwas Unbekanntes"
