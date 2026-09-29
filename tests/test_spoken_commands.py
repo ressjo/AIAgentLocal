@@ -36,7 +36,7 @@ def test_confirmation_asks_without_reading_the_command(cfg):
 def test_hub_speaks_question_but_dialog_shows_command(cfg):
     said, sent = [], []
     hub = Hub.__new__(Hub)
-    hub.cfg, hub.pending = cfg, {}
+    hub.cfg, hub.pending, hub.editable_pending = cfg, {}, set()
 
     class Speaker:
         def say(self, text, *a):

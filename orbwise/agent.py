@@ -400,12 +400,24 @@ class Agent:
             result = f"BLOCKIERT ({reason}). Dieser Befehl wird aus Sicherheitsgründen nie ausgeführt."
             await emit({"type": "tool_result", "id": call_id, "status": "blocked", "text": result})
             return name, result, f"{name} {args_str} → blockiert ({reason})"
+        edited: list[str] = []
         if risk == CONFIRM:
             await emit({"type": "state", "state": "confirm"})
-            if not await confirm(call_id, name, args, reason):
+            decision = await confirm(call_id, name, args, reason)
+            changes = {}
+            if isinstance(decision, tuple):  # (bestätigt, im Fenster bearbeitete Felder)
+                decision, changes = decision[0], decision[1] or {}
+            if not decision:
                 result = "Der Nutzer hat die Ausführung abgelehnt."
                 await emit({"type": "tool_result", "id": call_id, "status": "denied", "text": result})
                 return name, result, f"{name} {args_str} → abgelehnt"
+            # nur die freigegebenen Felder übernehmen (z. B. An/Betreff/Text einer Mail)
+            for key in spec.editable:
+                if key in changes and str(changes[key]) != str(args.get(key, "")):
+                    args[key] = str(changes[key])[:50_000]
+                    edited.append(key)
+            if edited:
+                args_str = json.dumps(args, ensure_ascii=False)
 
         await emit({"type": "state", "state": "executing", "tool": name})
         try:
@@ -419,6 +431,9 @@ class Agent:
         except Exception as e:  # noqa: BLE001
             log.exception("Tool %s fehlgeschlagen", name)
             result, status = f"Fehler: {e}", "error"
+        if edited:  # das Modell soll wissen, was tatsächlich ausgeführt wurde
+            result += "\n(Vom Nutzer vor dem Ausführen geändert: " + ", ".join(edited) + " – " + \
+                json.dumps({k: args[k] for k in edited}, ensure_ascii=False)[:1500] + ")"
         await emit({"type": "tool_result", "id": call_id, "status": status, "text": clip(result, 3000)})
         first = result.strip().splitlines()[0] if result.strip() else ""
         return name, result, f"{name} {args_str} → {first[:160]}"

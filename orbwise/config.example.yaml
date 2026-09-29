@@ -102,6 +102,11 @@ mail:                      # e-mail via IMAP – Proton Mail through the local P
   # verify_ssl: false      # default: not checked on localhost (Bridge certificate), checked everywhere else
   archive_folder: Archive
   trash_folder: Trash
+  send_enabled: false      # true = Orbwise may draft and send mails – always via a dialog to edit To/Subject/Text
+  # smtp_host: ""          # empty = same as host; Proton Mail Bridge: SMTP 127.0.0.1:1025 with STARTTLS
+  # smtp_port: 1025
+  # smtp_security: starttls
+  # from_address: ""       # empty = username
 
 weather:
   location: ""             # default place for weather and the morning briefing, e.g. "Berlin"

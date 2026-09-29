@@ -158,7 +158,8 @@
 
   function onSpeechDrained() {
     // Nach der gesprochenen Rückfrage automatisch auf „Ja/Nein“ hören
-    if (S.confirm && !S.confirmListenSent && A.micReady && (S.wake || S.voiceUsed)) {
+    // nicht bei bearbeitbaren Fenstern (Mail): dort wird per Klick gesendet
+    if (S.confirm && !(S.confirm.editable || []).length && !S.confirmListenSent && A.micReady && (S.wake || S.voiceUsed)) {
       S.confirmListenSent = true;
       startListen();
     }
@@ -712,20 +713,56 @@
   }
 
   // ---------------------------------------------------------------- Bestätigung
+  // Felder, die der Nutzer vor dem Bestätigen noch ändern darf (z. B. mail_send)
+  const EDIT_FIELDS = {
+    to: [L("AN", "TO"), "input"], cc: [L("CC", "CC"), "input"],
+    subject: [L("BETREFF", "SUBJECT"), "input"], body: [L("TEXT", "TEXT"), "textarea"],
+  };
+  const APPROVE_HTML = $("confirm-yes").innerHTML;
+
   function openConfirm(ev) {
     S.confirm = ev;
     S.confirmListenSent = false;
-    $("confirm-summary").textContent = L(`Soll ich ${ev.summary} ausführen?`, `Shall I run ${ev.summary}?`);
+    const editable = (ev.editable || []).filter((k) => EDIT_FIELDS[k]);
+    const form = $("confirm-form");
+    form.innerHTML = "";
+    for (const key of editable) {
+      const [label, kind] = EDIT_FIELDS[key];
+      const row = document.createElement("label");
+      row.innerHTML = `<span>${label}</span>`;
+      const field = document.createElement(kind);
+      if (kind === "input") field.type = "text";
+      field.dataset.key = key;
+      field.value = ev.args[key] ?? "";
+      field.spellcheck = key === "body" || key === "subject";
+      row.appendChild(field);
+      form.appendChild(row);
+    }
+    form.classList.toggle("hidden", !editable.length);
+    $("confirm-cmd").classList.toggle("hidden", !!editable.length);
+    document.querySelector(".confirm-modal").classList.toggle("editing", !!editable.length);
+    $("confirm-yes").innerHTML = editable.length && ev.name === "mail_send"
+      ? `${L("SENDEN", "SEND")} <kbd>Strg+Enter</kbd>` : editable.length ? `${L("AUSFÜHREN", "RUN")} <kbd>Strg+Enter</kbd>` : APPROVE_HTML;
+    $("confirm-summary").textContent = ev.name === "mail_send"
+      ? L("Mail prüfen, bei Bedarf ändern und senden:", "Check the e-mail, edit it if needed and send it:")
+      : L(`Soll ich ${ev.summary} ausführen?`, `Shall I run ${ev.summary}?`);
     $("confirm-cmd").textContent = ev.name === "run_shell" ? ev.args.command : `${ev.name}(${JSON.stringify(ev.args, null, 2)})`;
-    $("confirm-reason").textContent = ev.reason ? L("Grund: ", "Reason: ") + ev.reason : "";
-    $("confirm-voice").textContent = A.micReady ? L("oder sag „Ja“ bzw. „Nein“", "or say “yes” or “no”") : "";
+    $("confirm-reason").textContent = ev.reason && !editable.length ? L("Grund: ", "Reason: ") + ev.reason : "";
+    $("confirm-voice").textContent = editable.length ? L("Senden nur per Klick – „Nein“ bricht ab.", "Send only by click – “no” cancels.")
+      : A.micReady ? L("oder sag „Ja“ bzw. „Nein“", "or say “yes” or “no”") : "";
     $("confirm-voice").classList.remove("listening");
     $("confirm").classList.remove("hidden");
     const act = acts[ev.id];
     if (act) act.querySelector(".act-status").textContent = STATUS_TEXT.waiting;
-    setTimeout(() => $("confirm-yes").focus(), 50);
+    setTimeout(() => (form.querySelector("input, textarea") || $("confirm-yes")).focus(), 50);
     refresh();
     if (!S.tts) onSpeechDrained();
+  }
+
+  function editedFields() {
+    const out = {};
+    for (const f of $("confirm-form").querySelectorAll("[data-key]")) out[f.dataset.key] = f.value;
+    return out;
   }
 
   function closeConfirm(id) {
@@ -739,7 +776,16 @@
 
   function answerConfirm(approved) {
     if (!S.confirm) return;
-    send({ type: "confirm", id: S.confirm.id, approved });
+    const editing = !$("confirm-form").classList.contains("hidden");
+    const args = editing && approved ? editedFields() : null;
+    if (args && "to" in args && !args.to.trim()) {
+      const to = $("confirm-form").querySelector('[data-key="to"]');
+      to.classList.add("invalid");
+      to.focus();
+      toast(L("Bitte einen Empfänger eintragen.", "Please enter a recipient."));
+      return;
+    }
+    send(args ? { type: "confirm", id: S.confirm.id, approved, args } : { type: "confirm", id: S.confirm.id, approved });
     const act = acts[S.confirm.id];
     if (act && approved) act.querySelector(".act-status").textContent = STATUS_TEXT.running;
     closeConfirm();
@@ -837,6 +883,9 @@
     if (!$("boot").classList.contains("hidden")) return;
     if (pwId) return;  // Passwortfeld hat Vorrang (kein Push-to-talk mit Leertaste)
     if (S.confirm) {
+      // im bearbeitbaren Fenster: Enter schreibt (neue Zeile), Strg/Cmd+Enter sendet
+      const inForm = $("confirm-form").contains(document.activeElement);
+      if (e.key === "Enter" && inForm && !(e.ctrlKey || e.metaKey)) return;
       if (e.key === "Enter") { e.preventDefault(); answerConfirm(true); }
       if (e.key === "Escape") { e.preventDefault(); answerConfirm(false); }
       return;

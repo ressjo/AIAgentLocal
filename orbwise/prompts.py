@@ -232,6 +232,7 @@ SPOKEN = {
     "de": {
         "confirm": "Soll ich {what} ausführen?",
         "confirm_shell": "Möchtest du folgenden Befehl ausführen?",
+        "confirm_mail": "Soll ich die Mail an {v} senden? Du kannst sie im Fenster noch bearbeiten.",
         "yes_no": "Bitte mit Ja oder Nein antworten.",
         "password": "Dafür brauche ich dein Passwort. Bitte gib es im Dashboard ein.",
         "reminder": "Erinnerung: {text}",
@@ -244,12 +245,13 @@ SPOKEN = {
         "call_remove": "das Entfernen von {v}", "call_update": "ein vollständiges Systemupdate",
         "call_cal_update": "das Ändern des Termins {v}", "call_cal_delete": "das Löschen des Termins {v}",
         "call_trilium": "das Überschreiben der Trilium-Notiz {v}", "call_write": "das Schreiben der Datei {v}",
-        "call_other": "die Aktion {v}",
+        "call_other": "die Aktion {v}", "call_mail": "das Senden einer Mail an {v}",
         "setup_terminal": "Dieses Modell wird im Terminal eingerichtet: {cmd}",
     },
     "en": {
         "confirm": "Shall I run {what}?",
         "confirm_shell": "Do you want to run the following command?",
+        "confirm_mail": "Shall I send the e-mail to {v}? You can still edit it in the dialog.",
         "yes_no": "Please answer yes or no.",
         "password": "I need your password for that. Please enter it in the dashboard.",
         "reminder": "Reminder: {text}",
@@ -262,7 +264,7 @@ SPOKEN = {
         "call_remove": "the removal of {v}", "call_update": "a full system update",
         "call_cal_update": "changing the event {v}", "call_cal_delete": "deleting the event {v}",
         "call_trilium": "overwriting the Trilium note {v}", "call_write": "writing the file {v}",
-        "call_other": "the action {v}",
+        "call_other": "the action {v}", "call_mail": "sending an e-mail to {v}",
         "setup_terminal": "This model is set up in the terminal: {cmd}",
     },
 }

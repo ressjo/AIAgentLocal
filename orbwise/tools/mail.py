@@ -1,7 +1,8 @@
 """E-Mail über IMAP – gedacht für Proton Mail über die lokale Proton Mail Bridge, funktioniert mit jedem IMAP-Postfach.
 
 Lesen, suchen und befragen ohne Rückfrage; aufräumen (gelesen/archivieren/verschieben/Label/Papierkorb) und
-Anhänge an Paperless übergeben nur nach Bestätigung. Mailinhalte sind fremde Daten: Sie werden markiert an das
+Anhänge an Paperless übergeben nur nach Bestätigung. Senden ist optional (mail.send_enabled) und geht immer über ein
+Fenster, in dem Empfänger, Betreff und Text noch bearbeitet werden können. Mailinhalte sind fremde Daten: Sie werden markiert an das
 Modell gegeben, und nach dem Lesen einer Mail verlangt der Agent auch für sonst sichere Aktionen eine Bestätigung.
 
 Einrichtung (Proton): Bridge installieren und anmelden, dann aus der Bridge Benutzername, Bridge-Passwort und
@@ -20,13 +21,14 @@ import email
 import html
 import imaplib
 import re
+import smtplib
 import socket
 import ssl
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from email import policy
 from email.message import EmailMessage
-from email.utils import parseaddr, parsedate_to_datetime
+from email.utils import formataddr, formatdate, getaddresses, make_msgid, parseaddr, parsedate_to_datetime
 from typing import Annotated, Any, TypeVar
 
 from .registry import CONFIRM, ToolContext, tool
@@ -597,6 +599,131 @@ async def mail_to_paperless(
 
 
 # ---------------------------------------------------------------- Briefing und doctor
+
+# ---------------------------------------------------------------- Senden (optional, nur nach Bestätigung)
+
+EMAIL_RE = re.compile(r"^[^@\s,;<>\"]+@[^@\s,;<>\"]+\.[^@\s,;<>\"]+$")
+MAX_RECIPIENTS = 20
+
+
+def _send_enabled(cfg: Any) -> bool:
+    return _enabled(cfg) and bool(getattr(cfg.mail, "send_enabled", False))
+
+
+def _recipient_pairs(text: str) -> list[tuple[str, str]]:
+    text = (text or "").replace(";", ",").replace("\n", ",")
+    out = []
+    for name, addr in getaddresses([text]):
+        if not (name or addr):
+            continue
+        if not EMAIL_RE.match(addr or ""):
+            raise MailError(f"Ungültige Adresse: „{(name + ' ' + addr).strip()}“.")
+        out.append((name, addr))
+    if len(out) > MAX_RECIPIENTS:
+        raise MailError(f"Zu viele Empfänger (höchstens {MAX_RECIPIENTS}).")
+    return out
+
+
+def parse_recipients(text: str) -> list[str]:
+    """„Anna <anna@x.de>; bob@y.de“ → Adressen; wirft MailError bei ungültigen Einträgen."""
+    return [addr for _, addr in _recipient_pairs(text)]
+
+
+def _address_header(text: str) -> str:
+    return ", ".join(formataddr(p) for p in _recipient_pairs(text))
+
+
+def build_message(cfg: Any, to: str, subject: str, body: str, cc: str = "",
+                  original: EmailMessage | None = None) -> EmailMessage:
+    m = cfg.mail
+    msg = EmailMessage()
+    msg["From"] = m.sender
+    msg["To"] = _address_header(to)
+    if cc.strip():
+        msg["Cc"] = _address_header(cc)
+    msg["Subject"] = subject.strip()
+    msg["Date"] = formatdate(localtime=True)
+    domain = m.sender.rsplit("@", 1)[-1] if "@" in m.sender else None
+    msg["Message-ID"] = make_msgid(domain=domain)
+    if original is not None and original.get("Message-ID"):
+        mid = str(original["Message-ID"]).strip()
+        msg["In-Reply-To"] = mid
+        msg["References"] = f"{str(original.get('References', '') or '').strip()} {mid}".strip()
+    msg.set_content(body)
+    return msg
+
+
+def smtp_send(cfg: Any, msg: EmailMessage, recipients: list[str]) -> None:
+    """Versand per SMTP (synchron, über asyncio.to_thread aufgerufen)."""
+    m = cfg.mail
+    host, port = m.smtp_server, m.smtp_port
+    ctx = ssl.create_default_context()
+    if not (m.verify_ssl if m.verify_ssl is not None else host.strip().lower() not in ("127.0.0.1", "localhost", "::1")):
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    where = f"{host}:{port}"
+    try:
+        if m.smtp_security == "ssl":
+            server = smtplib.SMTP_SSL(host, port, timeout=m.timeout, context=ctx)
+        else:
+            server = smtplib.SMTP(host, port, timeout=m.timeout)
+            if m.smtp_security == "starttls":
+                server.starttls(context=ctx)
+        with server:
+            server.login(m.username, m.secret)
+            server.send_message(msg, to_addrs=recipients)
+    except ConnectionRefusedError:
+        raise MailError(f"Mailserver unter {where} nicht erreichbar – läuft die Proton Mail Bridge "
+                        "(bzw. stimmen mail.smtp_host/smtp_port)?") from None
+    except smtplib.SMTPAuthenticationError:
+        raise MailError("Anmeldung am Mailserver fehlgeschlagen – bei Proton das Bridge-Passwort verwenden.") from None
+    except smtplib.SMTPRecipientsRefused as e:
+        raise MailError(f"Empfänger abgelehnt: {', '.join(e.recipients)}") from None
+    except (smtplib.SMTPException, ssl.SSLError, OSError) as e:
+        raise MailError(f"Senden über {where} fehlgeschlagen: {e}") from None
+
+
+def _send_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
+    to = str(args.get("to") or "?")
+    return CONFIRM, (f"Mail an {to} senden – Empfänger, Betreff und Text lassen sich im Fenster noch ändern." if
+                     getattr(ctx.cfg, "language", "de") != "en" else
+                     f"Send an e-mail to {to} – recipients, subject and text can still be edited in the dialog.")
+
+
+@tool("Sendet eine E-Mail – immer erst nach Bestätigung: Der Nutzer sieht Empfänger, Betreff und Text in einem Fenster, "
+      "kann alles ändern und muss auf SENDEN klicken. Schreibe Betreff und Text vollständig und fertig formuliert "
+      "(keine Platzhalter). Für eine Antwort reply_uid (und ggf. reply_folder) der Original-Mail angeben.",
+      risk=_send_risk, enabled=_send_enabled, editable=("to", "cc", "subject", "body"))
+async def mail_send(
+    ctx: ToolContext,
+    to: Annotated[str, "Empfänger, mehrere mit Komma getrennt, z. B. „Anna <anna@example.org>, bob@example.org“"],
+    subject: Annotated[str, "Betreff"],
+    body: Annotated[str, "Text der Mail (reiner Text)"],
+    cc: Annotated[str, "Kopie an (optional)"] = "",
+    reply_uid: Annotated[int, "UID der Mail, auf die geantwortet wird (0 = neue Mail)"] = 0,
+    reply_folder: Annotated[str, "Ordner der Original-Mail"] = "INBOX",
+) -> str:
+    try:
+        recipients = parse_recipients(to) + parse_recipients(cc)
+        if not parse_recipients(to):
+            return "Kein Empfänger angegeben."
+        if not subject.strip() and not body.strip():
+            return "Betreff und Text sind leer – nichts gesendet."
+        original = None
+        if int(reply_uid or 0) > 0:
+            def fetch(c: MailClient) -> EmailMessage:
+                c.select(reply_folder)
+                return c.message(int(reply_uid))
+            original = await _run(ctx.cfg, fetch)
+        msg = build_message(ctx.cfg, to, subject, body, cc, original)
+        await asyncio.to_thread(smtp_send, ctx.cfg, msg, recipients)
+    except socket.timeout:
+        return f"Zeitüberschreitung beim Senden über {ctx.cfg.mail.smtp_server}:{ctx.cfg.mail.smtp_port}."
+    except MailError as e:
+        return f"Nicht gesendet: {e}"
+    extra = f", Kopie an {msg['Cc']}" if msg["Cc"] else ""
+    return f"Mail gesendet an {msg['To']}{extra} – Betreff „{msg['Subject']}“."
+
 
 async def inbox_brief(cfg: Any, limit: int = 5) -> str | None:
     if not cfg.mail.enabled:

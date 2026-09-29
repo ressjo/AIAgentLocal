@@ -26,6 +26,7 @@ def make(uid: int, sender: str, subject: str, text: str = "", html: str = "", wh
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = sender, USER, subject
     msg["Date"] = format_datetime((when or datetime.now()).astimezone())
+    msg["Message-ID"] = f"<mail-{uid}@test.example>"
     if text:
         msg.set_content(text)
     if html:

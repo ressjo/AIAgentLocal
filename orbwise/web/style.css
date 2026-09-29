@@ -457,6 +457,19 @@ button { font-family: inherit; cursor: pointer; }
 .confirm-cmd { font-family: var(--mono); font-size: 13px; background: rgba(0,0,0,.45); border: 1px solid rgba(255,179,71,.3); padding: 10px 12px; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto; margin: 0; }
 .confirm-reason { color: var(--warn); font-size: 13px; margin: 10px 0 16px; white-space: pre-line; max-height: 40vh; overflow-y: auto; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+/* Bearbeitbare Bestätigung (z. B. Mail senden): Felder statt Befehlsanzeige */
+.confirm-modal.editing { width: min(720px, calc(100vw - 32px)); }
+.confirm-form { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 12px; }
+.confirm-form label { display: grid; grid-template-columns: 70px minmax(0, 1fr); align-items: start; gap: 10px;
+                      font-size: 11px; letter-spacing: .15em; color: var(--muted); }
+.confirm-form label > span { padding-top: 8px; }
+.confirm-form input, .confirm-form textarea {
+  width: 100%; box-sizing: border-box; background: rgba(0,0,0,.45); border: 1px solid rgba(255,179,71,.3);
+  color: var(--text); font: inherit; font-size: 14px; letter-spacing: normal; padding: 7px 9px;
+}
+.confirm-form textarea { min-height: 220px; resize: vertical; font-family: inherit; line-height: 1.5; }
+.confirm-form input:focus, .confirm-form textarea:focus { outline: none; border-color: var(--warn); }
+.confirm-form .invalid { border-color: var(--danger); }
 .pw-input { width: 100%; margin: 12px 0 4px; padding: 10px 12px; font: 15px var(--mono); color: var(--text, #d8f3ff);
             background: rgba(0,0,0,.5); border: 1px solid var(--warn); outline: none; letter-spacing: .15em; }
 .pw-input:focus { box-shadow: 0 0 0 1px var(--warn), 0 0 16px rgba(255,179,71,.25); }

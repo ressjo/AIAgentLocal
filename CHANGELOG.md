@@ -60,7 +60,9 @@ First public release.
 - **E-mail** via IMAP – **Proton Mail through the Proton Mail Bridge** or any other mailbox: list unread mails,
   search, read (without marking as read), ask about a mail, archive/move/label/trash and PDF attachments to
   Paperless after confirmation, unread mails in the briefing. Mail content is passed to the model as untrusted
-  data; after reading a mail, all further actions in that request need confirmation.
+  data; after reading a mail, all further actions in that request need confirmation. Optional **sending**
+  (`mail.send_enabled`, SMTP – Proton Bridge defaults): Orbwise drafts mails and replies, a dialog shows To, Cc,
+  Subject and Text as editable fields and only a click on SEND sends; replies keep the thread.
 - Small context windows get only the tool groups that match the request; `tools.disabled` switches tools off.
 
 ### Web UI

@@ -30,7 +30,7 @@ from .reminders import ReminderStore
 from .routines import RoutineStore
 from .tools import briefing, proc
 from .tools.calendar_tools import calendar_status
-from .tools.registry import ToolContext
+from .tools.registry import ToolContext, get_tool
 from .tools.trilium import trilium_status
 from .voice import catalog
 from .voice.listen import AudioSession, WakeWordFactory, WhisperSTT
@@ -56,13 +56,16 @@ def parse_yes_no(text: str) -> bool | None:
 CALL_TEXTS = {"run_shell": ("call_shell", "command"), "install_package": ("call_install", "names"),
               "remove_package": ("call_remove", "names"), "system_update": ("call_update", ""),
               "calendar_update": ("call_cal_update", "query"), "calendar_delete": ("call_cal_delete", "query"),
-              "trilium_update_note": ("call_trilium", "note"), "write_file": ("call_write", "path")}
+              "trilium_update_note": ("call_trilium", "note"), "write_file": ("call_write", "path"),
+              "mail_send": ("call_mail", "to")}
 
 
 def spoken_confirm(name: str, args: dict, cfg=None) -> str:
     """Gesprochene Rückfrage: Befehle werden nicht vorgelesen (sie stehen im Dialog), Pfade nur als Dateiname."""
     if name == "run_shell":
         return prompts.spoken(cfg, "confirm_shell")
+    if name == "mail_send":
+        return prompts.spoken(cfg, "confirm_mail", v=str(args.get("to", "")))
     if name == "write_file" and args.get("path"):
         args = {**args, "path": Path(str(args["path"])).name}
     return prompts.spoken(cfg, "confirm", what=describe_call(name, args, cfg))
@@ -100,6 +103,7 @@ class Hub:
         # Erinnerungen, die fällig wurden, als keine Oberfläche offen war – werden beim Verbinden zugestellt
         self.undelivered: list[dict] = []
         self.pending: dict[str, asyncio.Future] = {}
+        self.editable_pending: set[str] = set()
         self.tasks: set[asyncio.Task] = set()
         self.stt = stt
         self.wake = wake
@@ -121,24 +125,32 @@ class Hub:
             self.speaker.say(event["text"])
         await self.broadcast(event)
 
-    async def confirm(self, call_id: str, name: str, args: dict, reason: str) -> bool:
+    async def confirm(self, call_id: str, name: str, args: dict, reason: str) -> bool | tuple[bool, dict]:
+        """Wartet auf Ja/Nein. Bei Tools mit bearbeitbaren Feldern (z. B. mail_send) liefert eine Bestätigung
+        (True, geänderte Felder) – die übernimmt der Agent."""
         fut = asyncio.get_running_loop().create_future()
         self.pending[call_id] = fut
+        spec = get_tool(name)
+        editable = list(spec.editable) if spec else []
+        if editable:
+            self.editable_pending.add(call_id)
         await self.broadcast({"type": "confirm_request", "id": call_id, "name": name, "args": args,
-                              "reason": reason, "summary": describe_call(name, args, self.cfg)})
+                              "reason": reason, "summary": describe_call(name, args, self.cfg), "editable": editable})
         self.speaker.say(spoken_confirm(name, args, self.cfg))
         try:
-            return await asyncio.wait_for(fut, timeout=180)
+            # zum Bearbeiten (z. B. einer Mail) mehr Zeit lassen
+            return await asyncio.wait_for(fut, timeout=900 if editable else 180)
         except asyncio.TimeoutError:
             return False
         finally:
             self.pending.pop(call_id, None)
+            self.editable_pending.discard(call_id)
             await self.broadcast({"type": "confirm_done", "id": call_id})
 
-    def resolve(self, call_id: str, approved: bool) -> None:
+    def resolve(self, call_id: str, approved: bool, changes: dict | None = None) -> None:
         fut = self.pending.get(call_id)
         if fut and not fut.done():
-            fut.set_result(approved)
+            fut.set_result((True, changes) if approved and changes and call_id in self.editable_pending else approved)
 
     async def submit(self, text: str, source: str = "text") -> None:
         text = text.strip()
@@ -149,6 +161,9 @@ class Hub:
             decision = parse_yes_no(text)
             if decision is not None:
                 for cid in list(self.pending):
+                    # Fenster mit bearbeitbaren Feldern (Mail) nur per Klick bestätigen – „Nein“ bricht aber ab
+                    if decision and cid in self.editable_pending:
+                        continue
                     self.resolve(cid, decision)
                 return
             if source == "voice":
@@ -931,7 +946,8 @@ def create_app(cfg: Config) -> FastAPI:
                 if t == "user_message":
                     await hub.submit(str(data.get("text", "")))
                 elif t == "confirm":
-                    hub.resolve(str(data.get("id")), bool(data.get("approved")))
+                    changes = data.get("args") if isinstance(data.get("args"), dict) else None
+                    hub.resolve(str(data.get("id")), bool(data.get("approved")), changes)
                 elif t == "stop":
                     await hub.stop()
                 elif t == "tts":

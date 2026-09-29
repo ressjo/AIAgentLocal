@@ -273,12 +273,27 @@ class MailConfig(BaseModel):
     timeout: float = 30.0
     # so viel Mailtext geht höchstens an das Modell
     max_chars: int = 6000
+    # Mails senden (optional, standardmäßig aus): immer erst nach Bestätigung in einem Fenster, in dem Empfänger,
+    # Betreff und Text noch bearbeitet werden können. Proton Mail Bridge: SMTP auf 127.0.0.1:1025 mit STARTTLS.
+    send_enabled: bool = False
+    smtp_host: str = ""          # leer = wie host
+    smtp_port: int = 1025
+    smtp_security: str = "starttls"  # starttls | ssl | none
+    from_address: str = ""       # leer = username
 
-    @field_validator("security")
+    @field_validator("security", "smtp_security")
     @classmethod
     def _security(cls, v: str) -> str:
         v = (v or "starttls").strip().lower()
         return v if v in ("starttls", "ssl", "none") else "starttls"
+
+    @property
+    def smtp_server(self) -> str:
+        return self.smtp_host or self.host
+
+    @property
+    def sender(self) -> str:
+        return self.from_address or self.username
 
     @property
     def secret(self) -> str:
