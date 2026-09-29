@@ -123,3 +123,18 @@ def test_ui_files_are_revalidated_after_updates(cfg):
         assert resp.status_code == 200 and resp.headers["cache-control"] == "no-cache"
         again = client.get("/static/app.js", headers={"If-None-Match": resp.headers["etag"]})
         assert again.status_code == 304
+
+
+def test_page_loads_ui_files_with_content_version(cfg):
+    """Neues app.js mit altem orb.js aus dem Cache ließ Werkzeug-Anzeige und „bereit“ ausfallen – jede Datei trägt
+    deshalb ihren Inhalts-Hash, der Browser lädt nach einem Update alles frisch."""
+    import hashlib
+    import re
+
+    with TestClient(server.create_app(cfg), base_url="http://localhost:8765") as client:
+        html = client.get("/").text
+        refs = dict(re.findall(r'/static/([\w.-]+)\?v=([0-9a-f]{10})"', html))
+        assert {"orb.js", "app.js", "voicefx.js", "style.css"} <= set(refs)
+        for name, digest in refs.items():
+            assert hashlib.sha1((server.WEB_DIR / name).read_bytes()).hexdigest()[:10] == digest
+        assert client.get(f"/static/orb.js?v={refs['orb.js']}").status_code == 200

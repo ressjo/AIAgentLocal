@@ -63,7 +63,8 @@ First public release.
 - The status returns to "ready" as soon as the answer is complete (condensing runs silently afterwards), after the
   model has loaded or failed to load, and after reconnecting – no more stuck "thinking". The dashboard switches to
   "ready" by itself when the answer is complete, a cancelled transcription no longer blocks the microphone, and the
-  browser always revalidates the UI files, so an update never keeps running the old dashboard code.
+  browser always revalidates the UI files. The page loads its scripts with a content version, so after an update the
+  browser can no longer mix new and cached old files (which hid tools in chat, activity and orb).
 
 ### Installation
 - Installer for Arch-based and Debian/Ubuntu-based systems that asks for the language, the GPU (NVIDIA/AMD/CPU,

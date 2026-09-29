@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import re
@@ -183,6 +184,19 @@ def check_host(host: str | None, port: int) -> bool:
         return False
     name = host.rsplit(":", 1)[0] if not host.startswith("[") else host.split("]")[0] + "]"
     return name in ("localhost", "127.0.0.1", "[::1]")
+
+
+def versioned_assets(html: str) -> str:
+    """/static/app.js → /static/app.js?v=<Inhalts-Hash>: Nach einem Update lädt der Browser jede geänderte Datei
+    sofort neu. Sonst mischt er neue und alte Dateien aus dem Cache (z. B. neues app.js mit altem orb.js) –
+    dann bricht die Oberfläche an fehlenden Funktionen ab (keine Werkzeug-Anzeige, „denke nach“ bleibt stehen)."""
+    def stamp(m: re.Match) -> str:
+        path = WEB_DIR / m.group(2)
+        if not path.is_file():
+            return m.group(0)
+        digest = hashlib.sha1(path.read_bytes()).hexdigest()[:10]
+        return f"{m.group(1)}/static/{m.group(2)}?v={digest}{m.group(3)}"
+    return re.sub(r'((?:src|href)=")/static/([\w./-]+)(")', stamp, html)
 
 
 class FreshStaticFiles(StaticFiles):
@@ -404,7 +418,7 @@ def create_app(cfg: Config) -> FastAPI:
     @app.get("/")
     async def index():
         html = translate_index((WEB_DIR / "index.html").read_text(encoding="utf-8"), cfg.language)
-        return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+        return HTMLResponse(versioned_assets(html), headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/status")
     async def status():
