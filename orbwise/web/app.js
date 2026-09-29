@@ -3,7 +3,7 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const orb = new window.Orb($("orb"));
+  const orb = new window.Orb($("orb"), $("orb-overlay"));
   // Sprache: der Server liefert index.html bereits mit lang="de" bzw. lang="en" aus
   const EN = document.documentElement.lang === "en";
   const L = (de, en) => (EN ? en : de);
@@ -264,7 +264,6 @@
         if (ev.routine) orb.addSatellite("rt:" + ev.routine, "⟳ " + ev.routine.toUpperCase());
         if (ev.state === "idle") {  // abgebrochene Werkzeuge nicht hängen lassen
           orb.clearSatellites("rt:");
-          for (const el of $("thought-tools").querySelectorAll(".thought-tool:not(.gone)")) thoughtToolDone({ id: el.id.slice(3), status: "ok" });
         }
         S.serverState = ev.state === "confirm" ? S.serverState : ev.state;
         S.substate = ev.state === "executing" && ev.tool ? ev.tool : "";
@@ -278,6 +277,7 @@
         break;
       case "token":
         appendToken(ev.id, ev.text);
+        orb.token();
         T.tokenTimes.push(performance.now());
         if (Thought.active) Thought.zoomOut();
         if (S.substate === THINKING_SUB) { S.substate = ""; break; }
@@ -285,6 +285,7 @@
       case "reasoning":
         // Denkkette: nicht in die Antwort, sondern in den Orb (hineinzoomen) und später aufklappbar im Chat
         Thought.add(ev.id, ev.text || "");
+        orb.token();  // Denk-Puls folgt auch dem Gedankengang
         if (S.substate !== THINKING_SUB) S.substate = THINKING_SUB;
         else return;
         break;
@@ -563,6 +564,7 @@
         clearTimeout(this.outTimer);
         $("thought-text").textContent = "";
         document.querySelector(".core").classList.add("zoomed");
+        orb.setZoom(true);  // Satelliten kreisen dann um den Gedankenkasten
       }
       this.text += text;
       if (!this.queued) {
@@ -586,7 +588,7 @@
       // kurz stehen lassen, damit das Zoomen nicht flackert
       const wait = Math.max(0, 700 - (performance.now() - this.since));
       clearTimeout(this.outTimer);
-      this.outTimer = setTimeout(() => document.querySelector(".core").classList.remove("zoomed"), wait);
+      this.outTimer = setTimeout(() => { document.querySelector(".core").classList.remove("zoomed"); orb.setZoom(false); }, wait);
     },
     finish(id) {
       this.zoomOut();
@@ -651,26 +653,8 @@
     return hit ? hit[1][EN ? 1 : 0] : name.split("_")[0].toUpperCase();
   }
 
-  function thoughtTool(ev) {
-    const el = document.createElement("span");
-    el.className = "thought-tool";
-    el.id = "tt-" + ev.id;
-    el.textContent = "⚙ " + satLabel(ev.name);
-    el.title = ev.name;
-    $("thought-tools").appendChild(el);
-  }
-
-  function thoughtToolDone(ev) {
-    const el = $("tt-" + ev.id);
-    if (!el) return;
-    el.classList.add(ev.status === "ok" ? "ok" : ev.status);
-    setTimeout(() => el.classList.add("gone"), 1500);
-    setTimeout(() => el.remove(), 2200);
-  }
-
   function toolCall(ev) {
     orb.addSatellite(ev.id, satLabel(ev.name));
-    thoughtTool(ev);
     const empty = activity.querySelector(".empty");
     if (empty) empty.remove();
     const el = document.createElement("div");
@@ -710,7 +694,6 @@
 
   function toolResult(ev) {
     orb.removeSatellite(ev.id, ev.status === "error" || ev.status === "blocked");
-    thoughtToolDone(ev);
     const el = acts[ev.id];
     if (el) {
       el.className = "act " + ev.status;
@@ -1116,6 +1099,7 @@
     $("tele-ctx").querySelector(".tele-num").textContent = kTok(c.used);
     $("tele-ctx").querySelector(".tele-unit").textContent = "/" + Math.round(c.budget / 1000) + "k";
     $("tele-ctx").classList.toggle("warn", c.trimmed || (pct >= 80 && pct < 95));
+    orb.setContext(c.used / c.budget, !!c.summarized);
     pushSpark("ctx", Math.min(100, pct));
   }
 

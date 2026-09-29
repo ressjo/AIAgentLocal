@@ -80,6 +80,8 @@
         this.nodes[a].links.push(b);
         this.nodes[b].links.push(a);
       }
+      // die innersten Neuronen: dort starten die Denk-Impulse
+      this.inner = this.nodes.map((n, i) => [n.d, i]).sort((a, b) => a[0] - b[0]).slice(0, 8).map((x) => x[1]);
       this.pulses = [];
       this.maxPulses = MAX_PULSES;
       this.acc = 0;
@@ -95,6 +97,27 @@
           this.pulses.push({ a: i, b: j, t: 0, v: speed * (0.7 + Math.random() * 0.6) });
         }
       }
+    }
+
+    /* Denk-Puls: ein Signal läuft vom Kern über die Synapsen nach außen (1–2 Zweige je Neuron). */
+    fireOut(i, speed = 2.6) {
+      const n = this.nodes[i];
+      n.fire = 1;
+      const out = n.links.filter((j) => this.nodes[j].d > n.d + 0.02);
+      if (!out.length) return;
+      for (let k = out.length - 1; k > 0; k--) {  // mischen
+        const r = (Math.random() * (k + 1)) | 0;
+        [out[k], out[r]] = [out[r], out[k]];
+      }
+      const branches = Math.random() < 0.35 ? 2 : 1;
+      for (const j of out.slice(0, branches)) {
+        if (this.pulses.length >= this.maxPulses) break;
+        this.pulses.push({ a: i, b: j, t: 0, v: speed * (0.85 + Math.random() * 0.3), out: true });
+      }
+    }
+
+    burstOut() {
+      this.fireOut(this.inner[(Math.random() * this.inner.length) | 0]);
     }
 
     /* Viele Neuronen auf einmal zünden (Impuls, Startsequenz). inner = nur aus der Mitte heraus. */
@@ -122,7 +145,10 @@
       const alive = [];
       for (const p of this.pulses) {
         p.t += dt * p.v;
-        if (p.t >= 1) this.fire(p.b, p.a, cfg.spread, cfg.speed);
+        if (p.t >= 1) {
+          if (p.out) this.fireOut(p.b, p.v);
+          else this.fire(p.b, p.a, cfg.spread, cfg.speed);
+        }
         else alive.push(p);
       }
       this.pulses = alive.length > this.maxPulses ? alive.slice(-this.maxPulses) : alive;
@@ -163,7 +189,7 @@
         const x = na.px + (nb.px - na.px) * p.t, y = na.py + (nb.py - na.py) * p.t;
         const depth = na.pz + (nb.pz - na.pz) * p.t;
         trails.add(0.25 + depth * 0.55, na.px + (nb.px - na.px) * t0, na.py + (nb.py - na.py) * t0, x, y);
-        heads.push(x, y, 0.8 + depth * 1.3);
+        heads.push(x, y, 0.8 + depth * 1.3 + (p.out ? 0.9 : 0));
       }
       ctx.lineCap = "round";
       ctx.lineWidth = 1.6;
@@ -247,9 +273,21 @@
   }
 
   class Orb {
-    constructor(canvas) {
+    constructor(canvas, overlay = null) {
       this.canvas = canvas;
       this.ctx = canvas.getContext("2d");
+      // eigene Ebene für Satelliten und Werkzeug-Strahlen: zoomt im Denkmodus nicht mit
+      this.overlay = overlay;
+      this.octx = overlay ? overlay.getContext("2d") : null;
+      this.overlayDirty = false;
+      this.zoom = 0;               // 0 = normal, 1 = in den Orb gezoomt (Gedankengang)
+      this.zoomTarget = 0;
+      this.tokenEnergy = 0;        // steigt mit jedem Token, klingt ab → Tempo des Denk-Pulses
+      this.burstAcc = 0;
+      this.ctxFrac = null;         // Kontext-Auslastung 0..1 (null = unbekannt)
+      this.ctxShow = 0;
+      this.ctxFlash = 0;
+      this.summarized = false;
       this.state = "offline";
       this.color = PALETTE.offline.c.slice();
       this.speed = PALETTE.offline.speed;
@@ -310,18 +348,34 @@
       this.booted = { mid: false, all: false };
     }
 
+    setZoom(on) { this.zoomTarget = on ? 1 : 0; }
+
+    /* Ein Token (Antwort oder Gedankengang) – treibt den Denk-Puls an. */
+    token() { this.tokenEnergy = Math.min(14, this.tokenEnergy + 1); }
+
+    /* Kontext-Auslastung für den Ring; ein deutlicher Rückgang (Verdichten) blitzt kurz auf. */
+    setContext(frac, summarized) {
+      frac = Math.max(0, Math.min(1, frac || 0));
+      if (this.ctxFrac !== null && (frac < this.ctxFrac - 0.08 || (summarized && !this.summarized))) this.ctxFlash = 1;
+      if (this.ctxFrac === null) this.ctxShow = frac;
+      this.ctxFrac = frac;
+      this.summarized = summarized;
+    }
+
     addSatellite(id, label) {
       if (this.satellites.has(id)) { const s = this.satellites.get(id); s.leaving = false; s.leaveAt = null; return; }
       if (this.satellites.size >= MAX_SATELLITES) return;
       const n = this.satellites.size;
       this.satellites.set(id, { label: String(label).slice(0, 18), a: this.t * 0.25 - Math.PI / 2 + n * 0.6,
-                                alpha: 0, leaving: false, err: false, born: this.t, leaveAt: null });
+                                alpha: 0, leaving: false, err: false, born: this.t, leaveAt: null,
+                                beam: 0, back: null });  // Strahl hinaus (0..1) · Rückfluss mit dem Ergebnis
     }
 
     removeSatellite(id, failed = false) {
       const s = this.satellites.get(id);
       if (!s) return;
       s.err = s.err || failed;
+      if (s.back === null) s.back = 0;  // Ergebnis fließt zurück (grün/rot)
       // kurze Werkzeuge nicht nur aufblitzen lassen: mindestens ~1,5 s sichtbar
       const wait = Math.max(0, SAT_MIN_SECONDS - (this.t - s.born));
       if (wait > 0) s.leaveAt = this.t + wait;
@@ -357,6 +411,11 @@
       this.canvas.width = this.w * dpr;
       this.canvas.height = this.h * dpr;
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (this.overlay) {
+        this.overlay.width = this.w * dpr;
+        this.overlay.height = this.h * dpr;
+        this.octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
     }
 
     _rgba(a, boost = 0) {
@@ -416,6 +475,21 @@
       // Ring-Verformung nur beim Sprechen/Zuhören
       const want = (this.state === "speaking" || this.state === "listening") && this.level > 0.02 ? 1 : 0;
       this.deform = lerp(this.deform, want, 1 - Math.pow(0.02, dt));
+      this.zoom = lerp(this.zoom, this.zoomTarget, 1 - Math.pow(0.02, dt));
+      // Denk-Puls: Impulse vom Kern nach außen, schneller mit jedem Token, ruhiger wenn der Stream stockt
+      this.tokenEnergy *= Math.exp(-dt * 1.4);
+      if (this.state === "thinking" && this.bootT === null) {
+        this.burstAcc += dt * (1.2 + this.tokenEnergy * 0.55) * (this.reduced ? 0.3 : 1);
+        while (this.burstAcc >= 1) { this.burstAcc -= 1; this.net.burstOut(); }
+      } else this.burstAcc = 0;
+      // Kontext-Ring gleitet zum neuen Wert
+      if (this.ctxFrac !== null) this.ctxShow = lerp(this.ctxShow, this.ctxFrac, 1 - Math.pow(0.1, dt));
+      this.ctxFlash *= Math.exp(-dt * 1.8);
+      for (const s of this.satellites.values()) {
+        s.beam = Math.min(1, s.beam + dt * 2.2);
+        // Rückfluss erst, wenn der Strahl angekommen ist (auch bei sehr schnellen Werkzeugen)
+        if (s.back !== null && s.back < 1 && s.beam >= 1) s.back = Math.min(1, s.back + dt * 1.8);
+      }
       // Satelliten: gleichmäßig verteilt, weich ein-/ausblenden
       const live = [...this.satellites.values()].filter((s) => !s.leaving);
       // im oberen Bogen (±115° um 12 Uhr) verteilt und leicht pendelnd – unten steht die Statuszeile
@@ -631,7 +705,8 @@
       dots.fill(ctx, (al) => this._rgba(al, 50));
 
       ctx.globalAlpha = 1;
-      if (this.satellites.size) this._drawSatellites(R);
+      if (this.ctxFrac !== null) this._drawContextRing(R, bootSeg);
+      if (!this.octx && this.satellites.size) this._drawSatellites(ctx, R, 0);
 
       // Bestätigung: pulsierender Warnring
       if (this.state === "confirm" || this.state === "error") {
@@ -644,6 +719,69 @@
       }
 
       ctx.restore();
+      if (this.octx) this._drawOverlay(cx, cy, R);
+    }
+
+    /* Dünner Bogen: wie voll der Kontext ist (ab 85 % orange); beim Verdichten zieht er sich zusammen und blitzt. */
+    _drawContextRing(R, fade) {
+      const ctx = this.ctx;
+      const r = R * 1.555;
+      const start = -Math.PI / 2;
+      const warn = this.ctxShow >= 0.85;
+      const col = warn ? "255,179,71" : `${this.color[0] | 0},${this.color[1] | 0},${this.color[2] | 0}`;
+      ctx.lineCap = "round";
+      ctx.strokeStyle = `rgba(${col},${0.07 * fade})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.stroke();
+      const end = start + TAU * Math.max(0.004, this.ctxShow);
+      for (const [width, alpha] of [[7, 0.1 + this.ctxFlash * 0.35], [2, 0.75]]) {
+        ctx.strokeStyle = `rgba(${col},${alpha * fade})`;
+        ctx.lineWidth = width + this.ctxFlash * 4;
+        ctx.beginPath(); ctx.arc(0, 0, r, start, end); ctx.stroke();
+      }
+      // Endpunkt mit kleiner Prozentangabe
+      const ex = Math.cos(end) * r, ey = Math.sin(end) * r;
+      ctx.fillStyle = `rgba(${col},${0.95 * fade})`;
+      ctx.beginPath(); ctx.arc(ex, ey, 2.6 + this.ctxFlash * 2, 0, TAU); ctx.fill();
+      const label = this._label(`CTX ${Math.round(this.ctxShow * 100)} %`);
+      const lx = Math.cos(end) * (r + 16), ly = Math.sin(end) * (r + 16);
+      ctx.globalAlpha = 0.75 * fade;
+      const lw = label.w * 0.8, lh = label.h * 0.8;  // links vom Punkt nach links, rechts nach rechts
+      ctx.drawImage(label, lx - (lw / 2) * (1 - Math.cos(end)), ly - lh / 2, lw, lh);
+      ctx.globalAlpha = 1;
+      const m = start + TAU * 0.85;  // Marke: ab hier wird verdichtet
+      ctx.strokeStyle = `rgba(255,179,71,${0.45 * fade})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(m) * (r - 5), Math.sin(m) * (r - 5));
+      ctx.lineTo(Math.cos(m) * (r + 5), Math.sin(m) * (r + 5));
+      ctx.stroke();
+      ctx.lineCap = "butt";
+    }
+
+    /* Eigene Ebene: Satelliten + Werkzeug-Strahlen. Im Denkmodus kreisen sie auf einer Ellipse um den
+     * Gedankenkasten (der Orb darunter ist dann vergrößert und abgedunkelt). */
+    _drawOverlay(cx, cy, R) {
+      const ctx = this.octx;
+      if (!this.satellites.size) {
+        if (this.overlayDirty) { ctx.clearRect(0, 0, this.w, this.h); this.overlayDirty = false; }
+        return;
+      }
+      ctx.clearRect(0, 0, this.w, this.h);
+      this.overlayDirty = true;
+      ctx.save();
+      ctx.translate(cx, cy);
+      this._drawSatellites(ctx, R, this.zoom);
+      ctx.restore();
+    }
+
+    _satGeometry(R, z) {
+      // Gedankenkasten wie im CSS: min(58 % Breite, 540) × min(48 % Höhe des Kerns, 380)
+      const boxW = Math.min(this.w * 0.58, 540), boxH = Math.min((this.h + 92) * 0.48, 380);
+      return {
+        rx: lerp(R * 1.36, boxW / 2 + 34, z), ry: lerp(R * 1.36, boxH / 2 + 30, z),
+        ix: lerp(R * 0.3, boxW / 2 - 6, z), iy: lerp(R * 0.3, boxH / 2 - 6, z),
+      };
     }
 
     _ringShape(ringR, R) {
@@ -660,23 +798,54 @@
       return pts;
     }
 
-    _drawSatellites(R) {
-      const ctx = this.ctx;
+    _drawSatellites(ctx, R, z) {
       const sprite = this._glowSprite();
-      const rr = R * 1.36;  // auf dem feinen Segmentring – Beschriftung bleibt im Bild
+      const g = this._satGeometry(R, z);
+      const col = `${this.color[0] | 0},${this.color[1] | 0},${this.color[2] | 0}`;
       for (const s of this.satellites.values()) {
-        const x = Math.cos(s.a) * rr, y = Math.sin(s.a) * rr;
+        const ca = Math.cos(s.a), sa = Math.sin(s.a);
+        const x = ca * g.rx, y = sa * g.ry;          // Satellit
+        const x0 = ca * g.ix, y0 = sa * g.iy;        // Startpunkt des Strahls (Kern bzw. Kastenrand)
+        const at = (t) => [x0 + (x - x0) * t, y0 + (y - y0) * t];
+        // Werkzeug-Strahl: ruhige, fließende Verbindung solange das Werkzeug läuft
         ctx.globalAlpha = s.alpha;
+        ctx.strokeStyle = `rgba(${col},0.22)`;
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([3, 9]);
+        ctx.lineDashOffset = -this.t * 38;
+        const [bx, by] = at(s.beam);
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(bx, by); ctx.stroke();
+        ctx.setLineDash([]);
+        // hinaus: heller Lichtkopf vom Kern zum Satelliten
+        if (s.beam < 1) this._beamHead(ctx, at, s.beam, `${col}`);
+        // zurück: Ergebnis fließt grün (ok) bzw. rot (Fehler) zum Kern
+        if (s.back !== null && s.back < 1) this._beamHead(ctx, at, 1 - s.back, s.err ? "255,93,108" : "77,255,184", true);
+        // Satellit
         const size = 22 + 4 * Math.sin(this.t * 6 + s.a * 3);
         ctx.drawImage(sprite, x - size, y - size, size * 2, size * 2);
         ctx.fillStyle = s.err ? "rgba(255,93,108,0.95)" : "rgba(255,255,255,0.9)";
         ctx.beginPath(); ctx.arc(x, y, 4, 0, TAU); ctx.fill();
         // Beschriftung zentriert über (obere Hälfte) bzw. unter (untere Hälfte) dem Punkt, nie auf dem Kopf
         const label = this._label(s.label);
-        const ly = y + (Math.sin(s.a) < 0 ? -label.h - 8 : 8);
+        const ly = y + (sa < 0 ? -label.h - 8 : 8);
         ctx.drawImage(label, x - label.w / 2, ly, label.w, label.h);
       }
       ctx.globalAlpha = 1;
+    }
+
+    _beamHead(ctx, at, t, rgb, back = false) {
+      const t0 = back ? Math.min(1, t + 0.28) : Math.max(0, t - 0.28);
+      const [hx, hy] = at(t), [tx, ty] = at(t0);
+      const grad = ctx.createLinearGradient(tx, ty, hx, hy);
+      grad.addColorStop(0, `rgba(${rgb},0)`);
+      grad.addColorStop(1, `rgba(${rgb},0.95)`);
+      ctx.strokeStyle = grad;
+      ctx.lineCap = "round";
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(hx, hy); ctx.stroke();
+      ctx.lineCap = "butt";
+      ctx.fillStyle = `rgba(${rgb},1)`;
+      ctx.beginPath(); ctx.arc(hx, hy, 3.2, 0, TAU); ctx.fill();
     }
 
     _segRing(radius, width, count, rot, alpha, gapRatio) {
