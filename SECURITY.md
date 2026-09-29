@@ -14,11 +14,36 @@ Orbwise can run commands on your computer, so its safety model matters.
   tools are flagged with an extra warning in the confirmation dialog.
 - **Root access** goes through `sudo -A` with a one-time token per command; the password is typed into the
   dashboard, handed straight to sudo and never stored, logged or shown to the language model.
+- **Secrets stay put.** Files with keys and passwords (`~/.ssh`, `~/.gnupg`, password stores and keyrings,
+  browser profiles, `.aws`/`.kube`/`.docker`, `*.pem`/`*.key`/`*.kdbx`, `.env`, Orbwise's own config, …) are
+  never read by `read_file`, sent to the phone or uploaded – the resolved path is checked, so symlinks don't help.
+  Shell commands that print such files, the environment (`printenv`, `env`, `$…TOKEN`) or Wi-Fi passwords
+  (`nmcli -s`) need confirmation. This keeps a prompt injection in a mail or web page from quietly exfiltrating
+  credentials.
 - **Home network services** (Trilium, Paperless, Home Assistant) are contacted directly, never through a proxy;
   tokens stay in your local config file.
 
 Please keep `host: 127.0.0.1`. Exposing Orbwise to a network gives anyone on that network a way to ask it to
-run commands.
+run commands – the dashboard has no login, and the `Host` check stops browsers, not a device that sets the header
+itself. Orbwise therefore refuses to start on another address unless `allow_remote: true` is set. For remote use
+prefer the Telegram bot, a VPN (WireGuard, Tailscale) or an SSH tunnel (`ssh -L 8765:localhost:8765 your-pc`).
+
+## Telegram and your home network
+
+- **No open port.** The bot fetches messages itself (outgoing long polling to `api.telegram.org`); nothing on
+  your router or PC is reachable from the internet because of it.
+- **Only your chat.** Messages and button presses from any other chat ID are ignored (after setup, without even
+  a reply). Confirmation buttons carry a random one-time key.
+- **Your Telegram account is a remote control.** Whoever can use your Telegram account can ask Orbwise to do
+  things and approve confirmations with the buttons. Protect it: enable **two-step verification** (Settings →
+  Privacy and Security → Two-Step Verification), use a screen lock, and check *Devices* for sessions you don't
+  know. `/stop` cancels whatever is running.
+- **The bot token is a key.** Anyone holding it can read what is sent to the bot and write to you in its name.
+  Orbwise keeps it out of logs and error messages; if it ever leaks, revoke it in **@BotFather** (`/revoke`) and
+  put the new token into the config.
+- **Home network from the phone.** Requests from the phone act with the PC's access – e.g. web fetches can reach
+  devices in your LAN. That is intended; keep the account secure (see above).
+- Messages pass through Telegram's servers and are not end-to-end encrypted.
 
 ## Reporting a vulnerability
 

@@ -1,7 +1,8 @@
 """Telegram-Bot: Orbwise vom Handy aus fragen, Erinnerungen aufs Handy, Rückfragen per Knopf.
 
 Der Bot holt Nachrichten selbst ab (Long Polling) – kein offener Port, kein Webhook. Er reagiert nur auf die
-eingetragene Chat-ID; alle anderen bekommen lediglich ihre Chat-ID genannt (für die Einrichtung).
+eingetragene Chat-ID. Solange noch keine eingetragen ist, nennt er Schreibenden ihre Chat-ID (für die Einrichtung);
+danach ignoriert er fremde Chats still – er verrät nicht einmal, dass es ihn gibt.
 
 Einrichtung:
     1. In Telegram @BotFather → /newbot → Token kopieren
@@ -37,6 +38,14 @@ STOP_WORDS = {"/stop", "stop", "stopp", "halt", "abbrechen", "abbruch", "cancel"
 CONFIRM_TIMEOUT = 300    # so lange wartet eine Rückfrage auf den Knopf
 CHAT_TITLE = "📱 Telegram"
 
+def redact(text: str, token: str) -> str:
+    """Bot-Token aus Texten entfernen – wer ihn hat, liest alle Nachrichten an den Bot mit."""
+    text = str(text)
+    if token:
+        text = text.replace(token, "<token>")
+    return re.sub(r"bot\d{5,}:[\w-]{20,}", "bot<token>", text)
+
+
 def explain(error: str) -> str:
     """Telegram-Fehler in einen konkreten Hinweis übersetzen."""
     low = error.lower()
@@ -50,6 +59,14 @@ def explain(error: str) -> str:
     if "connect" in low or "timeout" in low or "name resolution" in low or "network" in low:
         return "api.telegram.org nicht erreichbar – Internetverbindung/Proxy/Firewall prüfen."
     return error
+
+
+def quiet_http_logs() -> None:
+    """httpx/httpcore protokollieren auf INFO jede Anfrage-URL – bei Telegram steckt darin der Bot-Token."""
+    for name in ("httpx", "httpcore"):
+        logger = logging.getLogger(name)
+        if logger.getEffectiveLevel() < logging.WARNING:
+            logger.setLevel(logging.WARNING)
 
 
 Runner = Callable[[str, Callable[[dict], Awaitable[None]], Callable[..., Awaitable[Any]]], Awaitable[str]]
@@ -83,6 +100,7 @@ class TelegramBot:
         editable(name) → True für Aktionen mit Bearbeitungsfenster (z. B. mail_send) – nur im Dashboard."""
         self.cfg = cfg
         self.t = cfg.telegram
+        quiet_http_logs()
         self.run = run
         self.describe = describe
         self.editable = editable
@@ -99,6 +117,10 @@ class TelegramBot:
         # für /api/status und die Oberfläche: läuft der Bot, wie heißt er, was ist das letzte Problem?
         self.status: dict[str, Any] = {"running": False, "bot": "", "error": "", "chat_id": self.t.chat_id}
         self.last_file: tuple[Path, float] | None = None  # zuletzt empfangene Datei (für „ab in Paperless“ danach)
+        self.strangers: set[int] = set()  # fremde Chats, die schon im Log stehen
+
+    def redact(self, text: Any) -> str:
+        return redact(str(text), self.t.secret or "")
 
     def L(self, de: str, en: str) -> str:
         return en if self.en else de
@@ -145,7 +167,7 @@ class TelegramBot:
             await self.send(text)
             return True
         except (httpx.HTTPError, RuntimeError, ValueError) as e:
-            log.warning("Telegram-Nachricht fehlgeschlagen: %s", e)
+            log.warning("Telegram-Nachricht fehlgeschlagen: %s", self.redact(e))
             return False
 
     # ---------- Abholen ----------
@@ -156,8 +178,8 @@ class TelegramBot:
             self.offset = max(self.offset, int(u.get("update_id", 0)) + 1)
             try:
                 await self.handle(u)
-            except Exception:  # noqa: BLE001 – ein kaputtes Update darf den Bot nicht stoppen
-                log.exception("Telegram-Update fehlgeschlagen")
+            except Exception as e:  # noqa: BLE001 – ein kaputtes Update darf den Bot nicht stoppen
+                log.warning("Telegram-Update fehlgeschlagen: %s: %s", type(e).__name__, self.redact(e))
         return len(updates or [])
 
     async def check(self) -> None:
@@ -193,9 +215,9 @@ class TelegramBot:
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:  # noqa: BLE001
-                    hint = explain(str(e) or type(e).__name__)
+                    hint = self.redact(explain(str(e) or type(e).__name__))
                     if hint != self.status.get("error"):
-                        log.warning("Telegram-Bot: %s (%s) – neuer Versuch in %s s", hint, e, backoff)
+                        log.warning("Telegram-Bot: %s (%s) – neuer Versuch in %s s", hint, self.redact(e), backoff)
                     self.status.update(running=False, error=hint)
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 120)
@@ -213,7 +235,13 @@ class TelegramBot:
         if chat is None:
             return
         if chat != self.t.chat_id:
-            # Fremde (oder noch nicht eingetragene) Chats: nur die Chat-ID nennen, sonst nichts
+            if self.t.chat_id:
+                # eingerichtet: Fremde still ignorieren (nur einmal ins Log)
+                if chat not in self.strangers and len(self.strangers) < 1000:
+                    self.strangers.add(chat)
+                    log.warning("Telegram: Nachricht von fremdem Chat %s ignoriert", chat)
+                return
+            # noch nicht eingerichtet: nur die Chat-ID nennen, sonst nichts
             await self.send(self.L(f"Dieser Chat ist nicht freigeschaltet. Deine Chat-ID: {chat}\n"
                                    f"Trage sie in Orbwise ein (config.yaml → telegram.chat_id) und starte neu.",
                                    f"This chat is not authorised. Your chat ID: {chat}\n"
@@ -274,9 +302,7 @@ class TelegramBot:
             await self.send(self.L("Die Datei ist zu groß – Telegram-Bots können nur Dateien bis 20 MB abholen.",
                                    "The file is too big – Telegram bots can only fetch files up to 20 MB."))
             return None
-        info = await self.call("getFile", file_id=item["file_id"])
-        r = await self.client.get(f"{API}/file/bot{self.t.secret}/{info['file_path']}", timeout=httpx.Timeout(120))
-        r.raise_for_status()
+        r = await self._download(item["file_id"], timeout=httpx.Timeout(120))
         inbox = self.t.inbox
         inbox.mkdir(parents=True, exist_ok=True)
         stem, dot, ext = re.sub(r"[^\w\-. ]+", "_", Path(name).name).strip(" ._").rpartition(".")
@@ -287,18 +313,24 @@ class TelegramBot:
         target.write_bytes(r.content)
         return target
 
+    async def _download(self, file_id: str, **kw) -> httpx.Response:
+        """Datei von Telegram holen. Fehler ohne URL melden – in ihr steckt der Token."""
+        info = await self.call("getFile", file_id=file_id)
+        r = await self.client.get(f"{API}/file/bot{self.t.secret}/{info['file_path']}", **kw)
+        if r.status_code != 200:
+            raise RuntimeError(f"Telegram-Datei konnte nicht geladen werden (HTTP {r.status_code})")
+        return r
+
     async def _voice(self, voice: dict) -> str:
         if not self.transcribe:
             await self.send(self.L("Sprachnachrichten gehen nur mit Spracherkennung (voice.enabled).",
                                    "Voice messages need speech recognition (voice.enabled)."))
             return ""
-        info = await self.call("getFile", file_id=voice["file_id"])
-        r = await self.client.get(f"{API}/file/bot{self.t.secret}/{info['file_path']}")
-        r.raise_for_status()
+        r = await self._download(voice["file_id"])
         try:
             return (await self.transcribe(r.content)).strip()
         except Exception as e:  # noqa: BLE001
-            log.warning("Sprachnachricht nicht erkannt: %s", e)
+            log.warning("Sprachnachricht nicht erkannt: %s", self.redact(e))
             await self.send(self.L("Die Sprachnachricht konnte ich nicht verstehen.", "I couldn't understand that."))
             return ""
 
@@ -318,6 +350,7 @@ class TelegramBot:
                 continue  # per /stop abgebrochen – „Gestoppt“ ist schon gesendet
             error = self.current.exception()
             if error:
+                error = self.redact(error)
                 log.error("Telegram-Anfrage fehlgeschlagen: %s", error)
                 answer = self.L(f"Da ist etwas schiefgegangen: {error}", f"Something went wrong: {error}")
             else:
@@ -340,7 +373,7 @@ class TelegramBot:
             try:
                 stopped += int(await self.on_stop() or 0)
             except Exception as e:  # noqa: BLE001
-                log.warning("Stoppen am PC fehlgeschlagen: %s", e)
+                log.warning("Stoppen am PC fehlgeschlagen: %s", self.redact(e))
         self.last_file = None
         await self.notify(self.L("⏹ Gestoppt." if stopped else "Es läuft gerade nichts.",
                                  "⏹ Stopped." if stopped else "Nothing is running right now."))

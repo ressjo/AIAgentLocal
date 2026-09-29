@@ -37,3 +37,53 @@ def test_apply_privilege():
     assert apply_privilege("ls && sudo -E tee /x", "pkexec") == "ls && pkexec tee /x"
     assert apply_privilege("sudo pacman -Syu", "sudo") == "sudo -n pacman -Syu"
     assert apply_privilege("echo pseudo", "pkexec") == "echo pseudo"
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat ~/.ssh/id_rsa", "head -n5 $HOME/.aws/credentials", "grep pass < ~/.config/orbwise/config.yaml",
+    "less ~/.mozilla/firefox/abc.default/logins.json", "strings ~/Passwörter.kdbx", "cat /etc/shadow",
+    "printenv", "env", "echo $ORBWISE_TELEGRAM_TOKEN", "nmcli -s connection show Heim",
+    "nmcli --show-secrets connection show Heim", "cat /proc/self/environ", "base64 ~/.gnupg/secring.gpg",
+])
+def test_reading_secrets_needs_confirmation(cmd):
+    """Eine präparierte Mail/Webseite darf das Modell nicht ohne Rückfrage Zugangsdaten auslesen lassen."""
+    level, reason = classify_command(cmd)
+    assert level == CONFIRM and "Zugangsdaten" in reason
+
+
+@pytest.mark.parametrize("cmd", ["cat ~/notizen.txt", "ls ~/.ssh", "echo $HOME", "env LANG=C ls"])
+def test_harmless_reads_stay_safe(cmd):
+    assert classify_command(cmd)[0] == SAFE
+
+
+def test_secret_paths(tmp_path, monkeypatch):
+    from orbwise.tools.secretpaths import is_secret_path
+
+    ssh = tmp_path / ".ssh"
+    ssh.mkdir()
+    (ssh / "id_ed25519").write_text("KEY")
+    link = tmp_path / "notizen.txt"
+    link.symlink_to(ssh / "id_ed25519")  # harmlos klingender Name, zeigt auf den Schlüssel
+    (tmp_path / "echt.txt").write_text("hallo")
+    assert is_secret_path(link) and is_secret_path(ssh / "id_ed25519")
+    assert not is_secret_path(tmp_path / "echt.txt") and not is_secret_path("~/Dokumente/Rechnung.pdf")
+    for p in ("~/.config/chromium/Default/Login Data", "/srv/backup/home/anna/.ssh/id_rsa", "~/server.pem",
+              "~/.git-credentials", "/etc/NetworkManager/system-connections/Heim.nmconnection", "~/.docker/config.json"):
+        assert is_secret_path(p), p
+
+
+def test_file_tools_refuse_secrets(cfg, tmp_path):
+    from orbwise.tools.registry import BLOCKED as B
+    from orbwise.tools.registry import SAFE as S
+    from orbwise.tools.registry import ToolContext, get_tool, load_all_tools
+
+    load_all_tools()
+    ctx = ToolContext(cfg=cfg, memory=None)
+    ssh = tmp_path / ".ssh"
+    ssh.mkdir()
+    (ssh / "id_rsa").write_text("KEY")
+    (tmp_path / "harmlos.txt").symlink_to(ssh / "id_rsa")
+    read = get_tool("read_file")
+    assert read.assess(ctx, {"path": str(tmp_path / "harmlos.txt")})[0] == B
+    assert read.assess(ctx, {"path": "~/.config/orbwise/config.yaml"})[0] == B
+    assert read.assess(ctx, {"path": "~/Dokumente/notiz.md"})[0] == S

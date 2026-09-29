@@ -23,7 +23,8 @@ import httpx
 
 from . import proc
 from .netutil import client_kwargs, explain, html_instead_of_json, normalize_url
-from .registry import CONFIRM, SAFE, ToolContext, tool
+from .registry import BLOCKED, CONFIRM, SAFE, ToolContext, tool
+from .secretpaths import SECRET_REASON, is_secret_path
 
 # Für Tests austauschbar (httpx.MockTransport)
 TRANSPORT: httpx.AsyncBaseTransport | None = None
@@ -350,6 +351,8 @@ def _in_telegram_inbox(cfg: Any, path: Path) -> bool:
 
 def _upload_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     path = Path(str(args.get("path") or "")).expanduser()
+    if is_secret_path(path):
+        return BLOCKED, SECRET_REASON
     if _in_telegram_inbox(ctx.cfg, path):
         return SAFE, ""  # selbst vom Handy geschickt → direkt ablegen
     return CONFIRM, f"Datei {path} an Paperless übergeben"

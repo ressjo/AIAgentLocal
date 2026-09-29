@@ -49,10 +49,45 @@ def test_only_own_chat_is_served(cfg, tg):
 
     run(scenario())
     assert asked == ["Wie wird das Wetter?"]  # nur der eigene Chat, /start ist keine Anfrage
-    stranger = next(m for m in tg.sent if m["chat_id"] == 999)
-    assert "nicht freigeschaltet" in stranger["text"] and "999" in stranger["text"]
+    assert not [m for m in tg.sent if m["chat_id"] == 999]  # eingerichtet: Fremde bekommen gar keine Antwort
     mine = [m["text"] for m in tg.sent if m["chat_id"] == ME]
     assert "Schreib oder sprich" in mine[0] and mine[-1] == "Antwort auf Wie wird das Wetter?"
+
+
+def test_chat_id_is_only_revealed_during_setup(cfg, tg):
+    cfg.telegram.chat_id = 0
+
+    async def scenario():
+        bot = make_bot(cfg, tg, None)
+        tg.user_message(999, "/start")
+        await bot.poll_once()
+
+    run(scenario())
+    reply = next(m for m in tg.sent if m["chat_id"] == 999)
+    assert "nicht freigeschaltet" in reply["text"] and "999" in reply["text"]
+
+
+def test_token_never_leaks(cfg, tg, caplog):
+    """Der Bot-Token steckt in jeder API-URL – er darf weder im Log noch in Antworten aufs Handy landen."""
+    from orbwise.telegram import redact
+
+    assert redact(f"GET https://api.telegram.org/bot{TOKEN}/getUpdates", TOKEN).count("<token>") == 1
+    assert "AAH" not in redact("https://api.telegram.org/bot1234567890:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/x", "")
+
+    async def transcribe(data):
+        return "egal"
+
+    async def scenario():
+        bot = make_bot(cfg, tg, None, transcribe=transcribe)
+        tg.user_message(ME, voice="gibt-es-nicht")  # Telegram liefert 404 für die Datei
+        await bot.poll_once()
+
+    with caplog.at_level("DEBUG"):
+        run(scenario())
+    import logging
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
+    assert TOKEN not in caplog.text and "404" in caplog.text
+    assert all(TOKEN not in t for t in tg.texts())
 
 
 def test_confirmation_buttons(cfg, tg):
@@ -345,3 +380,25 @@ def test_stop_from_the_phone_cancels_pc_tasks(cfg, tg, monkeypatch):
         tg.user_message(ME, "/stop")
         client.portal.call(wait_for, lambda: "⏹ Gestoppt." in tg.texts(), 8.0)
         assert client.portal.call(is_cancelled, task)
+
+
+def test_dashboard_is_not_opened_to_the_network_by_accident(cfg, monkeypatch):
+    from types import SimpleNamespace
+
+    from orbwise import cli, server
+
+    assert server.remote_bind_warning(cfg) == ""  # 127.0.0.1
+    for host in ("localhost", "::1", "127.0.0.2"):
+        cfg.host = host
+        assert server.remote_bind_warning(cfg) == ""
+    cfg.host = "0.0.0.0"
+    assert "ohne Anmeldung" in server.remote_bind_warning(cfg)
+    started = []
+    monkeypatch.setattr(cli, "load_config", lambda: cfg)
+    monkeypatch.setattr("uvicorn.run", lambda app, **kw: started.append(kw["host"]))
+    with pytest.raises(SystemExit) as stop:
+        cli.cmd_serve(SimpleNamespace(open=False, verbose=False))
+    assert "allow_remote" in str(stop.value) and not started
+    cfg.allow_remote = True
+    cli.cmd_serve(SimpleNamespace(open=False, verbose=False))
+    assert started == ["0.0.0.0"]

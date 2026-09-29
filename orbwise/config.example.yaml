@@ -4,6 +4,7 @@
 language: de             # de (Deutsch) | en (English) – assistant, speech recognition, voice and UI
 host: 127.0.0.1          # keep it local only – Orbwise can run commands on your machine!
 port: 8765
+# allow_remote: false     # only with true Orbwise starts on another address – the dashboard has no login!
 assistant_name: Jarvis
 user_name: ""            # how Jarvis should address you, e.g. "Alex"
 persona_extra: ""        # extra personality instructions, e.g. "Call me 'boss'."

@@ -62,7 +62,12 @@ First public release.
   is served, no open port needed (long polling). Files in both directions: PDFs, documents and photos sent to the
   bot are saved (and can go straight into Paperless), and Orbwise can send local files or Paperless documents to the
   phone (never keys or password stores). `/stop` (or "stop") from the phone cancels what is running – there and on
-  the PC.
+  the PC. The bot token is kept out of logs, error messages and the dashboard; once `telegram.chat_id` is set,
+  messages from other chats are ignored silently.
+- **Secret files are protected**: `read_file`, sending to the phone and uploading to Paperless refuse SSH/GPG keys,
+  password stores, browser logins, cloud credentials and Orbwise's own config (also through symlinks); shell
+  commands that read such files, `printenv`/`env`, token variables or Wi-Fi passwords (`nmcli -s`) need confirmation.
+- Orbwise refuses to listen on a non-local address unless `allow_remote: true` is set (the dashboard has no login).
 - **E-mail** via IMAP – **Proton Mail through the Proton Mail Bridge** or any other mailbox: list unread mails,
   search, read (without marking as read), ask about a mail, archive/move/label/trash and PDF attachments to
   Paperless after confirmation, unread mails in the briefing. Mail content is passed to the model as untrusted

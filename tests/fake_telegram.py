@@ -61,7 +61,10 @@ class FakeTelegram:
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if "/file/bot" in path:
-            return httpx.Response(200, content=self.files.get(path.rsplit("/", 1)[-1], b""))
+            name = path.rsplit("/", 1)[-1]
+            if name not in self.files:
+                return httpx.Response(404, content=b"Not Found")
+            return httpx.Response(200, content=self.files[name])
         method = path.rsplit("/", 1)[-1]
         if method == "sendDocument":
             raw = request.read()

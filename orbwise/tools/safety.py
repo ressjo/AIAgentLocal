@@ -13,6 +13,7 @@ import shlex
 from pathlib import Path
 
 from .registry import BLOCKED, CONFIRM, SAFE
+from .secretpaths import is_secret_path
 
 SEPARATORS = {";", "&&", "||", "|", "&", "\n", "|&", ";;", "(", ")"}
 REDIRECTS = {">", ">>", ">|", "&>", "&>>"}
@@ -24,7 +25,7 @@ SAFE_COMMANDS = {
     "whereis", "type", "file", "stat", "wc", "sort", "uniq", "cut", "tr", "echo", "printf", "pwd", "date",
     "cal", "uptime", "uname", "hostname", "whoami", "id", "groups", "df", "du", "free", "lsblk", "lscpu",
     "lsusb", "lspci", "lsmod", "findmnt", "ps", "pgrep", "sensors", "ss", "nslookup", "dig", "host",
-    "journalctl", "checkupdates", "tree", "basename", "dirname", "realpath", "readlink", "printenv",
+    "journalctl", "checkupdates", "tree", "basename", "dirname", "realpath", "readlink",
     "locale", "inxi", "fastfetch", "neofetch", "nvidia-smi", "rocm-smi", "rocminfo", "glxinfo",
     "vulkaninfo", "nproc", "getconf", "md5sum", "sha1sum", "sha256sum", "column", "jq", "diff", "cmp",
     "zcat", "xxd", "hexdump", "strings", "cd", "true", "test", "[", "lsof", "vmstat", "iostat", "w",
@@ -45,6 +46,13 @@ BLOCK_PATTERNS = [
     (re.compile(r"\b(wipefs|shred|blkdiscard)\b[^;&|]*/dev/"), "Löschen eines Datenträgers"),
     (re.compile(r"\bch(mod|own|grp)\b[^;&|]*\s-\w*R\w*\b[^;&|]*\s/(\s|$|\*)"), "Rechte des ganzen Systems ändern"),
 ]
+
+# Befehle, die Dateiinhalte ausgeben – auf Schlüssel/Passwort-Dateien angewandt nur mit Rückfrage
+READERS = {"cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "less", "more", "zcat", "xxd", "hexdump",
+           "strings", "jq", "diff", "cmp", "sort", "uniq", "cut", "column", "tr", "sed", "awk", "base64", "od",
+           "nl", "tac", "bat", "batcat", "view", "vim", "vi", "nano", "cp", "scp", "rsync", "tar", "zip", "curl"}
+SECRET_VARS = re.compile(r"\$\{?\w*(TOKEN|PASSW|SECRET|API_?KEY|PRIVATE)\w*", re.I)
+SECRETS_REASON = "liest Zugangsdaten (Schlüssel/Passwörter)"
 
 WARN_PATTERNS = [
     (re.compile(r"\b(curl|wget)\b[^;&]*\|\s*(sudo\s+)?(ba|z|da|fi)?sh\b"), "führt ein Skript direkt aus dem Internet aus"),
@@ -168,14 +176,22 @@ def classify_command(command: str) -> tuple[str, str]:
     for seg in segments:
         core, root = _strip_wrappers(seg)
         if not core:
+            if any(os.path.basename(t) == "env" for t in seg):
+                reasons.append(SECRETS_REASON)  # „env“ allein gibt alle Umgebungsvariablen samt Tokens aus
             continue
         name = os.path.basename(core[0])
         args = core[1:]
+        if name == "printenv" or (name == "nmcli" and any(a in ("-s", "--show-secrets") or
+                                                          (a.startswith("-") and not a.startswith("--") and "s" in a)
+                                                          for a in args)):
+            reasons.append(SECRETS_REASON)
+        elif name in READERS and any(is_secret_path(a) for a in args if not a.startswith("-")):
+            reasons.append(SECRETS_REASON)
         if name == "rm" and _rm_is_catastrophic(args):
             return BLOCKED, "rekursives Löschen eines Systemverzeichnisses"
         if root:
             reasons.append("benötigt Root-Rechte")
-        elif not _segment_is_safe(name, [a for a in args if a not in REDIRECTS]):
+        elif name != "printenv" and not _segment_is_safe(name, [a for a in args if a not in REDIRECTS]):
             reasons.append(f"'{name}' kann das System verändern")
 
     for i, t in enumerate(tokens):
@@ -184,6 +200,10 @@ def classify_command(command: str) -> tuple[str, str]:
             if target not in ("/dev/null",) and not target.startswith("&"):
                 reasons.append("schreibt in eine Datei")
                 break
+        if t == "<" and i + 1 < len(tokens) and is_secret_path(tokens[i + 1]):
+            reasons.append(SECRETS_REASON)
+    if SECRET_VARS.search(cmd) or "/environ" in cmd:
+        reasons.append(SECRETS_REASON)
     if "$(" in cmd or "`" in cmd:
         reasons.append("enthält Befehlsersetzung")
     for pattern, reason in WARN_PATTERNS:

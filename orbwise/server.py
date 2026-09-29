@@ -209,6 +209,26 @@ class Hub:
         return stopped
 
 
+def is_loopback(host: str) -> bool:
+    import ipaddress
+    if host in ("localhost", "ip6-localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def remote_bind_warning(cfg: Config) -> str:
+    """Leer bei 127.0.0.1. Sonst ist das Dashboard – ohne Anmeldung, mit Befehlsausführung – im Netz erreichbar;
+    die Host-Prüfung hält Browser-Angriffe ab, aber kein Gerät im LAN, das den Host-Header selbst setzt."""
+    if is_loopback(cfg.host):
+        return ""
+    return (f"host: {cfg.host} macht das Dashboard ohne Anmeldung im Netzwerk erreichbar – jedes Gerät dort könnte "
+            "Befehle auf diesem PC auslösen. Für unterwegs lieber Telegram, VPN (z. B. WireGuard/Tailscale) oder "
+            "einen SSH-Tunnel (ssh -L 8765:localhost:8765 pc) nutzen.")
+
+
 def check_host(host: str | None, port: int) -> bool:
     if not host:
         return False

@@ -6,11 +6,9 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from .registry import BLOCKED, SAFE, ToolContext, tool
+from .secretpaths import SECRET_REASON, is_secret_path
 
 MAX_FILE = 50_000_000  # Grenze der Telegram-Bot-API
-# Geheimnisse verlassen den PC nie – auch nicht aufs eigene Handy
-SECRET_PARTS = (".ssh", ".gnupg", ".password-store", "id_rsa", "id_ed25519", "id_ecdsa", ".kdbx", "shadow",
-                "keyrings", ".netrc", ".pgpass", "credentials", "secrets")
 
 
 def _enabled(cfg: Any) -> bool:
@@ -19,10 +17,9 @@ def _enabled(cfg: Any) -> bool:
 
 
 def _risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
-    path = str(args.get("path") or "")
-    low = path.lower()
-    if path and (any(part in low for part in SECRET_PARTS) or Path(low).name in (".env", "config.yaml")):
-        return BLOCKED, "Schlüssel, Passwörter und Zugangsdaten werden nie verschickt"
+    # Geheimnisse verlassen den PC nie – auch nicht aufs eigene Handy
+    if is_secret_path(str(args.get("path") or "")):
+        return BLOCKED, SECRET_REASON
     return SAFE, ""
 
 
@@ -56,5 +53,5 @@ async def telegram_send_file(
     try:
         await bot.send_file(data, name, caption)
     except Exception as e:  # noqa: BLE001
-        return f"Senden fehlgeschlagen: {e}"
+        return f"Senden fehlgeschlagen: {bot.redact(e)}"
     return f"Aufs Handy geschickt: {name} ({max(1, len(data) // 1024)} KB)."

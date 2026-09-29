@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Annotated
 
 from . import proc
-from .registry import CONFIRM, SAFE, ToolContext, tool
+from .registry import BLOCKED, CONFIRM, SAFE, ToolContext, tool
+from .secretpaths import SECRET_REASON, is_secret_path
 
 TEXT_LIMIT = 8000
 SKIP_DIRS = {".git", "node_modules", ".cache", "__pycache__", ".venv", ".local/share/Trash", ".steam"}
@@ -164,7 +165,13 @@ async def list_directory(ctx: ToolContext, path: Annotated[str, "Verzeichnis, z.
     return _describe(entries, 60) if entries else f"{p} ist leer."
 
 
-@tool("Liest eine Textdatei (z. B. Konfiguration, Log, Notiz) und gibt den Inhalt zurück.")
+def _read_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
+    if is_secret_path(str(args.get("path") or "")):
+        return BLOCKED, SECRET_REASON
+    return SAFE, ""
+
+
+@tool("Liest eine Textdatei (z. B. Konfiguration, Log, Notiz) und gibt den Inhalt zurück.", risk=_read_risk)
 async def read_file(ctx: ToolContext, path: Annotated[str, "Pfad zur Datei"]) -> str:
     p = Path(path).expanduser()
     if not p.is_file():

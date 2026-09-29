@@ -21,9 +21,16 @@ EXAMPLE_CONFIG = Path(__file__).parent / "config.example.yaml"
 def cmd_serve(args) -> None:
     import uvicorn
 
-    from .server import create_app
+    from .server import create_app, remote_bind_warning
 
     cfg = load_config()
+    warning = remote_bind_warning(cfg)
+    if warning and not cfg.allow_remote:
+        sys.exit(T("Abgebrochen: ", "Aborted: ") + warning + T(
+            "\nWer das wirklich will: allow_remote: true in config.yaml setzen.",
+            "\nIf you really want this, set allow_remote: true in config.yaml."))
+    if warning:
+        logging.getLogger("orbwise").warning("ACHTUNG: %s", warning)
     app = create_app(cfg)
     url = f"http://localhost:{cfg.port}"
     print(T("Orbwise läuft auf ", "Orbwise is running at ") + url)
@@ -221,10 +228,13 @@ def cmd_doctor(args) -> None:
         line(p.exists() and p.is_dir() and any(p.iterdir()), f"{p} " + T("gemountet", "mounted"), T("Mount prüfen", "check the mount"))
     from .memory.index import check_file
     line(check_file(cfg.memory.dir / "index.sqlite"), T("Gedächtnis-Suchindex", "Memory search index"), "orbwise reindex")
+    from .server import remote_bind_warning
+    line(not remote_bind_warning(cfg), T(f"Dashboard nur lokal ({cfg.host})", f"Dashboard local only ({cfg.host})"),
+         T("host: 127.0.0.1 setzen", "set host: 127.0.0.1"))
     if cfg.telegram.secret:
         import httpx
 
-        from .telegram import API, explain
+        from .telegram import API, explain, redact
         try:  # echte Verbindung: Token gültig? Webhook gesetzt (blockiert getUpdates)?
             me = httpx.get(f"{API}/bot{cfg.telegram.secret}/getMe", timeout=10).json()
             if not me.get("ok"):
@@ -235,7 +245,7 @@ def cmd_doctor(args) -> None:
             line(not url, T("kein Webhook gesetzt", "no webhook set"),
                  T("Orbwise entfernt ihn beim nächsten Start", "Orbwise removes it on the next start"))
         except (httpx.HTTPError, RuntimeError, ValueError) as e:
-            line(False, "Telegram-Bot", explain(str(e)))
+            line(False, "Telegram-Bot", redact(explain(str(e)), cfg.telegram.secret))
         line(bool(cfg.telegram.chat_id), "Telegram chat_id",
              T("Orbwise starten, dem Bot „/start“ schreiben und telegram.chat_id eintragen",
                "start Orbwise, send the bot “/start” and set telegram.chat_id"))

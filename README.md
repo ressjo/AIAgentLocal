@@ -480,6 +480,10 @@ Tip: tell Orbwise once when you start work ("I start work at 8") – it remember
   sent. Uploading arbitrary local files to Paperless asks first.
 Messages pass through Telegram's servers (not end-to-end encrypted), so keep that in mind for sensitive content.
 
+**Security:** the bot opens no port – it only connects out to Telegram. But your Telegram account becomes a remote
+control for your PC (including ✅ confirmations), so turn on Telegram's **two-step verification** and keep the token
+secret; if it leaks, `/revoke` it in @BotFather. Details in [SECURITY.md](SECURITY.md#telegram-and-your-home-network).
+
 **No reply to `/start`?** Run `orbwise doctor` – it checks the token live and whether a webhook is set. Orbwise
 logs "Telegram-Bot @name aktiv" at startup, and problems also appear as a notice in the dashboard. Typical causes:
 Orbwise was not restarted after editing the config (`systemctl --user restart orbwise`), the token is wrong, or a

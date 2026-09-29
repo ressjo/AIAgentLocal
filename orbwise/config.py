@@ -363,6 +363,8 @@ class Config(BaseModel):
     language: str = "de"
     host: str = "127.0.0.1"
     port: int = 8765
+    # Nur mit true startet Orbwise auf einer anderen Adresse als 127.0.0.1 (Dashboard hat keine Anmeldung!)
+    allow_remote: bool = False
     assistant_name: str = "Jarvis"
     user_name: str = ""
     # Zusätzliche Persönlichkeits-/Verhaltensanweisungen für den System-Prompt
