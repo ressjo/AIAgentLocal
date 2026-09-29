@@ -654,7 +654,8 @@
   }
 
   // Symbol je Aktionsart (weitere Symbole: ICONS in orb.js); Gedächtnis leuchtet im Kern statt als Satellit
-  const ICON_GROUPS = { shell: "cli", packages: "cli", sysadmin: "cli", system: "cli", power: "cli", web: "cloud" };
+  const ICON_GROUPS = { shell: "cli", packages: "cli", sysadmin: "cli", system: "cli", power: "cli", web: "cloud",
+                        mail: "mail", paperless: "paperless" };
 
   function toolCall(ev) {
     if (ev.group === "memory_tools") orb.memoryGlow(ev.id, true, satLabel(ev.name));

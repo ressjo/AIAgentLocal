@@ -74,7 +74,8 @@ First public release.
   brightness; a light beam shoots from the core to each tool and the result flows back (green ok, red error).
   While thinking, impulses run from the core outwards through the network – faster with every token, calmer when
   the stream stalls. A thin context ring shows how full the context is (orange from 85 %, flashes when condensed).
-  Actions get symbols: a terminal for shell/packages/system tools and a cloud for web search, with light dots flowing
+  Actions get symbols: a terminal for shell/packages/system tools, a cloud for web search, an envelope for mail and a
+  document with a scan bar for Paperless, with light dots flowing
   from the core into the symbol; memory actions make the neurons in the core glow gold instead. HUD details: message glide-in, panel corners light up on
   activity and a copy button on code blocks – all within the same frame budget.
 - The status returns to "ready" as soon as the answer is complete (condensing runs silently afterwards), after the

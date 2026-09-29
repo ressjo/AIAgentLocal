@@ -66,6 +66,41 @@
       frame.closePath();
       return { frame, cursor: null };
     },
+    mail() {  // Briefumschlag; oben rechts pulsiert ein Punkt wie bei einer neuen Nachricht
+      const frame = new Path2D();
+      frame.roundRect ? frame.roundRect(-1, -0.68, 2, 1.36, 0.14) : frame.rect(-1, -0.68, 2, 1.36);
+      frame.moveTo(-0.92, -0.58); frame.lineTo(0, 0.12); frame.lineTo(0.92, -0.58);
+      frame.moveTo(-0.92, 0.6); frame.lineTo(-0.3, 0.02);
+      frame.moveTo(0.92, 0.6); frame.lineTo(0.3, 0.02);
+      return {
+        frame, cursor: null,
+        animate(ctx, t, rgb) {
+          const r = 0.17 + 0.05 * Math.sin(t * 5);
+          ctx.fillStyle = `rgba(${rgb},${0.7 + 0.3 * Math.sin(t * 5)})`;
+          ctx.beginPath(); ctx.arc(0.98, -0.7, r, 0, TAU); ctx.fill();
+        },
+      };
+    },
+    paperless() {  // Dokument mit Eselsohr und Textzeilen; ein Scanbalken läuft darüber (archivieren/erkennen)
+      const frame = new Path2D();
+      frame.moveTo(-0.72, -1); frame.lineTo(0.36, -1); frame.lineTo(0.72, -0.64);
+      frame.lineTo(0.72, 1); frame.lineTo(-0.72, 1); frame.closePath();
+      frame.moveTo(0.36, -1); frame.lineTo(0.36, -0.64); frame.lineTo(0.72, -0.64);
+      for (const [y, w] of [[-0.3, 0.9], [0.05, 1.05], [0.4, 0.75]]) { frame.moveTo(-0.48, y); frame.lineTo(-0.48 + w, y); }
+      return {
+        frame, cursor: null,
+        animate(ctx, t, rgb) {
+          const y = -0.9 + ((t * 0.55) % 1) * 1.8;
+          const g = ctx.createLinearGradient(0, y - 0.25, 0, y + 0.05);
+          g.addColorStop(0, `rgba(${rgb},0)`);
+          g.addColorStop(1, `rgba(${rgb},0.55)`);
+          ctx.fillStyle = g;
+          ctx.fillRect(-0.68, y - 0.25, 1.36, 0.3);
+          ctx.fillStyle = `rgba(${rgb},0.95)`;
+          ctx.fillRect(-0.68, y, 1.36, 0.05);
+        },
+      };
+    },
   };
   const iconPaths = {};
   const iconPath = (name) => iconPaths[name] || (iconPaths[name] = ICONS[name] ? ICONS[name]() : null);
@@ -951,6 +986,7 @@
         ctx.stroke(paths.frame);
         if (paths.cursor && Math.sin(this.t * 7) > -0.2) ctx.stroke(paths.cursor);  // blinkender Cursor
       }
+      if (paths.animate) paths.animate(ctx, this.t, s.flash > 0.05 ? flashCol : col);
       ctx.restore();
       return scale + 10;
     }
