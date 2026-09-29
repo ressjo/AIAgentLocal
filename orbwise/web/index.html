@@ -22,7 +22,19 @@
         <button class="pill pill-button" id="pill-llm" title="Sprachmodell wechseln" aria-haspopup="true"><i></i><b>LLM</b><em>–</em><span class="caret">▾</span></button>
         <div class="model-menu hidden" id="model-menu" role="menu"></div>
       </span>
-      <span class="pill" id="pill-voice" title="Sprachein-/ausgabe"><i></i><b>VOICE</b><em>–</em></span>
+      <span class="pill-wrap">
+        <button class="pill pill-button" id="pill-voice" title="Stimme wählen · Sprachein-/ausgabe" aria-haspopup="true"><i></i><b>VOICE</b><em>–</em><span class="caret">▾</span></button>
+        <div class="model-menu voice-menu hidden" id="voice-menu" role="menu">
+          <div id="voice-list"></div>
+          <div class="mm-title">JARVIS-EFFEKT</div>
+          <div class="fx-row">
+            <button class="toggle" id="fx-toggle">AUS</button>
+            <input type="range" id="fx-amount" min="0" max="100" value="60" aria-label="Effektstärke">
+            <span class="fx-value" id="fx-value">60 %</span>
+          </div>
+          <p class="fx-hint">Tiefere, sonore Stimme mit leichtem Hall und digitalem Schimmer.</p>
+        </div>
+      </span>
       <span class="pill" id="pill-mem" title="Gedächtnis"><i></i><b>MEM</b><em>–</em></span>
     </div>
     <div class="clock"><span id="clock-time">--:--:--</span><span id="clock-date"></span></div>
@@ -99,7 +111,6 @@
         <button class="tab active" data-tab="activity">AKTIVITÄT</button>
         <button class="tab" data-tab="chats">VERLAUF</button>
         <button class="tab" data-tab="memory">GEDÄCHTNIS</button>
-        <button class="tab" data-tab="voice">STIMME</button>
         <button class="tab" data-tab="planner">PLANER</button>
       </div>
       <div class="tab-body" id="tab-activity">
@@ -115,21 +126,6 @@
         <ul class="chat-list" id="chat-list"></ul>
         <p class="chat-hint">★ markiert wichtige Chats · Klick öffnet und setzt fort · Doppelklick auf den Titel benennt um ·
           ✕ löscht den Chat auch aus Jarvis' Gedächtnis.</p>
-      </div>
-      <div class="tab-body hidden" id="tab-voice">
-        <div class="mem-section">
-          <div class="mem-title">JARVIS-EFFEKT</div>
-          <div class="fx-row">
-            <button class="toggle" id="fx-toggle">AUS</button>
-            <input type="range" id="fx-amount" min="0" max="100" value="60" aria-label="Effektstärke">
-            <span class="fx-value" id="fx-value">60 %</span>
-          </div>
-          <p class="fx-hint">Tiefere, sonore Stimme mit leichtem Hall und digitalem Schimmer.</p>
-        </div>
-        <div class="mem-section">
-          <div class="mem-title">DEUTSCHE STIMMEN</div>
-          <ul class="voices" id="voices"></ul>
-        </div>
       </div>
       <div class="tab-body hidden" id="tab-planner">
         <div class="mem-section">

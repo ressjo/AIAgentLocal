@@ -839,6 +839,11 @@
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); $("pw-cancel").click(); }
   });
 
+  // Leertaste = Push-to-talk – aber nie, während man tippt (Chat, Planer, Briefing …) oder ein Knopf den Fokus hat
+  function typingTarget(el) {
+    return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(el.tagName));
+  }
+
   document.addEventListener("keydown", (e) => {
     if (!$("boot").classList.contains("hidden")) return;
     if (pwId) return;  // Passwortfeld hat Vorrang (kein Push-to-talk mit Leertaste)
@@ -853,7 +858,7 @@
       stopSpeech(true);
       return;
     }
-    if (e.code === "Space" && !e.repeat && document.activeElement !== $("input")) {
+    if (e.code === "Space" && !e.repeat && !typingTarget(document.activeElement)) {
       e.preventDefault();
       startPtt();
     }
@@ -913,11 +918,9 @@
       $("tab-chats").classList.toggle("hidden", tab.dataset.tab !== "chats");
       if (tab.dataset.tab === "chats") loadChats();
       $("tab-memory").classList.toggle("hidden", tab.dataset.tab !== "memory");
-      $("tab-voice").classList.toggle("hidden", tab.dataset.tab !== "voice");
       $("tab-planner").classList.toggle("hidden", tab.dataset.tab !== "planner");
       if (tab.dataset.tab === "planner") loadPlanner();
       if (tab.dataset.tab === "memory") loadMemory();
-      if (tab.dataset.tab === "voice") loadVoices();
     };
   });
 
@@ -952,61 +955,116 @@
   $("fx-amount").onchange = () => sendVoiceSettings();
   renderFx();
 
-  async function loadVoices() {
-    const list = $("voices");
+  // Stimmen-Menü an der VOICE-Pille: auswählen, anhören, löschen, hinzufügen (wie das Modell-Menü)
+  const voiceMenu = $("voice-menu");
+  async function openVoiceMenu(catalog = false) {
+    closeModelMenu();
+    const list = $("voice-list");
     let data;
-    try {
-      data = await getJSON("/api/voices");
-    } catch {
-      list.innerHTML = `<li class="empty">${L("Stimmen nicht ladbar.", "Could not load voices.")}</li>`;
-      return;
-    }
+    try { data = await getJSON("/api/voices"); } catch { toast(L("Stimmen nicht ladbar", "Could not load voices")); return; }
+    const st = S.status && S.status.voice;
+    list.innerHTML = `<div class="mm-title">${catalog ? L("STIMME HINZUFÜGEN", "ADD VOICE") : L("STIMME WÄHLEN", "CHOOSE VOICE")}</div>
+      <div class="mm-hint"></div>`;
+    list.querySelector(".mm-hint").textContent = st ? [
+      st.stt ? L("Spracherkennung ✔", "Speech recognition ✔") : L("Spracherkennung aus", "Speech recognition off"),
+      st.wake ? L("Wake-Word ✔", "Wake word ✔") : L("Wake-Word aus", "Wake word off")].join(" · ") : "";
     if (!data.available) {
-      list.innerHTML = `<li class="empty">${L("Piper-Sprachausgabe ist deaktiviert – es spricht der Browser.", "Piper speech output is disabled – the browser speaks instead.")}</li>`;
-      return;
-    }
-    if (!S.voiceName) S.voiceName = data.current;
-    list.innerHTML = "";
-    for (const v of data.voices) {
-      const li = document.createElement("li");
-      const current = v.name === data.current;
-      li.className = "voice" + (current ? " current" : "");
-      li.innerHTML = `<div class="voice-head"><span class="voice-name"></span><span class="voice-tag">${current ? L("AKTIV", "ACTIVE") : v.installed ? L("INSTALLIERT", "INSTALLED") : v.male ? L("MÄNNLICH", "MALE") : L("WEIBLICH", "FEMALE")}</span></div>
-        <div class="voice-desc"></div><div class="voice-actions"></div>`;
-      li.querySelector(".voice-name").textContent = v.label;
-      li.querySelector(".voice-desc").textContent = v.description;
-      const actions = li.querySelector(".voice-actions");
-      const btn = (label, fn) => {
-        const b = document.createElement("button");
-        b.className = "ghost";
-        b.textContent = label;
-        b.onclick = async () => { b.disabled = true; try { await fn(b); } finally { b.disabled = false; } };
-        actions.appendChild(b);
-        return b;
-      };
-      if (v.installed) {
-        btn(L("ANHÖREN", "PREVIEW"), () => previewVoice(v.name));
-        if (!current) btn(L("AUSWÄHLEN", "SELECT"), async () => {
-          S.voiceName = v.name;
-          store.set("voice", v.name);
-          sendVoiceSettings();
-          setTimeout(loadVoices, 150);
-        });
-      } else {
-        btn(L("INSTALLIEREN", "INSTALL"), async (b) => {
-          b.textContent = L("LÄDT …", "LOADING …");
-          const r = await fetch(`/api/voices/${encodeURIComponent(v.name)}/install`, { method: "POST" });
-          if (!r.ok) {
-            const err = await r.json().catch(() => ({}));
-            toast(err.detail || L("Installation fehlgeschlagen", "Installation failed"));
-          }
-          loadVoices();
-          loadStatus();
-        });
+      list.insertAdjacentHTML("beforeend", `<div class="mm-hint">${L("Piper-Sprachausgabe ist deaktiviert – es spricht der Browser.",
+        "Piper speech output is disabled – the browser speaks instead.")}</div>`);
+    } else if (!catalog) {
+      if (!S.voiceName) S.voiceName = data.current;
+      for (const v of data.voices.filter((x) => x.installed)) list.appendChild(voiceRow(v, data.current));
+      const add = document.createElement("button");
+      add.className = "model-item add";
+      add.textContent = L("+ STIMME HINZUFÜGEN …", "+ ADD VOICE …");
+      add.onclick = (e) => { e.stopPropagation(); openVoiceMenu(true); };
+      list.appendChild(add);
+    } else {
+      const missing = data.voices.filter((x) => !x.installed);
+      if (!missing.length) list.insertAdjacentHTML("beforeend", `<div class="mm-hint">${L("Alle Stimmen sind installiert.", "All voices are installed.")}</div>`);
+      for (const v of missing) {
+        const b = voiceItem(v, v.male ? L("MÄNNLICH", "MALE") : L("WEIBLICH", "FEMALE"));
+        b.onclick = async (e) => {
+          e.stopPropagation();
+          b.disabled = true;
+          b.querySelector(".mi-tag").textContent = L("LÄDT …", "LOADING …");
+          try {
+            await api("POST", `/api/voices/${encodeURIComponent(v.name)}/install`);
+            toast(L(`✔ ${v.label} installiert`, `✔ ${v.label} installed`));
+            loadStatus();
+            openVoiceMenu();
+          } catch { b.disabled = false; b.querySelector(".mi-tag").textContent = ""; }
+        };
+        list.appendChild(b);
       }
-      list.appendChild(li);
+      const back = document.createElement("button");
+      back.className = "model-item add";
+      back.textContent = L("← ZURÜCK", "← BACK");
+      back.onclick = (e) => { e.stopPropagation(); openVoiceMenu(); };
+      list.appendChild(back);
     }
+    voiceMenu.classList.toggle("catalog", catalog);
+    voiceMenu.classList.remove("hidden");
+    $("pill-voice").setAttribute("aria-expanded", "true");
   }
+
+  function voiceItem(v, tag) {
+    const b = document.createElement("button");
+    b.className = "model-item";
+    b.innerHTML = `<div class="mi-head"><span class="mi-name"></span><span class="mi-tag"></span></div><div class="mi-sub"></div>`;
+    b.querySelector(".mi-name").textContent = v.label;
+    b.querySelector(".mi-tag").textContent = tag;
+    b.querySelector(".mi-sub").textContent = v.description + (v.size_mb ? ` · ${v.size_mb} MB` : "");
+    return b;
+  }
+
+  function voiceRow(v, current) {
+    const active = v.name === current;
+    const b = voiceItem(v, active ? L("AKTIV", "ACTIVE") : v.male ? L("MÄNNLICH", "MALE") : L("WEIBLICH", "FEMALE"));
+    if (active) b.classList.add("active");
+    b.onclick = (e) => {
+      e.stopPropagation();
+      if (active) return;
+      S.voiceName = v.name;
+      store.set("voice", v.name);
+      sendVoiceSettings();
+      toast(L(`Stimme: ${v.label}`, `Voice: ${v.label}`));
+      setTimeout(() => openVoiceMenu(), 150);
+    };
+    const row = document.createElement("div");
+    row.className = "model-row";
+    const play = document.createElement("button");
+    play.className = "model-del voice-play";
+    play.textContent = "▶";
+    play.title = L("Anhören", "Preview");
+    play.onclick = (e) => { e.stopPropagation(); previewVoice(v.name); };
+    const del = document.createElement("button");
+    del.className = "model-del";
+    del.textContent = "🗑";
+    del.disabled = active;
+    del.title = active ? L("Aktive Stimme – erst eine andere wählen", "Active voice – choose another one first") : L("Stimme löschen", "Delete voice");
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(L(`Stimme ${v.label} löschen?`, `Delete voice ${v.label}?`))) return;
+      try {
+        await api("DELETE", `/api/voices/${encodeURIComponent(v.name)}`);
+        toast(L(`✔ ${v.label} gelöscht`, `✔ ${v.label} deleted`));
+        openVoiceMenu();
+      } catch { /* Meldung kommt von api() */ }
+    };
+    row.append(b, play, del);
+    return row;
+  }
+
+  function closeVoiceMenu() {
+    voiceMenu.classList.add("hidden");
+    $("pill-voice").setAttribute("aria-expanded", "false");
+  }
+  $("pill-voice").onclick = (e) => {
+    e.stopPropagation();
+    voiceMenu.classList.contains("hidden") ? openVoiceMenu() : closeVoiceMenu();
+  };
+  document.addEventListener("click", (e) => { if (!voiceMenu.contains(e.target)) closeVoiceMenu(); });
 
   async function previewVoice(name) {
     await initAudio();
@@ -1146,6 +1204,7 @@
   // ---------------------------------------------------------------- Modellauswahl
   const modelMenu = $("model-menu");
   async function openModelMenu() {
+    closeVoiceMenu();
     let data;
     try { data = await getJSON("/api/models"); } catch { toast(L("Modelle nicht ladbar", "Could not load models")); return; }
     modelMenu.innerHTML = `<div class="mm-title">${L("MODELL WÄHLEN", "CHOOSE MODEL")}</div>`;
@@ -1515,7 +1574,8 @@
 
   function setPill(id, cls, text) {
     const el = $(id);
-    el.className = "pill " + cls;
+    el.classList.remove("ok", "warn", "bad");
+    el.classList.add(cls);
     el.querySelector("em").textContent = text;
   }
 

@@ -258,11 +258,11 @@ llama-server, **don't** pass `--reasoning-budget 0`, which disables reasoning se
 
 ## Voice & Jarvis effect
 
-In the **VOICE** tab you can install, preview and select Piper voices with one click – English (Alan, Northern
+Click the **VOICE** pill at the top to select, preview (▶), delete (🗑) or add Piper voices – English (Alan, Northern
 English male, Ryan, Joe, Jenny, Amy) or German (Thorsten, Pavoque, Karlsson, Kerstin, Ramona). They are stored
 in `~/.local/share/orbwise/voices/`; drop your own Piper voices (`.onnx` + `.onnx.json`) there and they appear too.
 
-The **Jarvis effect** (on/off + strength) adds a slightly deeper, sonorous tone, a light room reverb, a subtle
+The **Jarvis effect** (on/off + strength, in the same menu) adds a slightly deeper, sonorous tone, a light room reverb, a subtle
 chorus and a "digital" shimmer.
 
 Speech recognition uses faster-whisper: on NVIDIA set `voice.stt_device: cuda` and `stt_compute_type: float16`;

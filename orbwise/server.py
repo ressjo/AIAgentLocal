@@ -818,8 +818,20 @@ def create_app(cfg: Config) -> FastAPI:
         if not tts:
             return {"available": False, "voices": []}
         tts.available()
-        return {"available": True, "current": tts.current, "rate": tts.rate,
-                "voices": catalog.voice_list(tts.voices_dir, tts.current, cfg.language)}
+        voices = catalog.voice_list(tts.voices_dir, tts.current, cfg.language)
+        for v in voices:
+            f = tts.path(v["name"])
+            v["size_mb"] = round(f.stat().st_size / 1e6) if v["installed"] and f.exists() else None
+        return {"available": True, "current": tts.current, "rate": tts.rate, "voices": voices}
+
+    @app.delete("/api/voices/{name}")
+    async def delete_voice(name: str):
+        if not tts or name not in tts.installed():  # nur echte installierte Namen – kein Pfad von außen
+            raise HTTPException(404, "Stimme nicht installiert")
+        if name == tts.current:
+            raise HTTPException(409, "Die aktive Stimme kann nicht gelöscht werden – erst eine andere wählen.")
+        tts.remove(name)
+        return {"ok": True}
 
     @app.post("/api/voices/{name}/install")
     async def install_voice(name: str):

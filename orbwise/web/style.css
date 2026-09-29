@@ -93,6 +93,10 @@ button { font-family: inherit; cursor: pointer; }
 .model-item .mi-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px; }
 /* Löschen neben dem Eintrag, laufende Downloads mit Fortschritt und Abbrechen */
 .model-row { display: flex; align-items: stretch; gap: 4px; }
+.voice-menu .fx-row { padding: 2px 8px 0; }
+.voice-menu .fx-hint { padding: 0 8px 6px; font-size: 12px; }
+.voice-menu.catalog .fx-row, .voice-menu.catalog .fx-hint, .voice-menu.catalog > .mm-title { display: none; }
+.voice-play:hover:not(:disabled) { color: var(--accent); border-color: var(--panel-border); background: rgba(63,208,255,.08); }
 .model-row .model-item { flex: 1; min-width: 0; }
 .model-del { flex: none; width: 34px; border: 1px solid transparent; background: none; color: var(--muted); cursor: pointer;
              font-size: 15px; }

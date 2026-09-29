@@ -112,6 +112,12 @@ class PiperTTS:
             return True
         return False
 
+    def remove(self, name: str) -> None:
+        """Installierte Stimme löschen (Modell + Konfiguration) und aus dem Zwischenspeicher werfen."""
+        self._voices.pop(name, None)
+        for f in (self.path(name), self.voices_dir / f"{name}.onnx.json"):
+            f.unlink(missing_ok=True)
+
     def set_rate(self, rate: float) -> None:
         self.rate = min(1.0, max(0.8, float(rate)))
 

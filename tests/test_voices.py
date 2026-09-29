@@ -88,3 +88,21 @@ def test_voice_endpoints(client, monkeypatch):
 def test_foreign_origin_cannot_post(client):
     r = client.post("/api/voices/de_DE-pavoque-low/install", headers={"Origin": "http://evil.example"})
     assert r.status_code == 403
+
+
+def test_delete_voice(client, tmp_path):
+    voices = tmp_path / "voices"
+    voices.mkdir(parents=True, exist_ok=True)
+    for name in ("de_DE-thorsten-high", "de_DE-pavoque-low"):
+        (voices / f"{name}.onnx").write_bytes(b"x" * 2_000_000)
+        (voices / f"{name}.onnx.json").write_text("{}")
+    data = client.get("/api/voices").json()
+    listed = {v["name"]: v for v in data["voices"]}
+    assert data["current"] == "de_DE-thorsten-high" and listed["de_DE-pavoque-low"]["size_mb"] == 2
+    assert client.delete("/api/voices/de_DE-thorsten-high").status_code == 409  # aktive Stimme
+    assert client.delete("/api/voices/gibtsnicht").status_code == 404
+    assert client.delete("/api/voices/..%2F..%2Fetc%2Fpasswd").status_code == 404
+    assert client.delete("/api/voices/de_DE-pavoque-low").json() == {"ok": True}
+    assert not (voices / "de_DE-pavoque-low.onnx").exists() and not (voices / "de_DE-pavoque-low.onnx.json").exists()
+    assert (voices / "de_DE-thorsten-high.onnx").exists()
+    assert client.delete("/api/voices/de_DE-pavoque-low", headers={"Origin": "http://evil.example"}).status_code == 403
