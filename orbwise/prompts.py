@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from .memory.files import german_date
@@ -11,7 +12,7 @@ BASE = {
 Du läufst vollständig lokal auf dem Linux-PC des Nutzers und kannst ihn über Tools steuern.
 
 Umgebung:
-- Heute ist {date}, {time} Uhr.
+- Heute ist {date}. Die aktuelle Uhrzeit steht im [Kontext]-Block vor der jeweiligen Nutzernachricht.
 - System: {os} auf Rechner '{host}', Benutzer '{user}', Home {home}
 - Gemountetes NAS: {nas}
 
@@ -36,7 +37,7 @@ Verhalten:
 You run entirely locally on the user's Linux PC and can control it through tools.
 
 Environment:
-- Today is {date}, {time}.
+- Today is {date}. The current time is in the [Context] block in front of each user message.
 - System: {os} on host '{host}', user '{user}', home {home}
 - Mounted NAS: {nas}
 
@@ -156,6 +157,7 @@ TEXTS = {
                           "übersichtlichen Zusammenfassung des Ergebnisses. Aktionen, die eine Bestätigung brauchen, "
                           "werden ggf. abgelehnt – dann nenne kurz, was noch zu tun wäre.)\n\nAufgabe: {task}",
         "routine_confirm": "Routine „{name}“: {reason}",
+        "context_note": "[Kontext – nicht vom Nutzer geschrieben: Uhrzeit {time}]",
         "tainted_confirm": "Nach dem Lesen einer E-Mail – Schutz vor versteckten Anweisungen in Mails. Nur erlauben, "
                            "wenn du diese Aktion selbst verlangt hast.",
     },
@@ -172,6 +174,7 @@ TEXTS = {
                           "need confirmation may be declined – then briefly say what would still be needed.)\n\n"
                           "Task: {task}",
         "routine_confirm": "Routine “{name}”: {reason}",
+        "context_note": "[Context – not written by the user: time {time}]",
         "tainted_confirm": "After reading an e-mail – protection against hidden instructions in e-mails. Only allow "
                            "it if you asked for this action yourself.",
     },
@@ -265,3 +268,20 @@ SPOKEN = {
 
 def spoken(cfg, key: str, **values) -> str:
     return SPOKEN[lang_of(cfg)][key].format(**values)
+
+
+# Wechselnde Angaben (Uhrzeit, zur Frage gefundene Erinnerungen) stehen nicht im System-Prompt, sondern als Block vor
+# der aktuellen Nutzernachricht – so bleibt der Anfang des Prompts gleich und der Modell-Server kann seinen
+# Zwischenspeicher (KV-Cache) wiederverwenden. Der Block wird nie im Verlauf gespeichert.
+_NOTE_RE = re.compile(r"^\[(?:Kontext|Context)\b.*?\[/(?:Kontext|Context)\]\n*", re.S)
+
+
+def context_note(cfg, time: str, memories: str = "") -> str:
+    head = TEXTS[lang_of(cfg)]["context_note"].format(time=time)
+    body = f"\n{SECTIONS[lang_of(cfg)]['memories']}\n{memories}" if memories else ""
+    close = "[/Context]" if lang_of(cfg) == "en" else "[/Kontext]"
+    return f"{head}{body}\n{close}\n\n"
+
+
+def strip_context_note(text: str) -> str:
+    return _NOTE_RE.sub("", text or "", count=1)

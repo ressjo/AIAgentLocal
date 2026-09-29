@@ -1013,13 +1013,16 @@
     setTile("ctx", c.used / 1000, {
       pct,
       digits: 1,
-      sub: `${Math.round(pct)} %` + (c.trimmed ? L(" · gekürzt", " · trimmed") : ""),
+      sub: `${Math.round(pct)} %` + (c.trimmed ? L(" · gekürzt", " · trimmed") : c.summarized ? L(" · verdichtet", " · condensed") : ""),
       title: [
         L(`Prompt ca. ${c.used} von ${c.budget} Token Budget (Fenster ${c.window}, Rest bleibt für die Antwort)`,
           `Prompt approx. ${c.used} of ${c.budget} token budget (window ${c.window}, the rest is kept for the answer)`),
         `System ${p.system ?? "?"} · Tools ${p.tools ?? "?"} · ${L("Gedächtnis", "Memory")} ${p.memory ?? "?"} · `
           + `${L("Verlauf", "History")} ${p.history ?? "?"}`,
-        c.real ? L("Laut Modell-Server: ", "According to the model server: ") + `${c.real} Token` : "",
+        c.real ? L("Laut Modell-Server: ", "According to the model server: ") + `${c.real} Token`
+          + (c.cached ? L(`, davon ${c.cached} aus dem Cache (schneller)`, `, ${c.cached} of them from the cache (faster)`) : "") : "",
+        c.summarized ? L("Älterer Verlauf ist in einer Zusammenfassung verdichtet – Details holt das Gedächtnis bei Bedarf zurück.",
+                         "Older history is condensed into a summary – memory brings back details when needed.") : "",
         c.trimmed ? L("Ältere Teile/lange Tool-Ergebnisse wurden gekürzt, damit alles passt.",
                       "Older parts/long tool results were trimmed so everything fits.") : "",
       ].filter(Boolean).join("\n"),

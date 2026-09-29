@@ -154,6 +154,21 @@ messages. When a chat gets long, the oldest messages are folded into the running
 complete in the journal and index and are retrieved again when relevant. Long tool results are trimmed instead of
 overflowing the model. The **CONTEXT** tile shows how full the prompt is.
 
+**What happens when the context is full?** Nothing breaks – in this order:
+
+1. From ~85 % of the history budget on, the oldest messages are condensed into the running summary after an
+   answer (the tile then says *condensed*).
+2. Long tool results (web pages, documents, logs) of older turns are shortened to an excerpt; the latest turn stays
+   complete, and Orbwise simply calls the tool again if it needs the details.
+3. If a single request is still too big, the oldest messages are left out and the current turn's tool results are
+   trimmed (*trimmed*); if the model server still refuses the prompt, it is retried once with a smaller budget.
+
+**Faster answers through the prompt cache:** the start of the prompt (instructions, facts, summary, tools and the
+earlier conversation) stays identical from one message to the next – the current time and the memories found for
+the question are placed in front of your new message instead. llama.cpp (Bonsai) and Ollama can therefore reuse
+what they already processed and only read the new part; the tile tooltip shows how many tokens came from the
+cache. Orbwise also learns from the model server's real token counts, so the budget is used precisely.
+
 ### Chat history
 
 The **HISTORY** tab lists all chats (starred first, then newest) with search across titles and content.

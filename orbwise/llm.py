@@ -349,6 +349,7 @@ def openai_stats(timings: dict, usage: dict, first_token: float | None, started:
     if timings.get("predicted_per_second"):
         return {"tokens": timings.get("predicted_n"), "tps": round(timings["predicted_per_second"], 1),
                 "prompt_tokens": timings.get("prompt_n"), "prompt_total": total,
+                **({"prompt_cached": timings["cache_n"]} if timings.get("cache_n") is not None else {}),
                 "prompt_tps": round(timings["prompt_per_second"], 1) if timings.get("prompt_per_second") else None}
     tokens = usage.get("completion_tokens")
     elapsed = time.monotonic() - (first_token or started)
@@ -397,7 +398,8 @@ class FakeLLM:
         if last["role"] == "tool":
             done = "Done. Result" if self.en else "Erledigt. Ergebnis"
             return {"role": "assistant", "content": f"{done}: {last['content'][:200]}"}
-        text = last.get("content", "")
+        from .prompts import strip_context_note
+        text = strip_context_note(last.get("content", ""))
         if text.startswith("/tool "):
             parts = text.split(" ", 2)
             args = json.loads(parts[2]) if len(parts) > 2 else {}

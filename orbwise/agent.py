@@ -91,6 +91,9 @@ class Agent:
         self.llm = llm
         self.memory = memory
         self._budget_scale = 1.0  # < 1, wenn der Server „Kontext zu klein“ gemeldet hat
+        # Verhältnis echte/geschätzte Prompt-Token je Modellprofil (lernt aus den Zahlen des Servers)
+        self._token_ratio: dict[str, float] = {}
+        self._turn_time = ""  # Uhrzeit der aktuellen Anfrage (bleibt über alle Schritte gleich → Cache)
         self._think: bool | None = None
         self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
         self.tools = load_all_tools()
@@ -120,15 +123,20 @@ class Agent:
         facts = self.memory.facts_text()
         if facts:
             sections.append(prompts.section(self.cfg, "facts") + "\n" + facts)
-        mem_text = self.memory.format_hits(hits)
-        if mem_text:
-            sections.append(prompts.section(self.cfg, "memories") + "\n" + mem_text)
         if conv.running_summary:
             sections.append(prompts.section(self.cfg, "summary") + "\n" + conv.running_summary)
         system = "\n\n".join(sections)
+        # Uhrzeit und Erinnerungen wechseln – sie kommen vor die aktuelle Nutzernachricht, nicht in den
+        # System-Prompt, damit der Anfang gleich bleibt (KV-Cache des Modell-Servers)
+        note = prompts.context_note(self.cfg, self._turn_time or datetime.now().strftime("%H:%M"),
+                                    self.memory.format_hits(hits))
+        note_t = est_tokens(note)
         total_budget = self.context_budget()
-        budget = total_budget - est_tokens(system) - self.schema_tokens
+        budget = total_budget - est_tokens(system) - self.schema_tokens - note_t
         history = conv.trimmed_history(max(budget, 1000))
+        last_user = max((i for i, m in enumerate(history) if m["role"] == "user"), default=None)
+        if last_user is not None:
+            history[last_user] = {**history[last_user], "content": note + (history[last_user].get("content") or "")}
         # Für die Anzeige „Kontext“ in der Oberfläche (Schätzung; echte Server-Token kommen nach dem Schritt)
         base_t, system_t = est_tokens(base), est_tokens(system)
         history_t = sum(msg_tokens(m) for m in history)
@@ -137,9 +145,9 @@ class Agent:
         self.last_context = {
             "window": self.model_window(), "budget": total_budget,
             "used": system_t + self.schema_tokens + history_t,
-            "parts": {"system": base_t, "tools": self.schema_tokens, "memory": system_t - base_t,
-                      "history": history_t},
-            "trimmed": trimmed,
+            "parts": {"system": base_t, "tools": self.schema_tokens, "memory": system_t - base_t + note_t,
+                      "history": history_t - note_t},
+            "trimmed": trimmed, "summarized": bool(conv.running_summary),
         }
         return [{"role": "system", "content": system}, *history]
 
@@ -157,7 +165,22 @@ class Agent:
         budget = self.model_window() - ANSWER_RESERVE
         if self.cfg.memory.context_budget_tokens:
             budget = min(budget, self.cfg.memory.context_budget_tokens)
-        return max(2000, int(budget * self._budget_scale))
+        return max(2000, int(budget * self._budget_scale / self.token_ratio()))
+
+    def _profile_key(self) -> str:
+        return str(getattr(self.llm, "active", "") or "default")
+
+    def token_ratio(self) -> float:
+        return self._token_ratio.get(self._profile_key(), 1.0)
+
+    def learn_tokens(self, estimated: int, real: int) -> None:
+        """Schätzung an die echten Token des Servers angleichen (gleitend, begrenzt auf 0,6–1,3)."""
+        if estimated < 500 or not real:
+            return
+        key = self._profile_key()
+        sample = max(0.6, min(1.3, real / estimated))
+        old = self._token_ratio.get(key)
+        self._token_ratio[key] = round(sample if old is None else 0.7 * old + 0.3 * sample, 3)
 
     def choose_tools(self, used_groups: set[str] | None = None) -> None:
         """Bei kleinem Kontextfenster nur passende Tool-Gruppen mitschicken (siehe toolselect.py)."""
@@ -195,6 +218,7 @@ class Agent:
                 return answer, conv.chat_id
 
     async def _run(self, user_text: str, emit: Emit, confirm: Confirm) -> str:
+        self._turn_time = datetime.now().strftime("%H:%M")
         conv = self.memory.conversation
         start_len = len(conv.history)
         await emit({"type": "state", "state": "thinking"})
@@ -267,6 +291,7 @@ class Agent:
 
         answer = "\n\n".join(spoken)
         await emit({"type": "assistant_end", "id": msg_id, "text": answer})
+        conv.age_tool_results()  # lange Tool-Ergebnisse älterer Runden auf einen Auszug kürzen
         conv.save()
         await self.memory.log_exchange(user_text, answer, tool_notes)
         try:
@@ -301,6 +326,9 @@ class Agent:
                     await emit({"type": "llm_stats", **stats})
                 if self.last_context is not None and stats.get("prompt_total"):
                     self.last_context["real"] = stats["prompt_total"]
+                    if stats.get("prompt_cached") is not None:
+                        self.last_context["cached"] = stats["prompt_cached"]
+                    self.learn_tokens(self.last_context.get("used", 0), stats["prompt_total"])
                     await emit({"type": "context", **self.last_context})
         tail = filt.flush()
         if tail:

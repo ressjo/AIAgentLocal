@@ -127,10 +127,27 @@ class Conversation:
             freed += msg_tokens(m)
         return min(cut, user_idx[-1])
 
+    def age_tool_results(self, keep_turns: int = 1) -> int:
+        """Lange Tool-Ergebnisse älterer Runden auf einen Auszug kürzen – die letzten keep_turns Runden bleiben
+        vollständig (für Nachfragen). Einmalig pro Ergebnis, damit der Anfang des Prompts danach stabil bleibt.
+        Liefert die Zahl gekürzter Ergebnisse."""
+        users = [i for i, m in enumerate(self.history) if m["role"] == "user"]
+        if len(users) <= keep_turns:
+            return 0
+        limit = users[-keep_turns]
+        n = 0
+        for m in self.history[:limit]:
+            content = m.get("content") or ""
+            if m["role"] != "tool" or len(content) <= TOOL_AGE_CHARS * 2 or content.endswith(AGED_NOTE):
+                continue
+            m["content"] = content[:TOOL_AGE_CHARS].rstrip() + AGED_NOTE
+            n += 1
+        return n
+
     async def compact(self, llm, budget: int) -> bool:
-        """Faltet alte Nachrichten, bis der Verlauf unter ~60 % des Budgets liegt."""
+        """Faltet alte Nachrichten, sobald ~85 % des Budgets erreicht sind, bis der Verlauf unter ~60 % liegt."""
         total = self.history_tokens()
-        if total <= budget:
+        if total <= int(budget * 0.85):
             return False
         cut = self._cut_index(total - int(budget * 0.6))
         if cut <= 0:
@@ -184,6 +201,8 @@ class Conversation:
 
 
 TOOL_MIN_CHARS = 600
+TOOL_AGE_CHARS = 800
+AGED_NOTE = "\n… [gekürzt – Details bei Bedarf mit dem Tool erneut abrufen]"
 TRIM_NOTE = "\n… [gekürzt, damit alles ins Kontextfenster passt]"
 
 
