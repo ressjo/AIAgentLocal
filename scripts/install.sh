@@ -18,7 +18,7 @@ GPU="auto"
 LANG_CHOICE=""
 AUTOSTART=1
 ASK=1
-REPO="${ORBWISE_REPO:-https://github.com/ressjo/orbwise.git}"
+REPO="${ORBWISE_REPO:-https://github.com/ressjo/orbwise-linux-agent.git}"
 BRANCH="${ORBWISE_BRANCH:-main}"
 PIPER="https://huggingface.co/rhasspy/piper-voices/resolve/main"
 

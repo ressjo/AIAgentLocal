@@ -5,7 +5,7 @@ Thanks for helping to make Orbwise better! Bug reports, new tools, translations 
 ## Development setup
 
 ```bash
-git clone https://github.com/ressjo/orbwise.git && cd orbwise
+git clone https://github.com/ressjo/orbwise-linux-agent.git && cd orbwise-linux-agent
 uv sync --extra dev --extra voice
 uv run pytest -q                 # all tests run offline, no GPU or Ollama needed
 uv run ruff check orbwise tests

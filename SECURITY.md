@@ -48,5 +48,5 @@ prefer the Telegram bot, a VPN (WireGuard, Tailscale) or an SSH tunnel (`ssh -L 
 ## Reporting a vulnerability
 
 Please do **not** open a public issue for security problems. Use GitHub's private
-[security advisory](https://github.com/ressjo/orbwise/security/advisories/new) form instead. You will get
+[security advisory](https://github.com/ressjo/orbwise-linux-agent/security/advisories/new) form instead. You will get
 an answer as soon as possible; fixes are released as a new version and mentioned in the changelog.

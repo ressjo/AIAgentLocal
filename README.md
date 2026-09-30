@@ -74,7 +74,7 @@ sudo pacman -S --needed git
 # Debian/Ubuntu-based
 sudo apt install git
 
-git clone https://github.com/ressjo/orbwise.git ~/orbwise
+git clone https://github.com/ressjo/orbwise-linux-agent.git ~/orbwise
 ~/orbwise/scripts/install.sh --lang en      # --lang de for German
 ```
 
