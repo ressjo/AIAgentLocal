@@ -6,7 +6,7 @@
 #   bash bootstrap.sh --lang en  # all options are passed on to install.sh
 set -euo pipefail
 
-REPO="${ORBWISE_REPO:-https://github.com/ressjo/orbwise.git}"
+REPO="${ORBWISE_REPO:-https://github.com/ressjo/orbwise-linux-agent.git}"
 BRANCH="${ORBWISE_BRANCH:-main}"
 TARGET="${ORBWISE_HOME:-$HOME/orbwise}"
 

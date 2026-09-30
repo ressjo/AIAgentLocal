@@ -15,7 +15,7 @@ import shutil
 from pathlib import Path
 
 OLD, NEW = "jarvis", "orbwise"
-REPO = "https://github.com/ressjo/orbwise.git"
+REPO = "https://github.com/ressjo/orbwise-linux-agent.git"
 SHIM = """#!/usr/bin/env bash
 # Früherer Befehlsname – das Projekt heißt jetzt Orbwise. Leitet weiter an {target}.
 ORBWISE_VIA_ALIAS=1 exec "$HOME/.local/bin/{target}" "$@"

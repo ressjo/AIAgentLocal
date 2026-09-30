@@ -49,9 +49,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ressjo/orbwise"
-Issues = "https://github.com/ressjo/orbwise/issues"
-Changelog = "https://github.com/ressjo/orbwise/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/ressjo/orbwise-linux-agent"
+Issues = "https://github.com/ressjo/orbwise-linux-agent/issues"
+Changelog = "https://github.com/ressjo/orbwise-linux-agent/blob/main/CHANGELOG.md"
 
 [project.scripts]
 orbwise = "orbwise.cli:main"
