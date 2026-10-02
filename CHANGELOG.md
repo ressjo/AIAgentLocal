@@ -42,11 +42,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 - **Long tasks no longer die at a full context window** (e.g. "16k of 16k – increase the window" and the work was
-  gone): older steps of the running task are folded to a digest (status, error lines, result) once it gets tight,
-  with the full output kept in the chat and retrievable via the new `earlier_output` tool; memories and the tool list
-  are narrowed while a task fills the window, thinking keeps more room free for the reasoning. If it still does not
-  fit, Orbwise sums up and offers "continue" – finished steps are kept instead of deleted. Clearer error message with
-  concrete options. The activity panel shows when steps are folded.
+  gone): at 90 % of the window Orbwise pauses the task once, has the model summarise its progress and continues
+  automatically with that summary; the steps stay saved. In between the prompt only grows at the end, so the model
+  server keeps its cache (no re-reading on every step on slow graphics cards). If the server still refuses, finished
+  steps are kept and "continue" picks up there. Thinking keeps more room free; clearer error message.
 - A message with many tool calls showed a wall of `run_shell` chips; now only the current call is shown, with a
   "+N earlier" link that opens the activity panel.
 - Installer, `bootstrap.sh` and all links point to the renamed repository `ressjo/orbwise-linux-agent` (they pointed to

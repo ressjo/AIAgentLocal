@@ -19,7 +19,7 @@ from . import prompts, toolselect
 from .config import Config
 from .llm import ContextOverflow, LLMError, strip_think
 from .memory import Memory, est_tokens
-from .memory.context import TRIM_NOTE, msg_tokens
+from .memory.context import TRIM_NOTE, msg_tokens, render_task
 from .tools.proc import clip
 from .tools.registry import (
     BLOCKED,
@@ -46,9 +46,6 @@ TAINT_GUARDED = {"shell", "web", "files", "apps", "obsidian", "trilium", "calend
 
 def is_taint_source(name: str, result: str) -> bool:
     """Bringt dieses Tool-Ergebnis fremden Text (Mails) in den Verlauf?"""
-    if name == "earlier_output":  # zurückgeholte Ausgabe zählt wie das ursprüngliche Werkzeug
-        m = re.match(r"\[Schritt \d+ · (\w+)\]", result or "")
-        return bool(m) and m.group(1) != "earlier_output" and is_taint_source(m.group(1), result)
     return name in TAINT_SOURCES and (name != "daily_briefing" or "E-Mail:" in result)
 
 
@@ -68,6 +65,7 @@ def prompt_size(stats: dict, estimated: int) -> int:
 
 ANSWER_RESERVE = 1500  # Token, die im Kontextfenster für die Antwort frei bleiben
 THINK_RESERVE = 3000  # mit Denkmodus: die Denkkette belegt dasselbe Fenster
+COMPRESS_AT = 0.9  # ab diesem Anteil des Kontextfensters wird eine laufende Aufgabe pausiert und komprimiert
 Emit = Callable[[dict], Awaitable[None]]
 Confirm = Callable[[str, str, dict, str], Awaitable[bool]]
 
@@ -131,10 +129,7 @@ class Agent:
         self.auto_mode = "read"
         self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
         self.tools = load_all_tools()
-        schemas = tool_schemas(cfg)
-        # earlier_output erst anbieten, wenn in diesem Chat etwas gefaltet wurde – sonst bleibt der Prompt wie bisher
-        self.earlier_schema = [s for s in schemas if s["function"]["name"] == "earlier_output"]
-        self.all_schemas = [s for s in schemas if s["function"]["name"] != "earlier_output"]
+        self.all_schemas = tool_schemas(cfg)
         self.groups_of = {name: spec.group for name, spec in self.tools.items()}
         self.schemas = self.all_schemas
         self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
@@ -165,16 +160,12 @@ class Agent:
         system = "\n\n".join(sections)
         # Uhrzeit und Erinnerungen wechseln – sie kommen vor die aktuelle Nutzernachricht, nicht in den
         # System-Prompt, damit der Anfang gleich bleibt (KV-Cache des Modell-Servers)
-        # Füllt eine lange Aufgabe das Fenster, bleiben nur die besten Erinnerungen (die Schritte zählen mehr)
-        tight = conv.turn_tokens() > 0.6 * self.history_budget()
-        memories = self.memory.format_hits(hits, self.cfg.memory.retrieval_max_tokens // 3 if tight else None)
         note = prompts.context_note(self.cfg, self._turn_time or datetime.now().strftime("%H:%M"),
-                                    memories, plan=self._plan,
-                                    approved_plan=self._approved_plan)
+                                    self.memory.format_hits(hits), plan=self._plan,
+                                    approved_plan=self._approved_plan, task_note=conv.task_note)
         note_t = est_tokens(note)
         total_budget = self.context_budget()
         budget = total_budget - est_tokens(system) - self.schema_tokens - note_t
-        self._history_room = budget  # tatsächlich frei für den Verlauf (fürs Falten langer Aufgaben)
         history = conv.trimmed_history(max(budget, 1000))
         last_user = max((i for i, m in enumerate(history) if m["role"] == "user"), default=None)
         if last_user is not None:
@@ -182,6 +173,9 @@ class Agent:
         # Für die Anzeige „Kontext“ in der Oberfläche (Schätzung; echte Server-Token kommen nach dem Schritt)
         base_t, system_t = est_tokens(base), est_tokens(system)
         history_t = sum(msg_tokens(m) for m in history)
+        # ungekürzte Größe (echte Token, geschätzt) – entscheidet, ob eine lange Aufgabe komprimiert wird
+        raw = system_t + self.schema_tokens + note_t + sum(msg_tokens(m) for m in conv.history if not m.get("packed"))
+        self._full_prompt = int(raw * self.token_ratio())
         trimmed = len(history) < len(conv.history) or any(
             m["role"] == "tool" and (m.get("content") or "").endswith(TRIM_NOTE) for m in history)
         self.last_context = {
@@ -232,17 +226,11 @@ class Agent:
 
     def choose_tools(self, used_groups: set[str] | None = None) -> None:
         """Bei kleinem Kontextfenster nur passende Tool-Gruppen mitschicken (siehe toolselect.py)."""
-        tight = self.memory.conversation.turn_tokens() > 0.7 * self.history_budget()  # lange Aufgabe füllt das Fenster
-        if self.all_schema_tokens <= 0.3 * self.context_budget() and not tight:
+        if self.all_schema_tokens <= 0.3 * self.context_budget():
             self.schemas, self.schema_tokens = self.all_schemas, self.all_schema_tokens
-            if self.memory.conversation.stash:
-                self.schemas = self.all_schemas + self.earlier_schema
-                self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
             return
         users = [m.get("content", "") for m in self.memory.conversation.history if m.get("role") == "user"][-2:]
         self.schemas = toolselect.select(self.all_schemas, self.groups_of, users, used_groups or set())
-        if self.memory.conversation.stash:
-            self.schemas = self.schemas + self.earlier_schema
         self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
 
     def history_budget(self) -> int:
@@ -295,6 +283,7 @@ class Agent:
         await emit({"type": "assistant_start", "id": msg_id, "plan": self._plan})
         try:
             seen: dict[str, int] = {}  # gleiche Tool-Aufrufe zählen (Schleifenerkennung)
+            retried = False
             finished = False
             used_groups: set[str] = set()
             for _ in range(max(1, self.cfg.tools.max_steps)):
@@ -302,12 +291,12 @@ class Agent:
                 try:
                     content, calls = await self._step(hits, emit, msg_id)
                 except ContextOverflow:
-                    if len(conv.history) <= start_len + 1:
-                        raise  # noch nichts getan – nichts zu retten
-                    # Passt trotz Kürzen nicht mehr: hart falten, ohne Erinnerungen eine Zwischenbilanz ziehen
-                    await self._fold(emit, msg_id, keep_last=1, trigger=0, target=0.3)
-                    hits = []
-                    break
+                    # Server meldet „zu groß“ (z. B. kleiner als eingestellt): einmal komprimieren und weitermachen
+                    if retried or not await self._compress_task(hits, emit, msg_id):
+                        raise
+                    retried = True
+                    continue
+                retried = False
                 entry = {"role": "assistant", "content": content}
                 if calls:
                     entry["tool_calls"] = calls
@@ -336,7 +325,8 @@ class Agent:
                     tool_notes.append(note)
                 if looping:
                     break
-                await self._fold(emit, msg_id)  # lange Aufgabe: ältere Schritte falten, bevor es eng wird
+                if self._should_compress(hits):  # 90 % voll: pausieren, einmal komprimieren, weitermachen
+                    await self._compress_task(hits, emit, msg_id)
             if not finished:
                 # Limit erreicht oder Schleife: ohne Tools zusammenfassen lassen, statt hart abzubrechen
                 content, _ = await self._step(hits, emit, msg_id, final=True)
@@ -402,20 +392,54 @@ class Agent:
             return file_edit_ok(str(args.get("command") or ""))
         return False
 
-    async def _fold(self, emit: Emit, msg_id: str, **kw) -> None:
+    def _should_compress(self, hits) -> bool:
+        """Würde der nächste Schritt das Fenster zu ≥ 90 % füllen (oder schon gekürzt werden müssen)?
+        Komprimiert wird dann einmal – nicht Schritt für Schritt, damit der Server nicht ständig alles neu
+        einlesen muss."""
+        if len(self.memory.conversation.turn_steps()) < 2:
+            return False
+        self.build_messages(hits)
+        limit = min(COMPRESS_AT * self.model_window(), self.context_budget() * self.token_ratio())
+        return self._full_prompt >= limit
+
+    async def _compress_task(self, hits, emit: Emit, msg_id: str) -> bool:
+        """Laufende Aufgabe pausieren: ihre bisherigen Schritte vom Modell zu einem Arbeitsstand zusammenfassen
+        lassen. Die Schritte bleiben im Chat gespeichert, gehen aber nicht mehr an das Modell; der Arbeitsstand
+        steht ab jetzt in der Kontext-Notiz. Danach läuft die Aufgabe automatisch weiter."""
         conv = self.memory.conversation
-        before = conv.turn_tokens()
-        room = self.history_budget()
-        if getattr(self, "_history_room", None):  # was beim letzten Prompt wirklich frei war (Tools, Fakten …)
-            room = max(600, min(room, self._history_room))
-        folded, freed = conv.fold_current_turn(room, **kw)
-        if folded or freed:
-            conv.save()
-            fold_id = uuid.uuid4().hex[:8]
-            await emit({"type": "llm_phase", "id": fold_id, "msg": msg_id, "phase": "fold", "steps": folded,
-                        "freed": int(freed * self.token_ratio()), "before": int(before * self.token_ratio())})
-            await emit({"type": "llm_phase", "id": fold_id, "msg": msg_id, "phase": "done", "fold": True,
-                        "steps": folded, "freed": int(freed * self.token_ratio()), "seconds": 0})
+        steps = conv.turn_steps()
+        if len(steps) < 2:
+            return False
+        cid, started = uuid.uuid4().hex[:8], time.monotonic()
+        window = self.model_window()
+        before = getattr(self, "_full_prompt", 0)
+        await emit({"type": "state", "state": "thinking"})
+        await emit({"type": "llm_phase", "id": cid, "msg": msg_id, "phase": "compress", "tokens": before,
+                    "percent": round(100 * before / window) if window else None, "steps": len(steps)})
+        question = prompts.strip_context_note(conv.history[conv.turn_start()].get("content") or "")
+        transcript = render_task(steps, max_chars=int(window * 0.45 * 3))  # Zusammenfassung muss selbst passen
+        earlier = f"{prompts.text(self.cfg, 'task_note')}\n{conv.task_note}\n\n" if conv.task_note else ""
+        request = [{"role": "system", "content": prompts.text(self.cfg, "task_compress")},
+                   {"role": "user", "content": f"{question}\n\n{earlier}---\n{transcript}"}]
+        try:
+            note = strip_think(await self.llm.chat(request)).strip()
+        except Exception as e:  # noqa: BLE001 – lieber grob als gar nicht
+            log.warning("Arbeitsstand konnte nicht zusammengefasst werden (%s) – nutze Auszug", e)
+            note = ""
+        if not note:
+            note = (conv.task_note + "\n" + transcript[-3000:]).strip()
+        conv.pack_turn(note[:6000])
+        if conv.needs_compact(self.history_budget()):  # älterer Verlauf gleich mit – ein Neuladen statt zwei
+            try:
+                await conv.compact(self.llm, self.history_budget())
+            except Exception as e:  # noqa: BLE001
+                log.warning("Kompaktierung fehlgeschlagen: %s", e)
+        conv.save()
+        self.build_messages(hits)
+        await emit({"type": "llm_phase", "id": cid, "msg": msg_id, "phase": "done", "compress": True,
+                    "steps": len(steps), "before": before, "after": self._full_prompt,
+                    "seconds": round(time.monotonic() - started, 1)})
+        return True
 
     def _prompt_phase(self) -> dict:
         """Was vor dem ersten Token passiert: Prompt einlesen (mit geschätzter Dauer) oder Modell neu laden."""

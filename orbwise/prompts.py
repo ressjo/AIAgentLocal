@@ -173,6 +173,14 @@ TEXTS = {
                         "Plan auf.",
         "plan_execute": "Der Plan ist freigegeben. Führe ihn jetzt Schritt für Schritt aus.",
         "approved_plan": "Freigegebener Plan – führe ihn jetzt aus:",
+        "task_note": "Zwischenstand dieser Aufgabe (das Kontextfenster war voll, deine bisherigen Schritte wurden "
+                     "hier zusammengefasst). Mach dort weiter und wiederhole nichts, was schon erledigt ist:",
+        "task_compress": "Du fasst den Arbeitsstand einer laufenden Aufgabe des KI-Assistenten Jarvis zusammen, weil "
+                         "sein Kontextfenster voll ist. Jarvis arbeitet danach NUR mit deiner Zusammenfassung weiter. "
+                         "Schreibe auf Deutsch, kompakt, ohne Einleitung:\n"
+                         "Erledigt: welche Schritte mit welchem Ergebnis (konkrete Werte, Pfade, Befehle, Paketnamen, "
+                         "Fehlermeldungen wörtlich)\nErkenntnisse: was daraus folgt\n"
+                         "Offen: was noch zu tun ist, nächster Schritt",
         "plan_revise": "Überarbeite den Plan: {feedback}",
     },
     "en": {
@@ -202,6 +210,13 @@ TEXTS = {
         "plan_skipped": "PLAN MODE: not executed – this action changes something. Add it to the plan as a step.",
         "plan_execute": "The plan is approved. Carry it out now, step by step.",
         "approved_plan": "Approved plan – carry it out now:",
+        "task_note": "Progress of this task so far (the context window was full, your previous steps were summarised "
+                     "here). Continue from there and do not repeat anything already done:",
+        "task_compress": "You summarise the progress of a running task of the AI assistant Jarvis because its context "
+                         "window is full. Jarvis then continues ONLY with your summary. Write in English, compact, "
+                         "no introduction:\nDone: which steps with which result (concrete values, paths, commands, "
+                         "package names, error messages verbatim)\nFindings: what follows from it\n"
+                         "Open: what is left to do, next step",
         "plan_revise": "Revise the plan: {feedback}",
     },
 }
@@ -310,7 +325,8 @@ def spoken(cfg, key: str, **values) -> str:
 _NOTE_RE = re.compile(r"^\[(?:Kontext|Context)\b.*?\[/(?:Kontext|Context)\]\n*", re.S)
 
 
-def context_note(cfg, time: str, memories: str = "", plan: bool = False, approved_plan: str = "") -> str:
+def context_note(cfg, time: str, memories: str = "", plan: bool = False, approved_plan: str = "",
+                 task_note: str = "") -> str:
     """approved_plan: beim Ausführen hängt der freigegebene Plan an der aktuellen Nachricht – so fällt er beim
     Kürzen des Verlaufs nie weg, auch wenn die Werkzeug-Ergebnisse der Ausführung viel Platz brauchen."""
     head = TEXTS[lang_of(cfg)]["context_note"].format(time=time)
@@ -320,6 +336,9 @@ def context_note(cfg, time: str, memories: str = "", plan: bool = False, approve
     if approved_plan.strip():
         clean = re.sub(r"\[/?(?:Kontext|Context)\b", "[", approved_plan.strip())  # Notiz-Ende nicht vortäuschen
         body += f"\n{TEXTS[lang_of(cfg)]['approved_plan']}\n{clean}"
+    if task_note.strip():  # Aufgabe wurde bei vollem Kontext komprimiert – hier steht, wie weit sie ist
+        clean = re.sub(r"\[/?(?:Kontext|Context)\b", "[", task_note.strip())
+        body += f"\n{TEXTS[lang_of(cfg)]['task_note']}\n{clean}"
     close = "[/Context]" if lang_of(cfg) == "en" else "[/Kontext]"
     return f"{head}{body}\n{close}\n\n"
 

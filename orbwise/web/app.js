@@ -770,15 +770,16 @@
       case "retry": return L("Kontext zu voll – kürzt den Verlauf und versucht es erneut",
                              "context too full – trimming the history and retrying");
       case "compact": return L("verdichtet älteren Verlauf ins Gedächtnis", "folding older history into memory");
-      case "fold": return L(`faltet ältere Schritte · −${num(ev.freed)} Token`, `folding older steps · −${num(ev.freed)} tokens`);
+      case "compress": return L(`Kontext ${ev.percent} % voll – Aufgabe pausiert, fasst ${ev.steps} Schritte zusammen`,
+                                `context ${ev.percent} % full – task paused, summarising ${ev.steps} steps`);
       default: return "";
     }
   }
 
   function phaseSummary(ev) {
     if (ev.compact) return L("älteren Verlauf verdichtet", "folded older history");
-    if (ev.fold) return L(`${ev.steps} ältere Schritte gefaltet · −${num(ev.freed)} Token (bei Bedarf abrufbar)`,
-                          `folded ${ev.steps} older steps · −${num(ev.freed)} tokens (retrievable)`);
+    if (ev.compress) return L(`${ev.steps} Schritte zusammengefasst · ${num(ev.before)} → ${num(ev.after)} Token – geht weiter`,
+                              `summarised ${ev.steps} steps · ${num(ev.before)} → ${num(ev.after)} tokens – continuing`);
     if (ev.error) return L("abgebrochen – Fehler beim Modell", "stopped – model error");
     const parts = [];
     if (ev.load_ms >= 1000) parts.push(L(`Modell geladen in ${secs(ev.load_ms / 1000)}`, `model loaded in ${secs(ev.load_ms / 1000)}`));
@@ -847,7 +848,7 @@
       bar.style.width = "0";
     }
     // Unsichtbare Phasen auch unter dem Orb nennen; Denken und Antworten sieht man dort ohnehin
-    const quiet = ["prompt", "loading", "retry", "tool_args", "compact"].includes(ev.phase);
+    const quiet = ["prompt", "loading", "retry", "tool_args", "compact", "compress"].includes(ev.phase);
     if (quiet) {  // unter dem Orb kurz – ohne den Klammerzusatz zum Cache
       const short = text.replace(/ \([^)]*\)/, "");
       S.substate = S.phaseSub = short.charAt(0).toUpperCase() + short.slice(1) + " …";
