@@ -22,7 +22,7 @@ All notable changes to this project are documented here. The format follows
   with telemetry opens by itself when a tool runs; send turns into stop while Jarvis works; works on phones.
 - **Plan mode** (PLAN button, Telegram `/plan`): Jarvis (thinking only if *Think* is on) only uses read-only tools and
   presents a step-by-step plan to run, change (revised by the AI from your feedback) or discard; a short spoken
-  "yes"/"no" decides too; after running a plan, plan mode switches off. Chat Markdown now renders headings and numbered lists.
+  "yes"/"no" decides too; after running a plan, plan mode switches off. The approved plan stays pinned to the request while it runs, so it never drops out of a tight context. Chat Markdown now renders headings and numbered lists.
 - **Understand the screen and images:** "What's that error message?" – Orbwise takes a screenshot (spectacle,
   gnome-screenshot, grim, maim, … or `vision.screenshot_command`), asks a local vision model (`vision.model`,
   default `qwen2.5vl:7b`, Ollama or OpenAI-compatible) and answers; also for image files and photos from Telegram.

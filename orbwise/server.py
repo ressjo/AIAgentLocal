@@ -102,6 +102,7 @@ class Hub:
         self.think: bool | None = None  # Denkmodus-Knopf der Oberfläche (None = Profil-Einstellung)
         self.plan_mode = False  # PLAN-Knopf: erst einen Plan vorlegen, ausführen nach Freigabe
         self.plan_pending: str | None = None  # ID des Plans, der auf Ausführen/Ändern/Verwerfen wartet
+        self.plan_text = ""  # sein Text – wird beim Ausführen an die Anfrage geheftet
         self._plan_msgs: set[str] = set()  # Antworten, die ein Plan sind – werden nicht vorgelesen
         self.clients: set[Client] = set()
         # Erinnerungen, die fällig wurden, als keine Oberfläche offen war – werden beim Verbinden zugestellt
@@ -131,7 +132,7 @@ class Hub:
         elif t == "error":
             self.speaker.say(event["text"])
         elif t == "plan":
-            self.plan_pending = event["id"]
+            self.plan_pending, self.plan_text = event["id"], event.get("text") or ""
             steps = int(event.get("steps") or 0)
             self.speaker.say(prompts.spoken(self.cfg, "plan_ready", n=steps) if steps
                              else prompts.spoken(self.cfg, "plan_ready_short"))
@@ -140,7 +141,7 @@ class Hub:
     async def close_plan(self, outcome: str) -> None:
         """Offenen Plan abschließen: accepted · revised · discarded · replaced."""
         if self.plan_pending:
-            plan_id, self.plan_pending = self.plan_pending, None
+            plan_id, self.plan_pending, self.plan_text = self.plan_pending, None, ""
             await self.broadcast({"type": "plan_closed", "id": plan_id, "outcome": outcome})
 
     async def plan_decision(self, plan_id: str, action: str, feedback: str = "") -> None:
@@ -148,11 +149,12 @@ class Hub:
         if not self.plan_pending or plan_id != self.plan_pending:
             return
         if action == "accept":
+            approved = self.plan_text
             await self.close_plan("accepted")
             if self.plan_mode:  # Plan angenommen → Planmodus geht aus, ausgeführt wird normal
                 self.plan_mode = False
                 await self.broadcast({"type": "plan_mode", "enabled": False})
-            await self.submit(prompts.text(self.cfg, "plan_execute"), plan=False)
+            await self.submit(prompts.text(self.cfg, "plan_execute"), plan=False, approved_plan=approved)
         elif action == "revise" and feedback.strip():
             await self.close_plan("revised")
             await self.submit(prompts.text(self.cfg, "plan_revise").format(feedback=feedback.strip()), plan=True)
@@ -186,7 +188,8 @@ class Hub:
         if fut and not fut.done():
             fut.set_result((True, changes) if approved and changes and call_id in self.editable_pending else approved)
 
-    async def submit(self, text: str, source: str = "text", plan: bool | None = None) -> None:
+    async def submit(self, text: str, source: str = "text", plan: bool | None = None,
+                     approved_plan: str = "") -> None:
         """plan: None = wie der PLAN-Knopf steht; True/False erzwingt (Ausführen/Überarbeiten eines Plans)."""
         text = text.strip()
         if not text:
@@ -217,13 +220,14 @@ class Hub:
         self.speaker.stop()
         await self.broadcast({"type": "audio_stop"})
         await self.broadcast({"type": "user", "text": text, "source": source})
-        task = asyncio.create_task(self._run(text, self.plan_mode if plan is None else plan))
+        task = asyncio.create_task(self._run(text, self.plan_mode if plan is None else plan, approved_plan))
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
 
-    async def _run(self, text: str, plan: bool = False) -> None:
+    async def _run(self, text: str, plan: bool = False, approved_plan: str = "") -> None:
         try:
-            await self.agent.run(text, self.emit, self.confirm, think=self.think, plan=plan)
+            await self.agent.run(text, self.emit, self.confirm, think=self.think, plan=plan,
+                                 approved_plan=approved_plan)
         except asyncio.CancelledError:
             pass
         except Exception as e:  # noqa: BLE001
@@ -521,7 +525,7 @@ def create_app(cfg: Config) -> FastAPI:
         from .telegram import CHAT_TITLE, TelegramBot, chat_state_file, transcribe_voice
         tg_state = chat_state_file(cfg)
 
-        async def run_telegram(text: str, emit, confirm, plan: bool = False) -> str:
+        async def run_telegram(text: str, emit, confirm, plan: bool = False, approved_plan: str = "") -> str:
             """Anfrage vom Handy: eigener Chat „📱 Telegram“ – der offene Chat im Dashboard bleibt unberührt."""
             try:
                 chat_id = json.loads(tg_state.read_text(encoding="utf-8")).get("chat_id", "")
@@ -534,7 +538,7 @@ def create_app(cfg: Config) -> FastAPI:
                     await hub.broadcast({**ev, "routine": "Telegram"})  # Aktivität/Orb im Dashboard
 
             answer, chat_id = await agent.run_in_chat(chat_id, CHAT_TITLE, text, emit_all, confirm, plan=plan,
-                                                    think=hub.think)  # Denken-Knopf gilt auch vom Handy
+                                                    think=hub.think, approved_plan=approved_plan)  # Denken-Knopf gilt auch vom Handy
             tg_state.parent.mkdir(parents=True, exist_ok=True)
             tg_state.write_text(json.dumps({"chat_id": chat_id}), encoding="utf-8")
             await hub.broadcast({"type": "chats_changed"})

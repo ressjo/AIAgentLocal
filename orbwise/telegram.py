@@ -378,10 +378,10 @@ class TelegramBot:
 
     async def _worker(self) -> None:
         while True:
-            text, _, plan = await self.queue.get()
+            text, _, plan, *approved = await self.queue.get()  # 4. Feld: freigegebener Plan beim Ausführen
             typing = asyncio.create_task(self._typing())
-            self.current = asyncio.create_task(self.run(text, self._emit, self._confirm, plan=plan) if plan
-                                               else self.run(text, self._emit, self._confirm))
+            kwargs = {"plan": True} if plan else {"approved_plan": approved[0]} if approved else {}
+            self.current = asyncio.create_task(self.run(text, self._emit, self._confirm, **kwargs))
             try:
                 await asyncio.wait({self.current})  # wirft nicht, wenn nur die Anfrage abgebrochen wurde
             except asyncio.CancelledError:
@@ -419,7 +419,7 @@ class TelegramBot:
         except (httpx.HTTPError, RuntimeError, ValueError) as e:
             log.warning("Plan nicht gesendet: %s", self.redact(e))
             return
-        self.plan = {"key": key, "message_id": sent[-1]["message_id"], "text": parts[-1]}
+        self.plan = {"key": key, "message_id": sent[-1]["message_id"], "text": parts[-1], "full": text}
 
     async def close_plan(self, status: str) -> None:
         """Knöpfe unter dem offenen Plan entfernen und die Entscheidung anzeigen."""
@@ -434,8 +434,9 @@ class TelegramBot:
         if not self.plan or self.plan["key"] != key:
             return
         if action == "ok":
+            full = self.plan["full"]
             await self.close_plan(self.L("▶ wird ausgeführt", "▶ being carried out"))
-            await self.queue.put((self.prompt("plan_execute"), 0, False))
+            await self.queue.put((self.prompt("plan_execute"), 0, False, full))
         elif action == "edit":
             self.revising = True
             await self.notify(self.L("Schreib mir, was anders sein soll.", "Tell me what should be different."))

@@ -169,6 +169,7 @@ TEXTS = {
         "plan_skipped": "PLANMODUS: nicht ausgeführt – diese Aktion verändert etwas. Nimm sie als Schritt in den "
                         "Plan auf.",
         "plan_execute": "Der Plan ist freigegeben. Führe ihn jetzt Schritt für Schritt aus.",
+        "approved_plan": "Freigegebener Plan – führe ihn jetzt aus:",
         "plan_revise": "Überarbeite den Plan: {feedback}",
     },
     "en": {
@@ -195,6 +196,7 @@ TEXTS = {
                      "Afterwards briefly “Risks/assumptions” if there are any. No preamble.",
         "plan_skipped": "PLAN MODE: not executed – this action changes something. Add it to the plan as a step.",
         "plan_execute": "The plan is approved. Carry it out now, step by step.",
+        "approved_plan": "Approved plan – carry it out now:",
         "plan_revise": "Revise the plan: {feedback}",
     },
 }
@@ -303,11 +305,16 @@ def spoken(cfg, key: str, **values) -> str:
 _NOTE_RE = re.compile(r"^\[(?:Kontext|Context)\b.*?\[/(?:Kontext|Context)\]\n*", re.S)
 
 
-def context_note(cfg, time: str, memories: str = "", plan: bool = False) -> str:
+def context_note(cfg, time: str, memories: str = "", plan: bool = False, approved_plan: str = "") -> str:
+    """approved_plan: beim Ausführen hängt der freigegebene Plan an der aktuellen Nachricht – so fällt er beim
+    Kürzen des Verlaufs nie weg, auch wenn die Werkzeug-Ergebnisse der Ausführung viel Platz brauchen."""
     head = TEXTS[lang_of(cfg)]["context_note"].format(time=time)
     body = f"\n{SECTIONS[lang_of(cfg)]['memories']}\n{memories}" if memories else ""
     if plan:
         body += "\n" + TEXTS[lang_of(cfg)]["plan_mode"]
+    if approved_plan.strip():
+        clean = re.sub(r"\[/?(?:Kontext|Context)\b", "[", approved_plan.strip())  # Notiz-Ende nicht vortäuschen
+        body += f"\n{TEXTS[lang_of(cfg)]['approved_plan']}\n{clean}"
     close = "[/Context]" if lang_of(cfg) == "en" else "[/Kontext]"
     return f"{head}{body}\n{close}\n\n"
 

@@ -118,6 +118,7 @@ class Agent:
         self._turn_time = ""  # Uhrzeit der aktuellen Anfrage (bleibt über alle Schritte gleich → Cache)
         self._think: bool | None = None
         self._plan = False  # Planmodus: nur lesen, am Ende einen Plan vorlegen
+        self._approved_plan = ""  # beim Ausführen: der freigegebene Plan (hängt an der aktuellen Nachricht)
         self.auto_read = True  # Auto-Knopf: erkannte lesende Shell-Befehle ohne Rückfrage ausführen
         self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
         self.tools = load_all_tools()
@@ -153,7 +154,8 @@ class Agent:
         # Uhrzeit und Erinnerungen wechseln – sie kommen vor die aktuelle Nutzernachricht, nicht in den
         # System-Prompt, damit der Anfang gleich bleibt (KV-Cache des Modell-Servers)
         note = prompts.context_note(self.cfg, self._turn_time or datetime.now().strftime("%H:%M"),
-                                    self.memory.format_hits(hits), plan=self._plan)
+                                    self.memory.format_hits(hits), plan=self._plan,
+                                    approved_plan=self._approved_plan)
         note_t = est_tokens(note)
         total_budget = self.context_budget()
         budget = total_budget - est_tokens(system) - self.schema_tokens - note_t
@@ -222,31 +224,32 @@ class Agent:
 
     # ---------- Ablauf ----------
     async def run(self, user_text: str, emit: Emit, confirm: Confirm, think: bool | None = None,
-                  plan: bool = False) -> str:
+                  plan: bool = False, approved_plan: str = "") -> str:
         """think: Denkmodus für diese Anfrage (None = Einstellung des Modell-Profils).
         plan: Planmodus – nur lesend nachsehen und einen Plan zur Freigabe vorlegen (gedacht wird nur, wenn der
-        Denkmodus an ist)."""
+        Denkmodus an ist). approved_plan: freigegebener Plan, der beim Ausführen angeheftet bleibt."""
         async with self.lock:
-            self._think, self._plan = think, plan
+            self._think, self._plan, self._approved_plan = think, plan, approved_plan
             self._tainted = False
             try:
                 return await self._run(user_text, emit, confirm)
             finally:
-                self._think, self._plan = None, False
+                self._think, self._plan, self._approved_plan = None, False, ""
 
     async def run_in_chat(self, chat_id: str, title: str, text: str, emit: Emit, confirm: Confirm,
-                          plan: bool = False, think: bool | None = None) -> tuple[str, str]:
+                          plan: bool = False, think: bool | None = None,
+                          approved_plan: str = "") -> tuple[str, str]:
         """Für Routinen und Telegram: Aufgabe in einem eigenen Chat erledigen – der aktive Chat des Nutzers bleibt
         unberührt. Liefert (Antwort, Chat-ID)."""
         async with self.lock:
-            self._think, self._plan = think, plan
+            self._think, self._plan, self._approved_plan = think, plan, approved_plan
             self._tainted = False
             try:
                 with self.memory.in_chat(chat_id, title) as conv:
                     answer = await self._run(text, emit, confirm)
                     return answer, conv.chat_id
             finally:
-                self._think, self._plan = None, False
+                self._think, self._plan, self._approved_plan = None, False, ""
 
     async def _run(self, user_text: str, emit: Emit, confirm: Confirm) -> str:
         self._turn_time = datetime.now().strftime("%H:%M")

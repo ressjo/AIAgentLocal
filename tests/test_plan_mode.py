@@ -76,6 +76,14 @@ def app(cfg, monkeypatch):
 def test_dashboard_plan_accept_revise_discard(app):
     with TestClient(app, base_url="http://localhost:8765") as client, \
             client.websocket_connect(WS, headers=ORIGIN) as ws:
+        agent, approved = client.app.state.hub.agent, []
+        real_run = agent.run
+
+        async def recording_run(*a, **kw):
+            approved.append(kw.get("approved_plan", ""))
+            return await real_run(*a, **kw)
+
+        agent.run = recording_run
         ws.send_json({"type": "plan_mode", "enabled": True})
         ws.send_json({"type": "user_message", "text": "Räum meine Festplatte auf"})
         plan, _ = receive_until(ws, "plan")
@@ -98,6 +106,7 @@ def test_dashboard_plan_accept_revise_discard(app):
         start, _ = receive_until(ws, "assistant_start")
         assert not start["plan"]  # ausführen läuft normal, nicht wieder als Plan
         receive_until(ws, "assistant_end")
+        assert approved[-1] == plan2["text"] and approved[0] == ""  # nur beim Ausführen angeheftet
 
         ws.send_json({"type": "plan_mode", "enabled": True})
         ws.send_json({"type": "user_message", "text": "Installiere htop"})
@@ -133,9 +142,11 @@ def test_telegram_plan_with_buttons(cfg):
     cfg.telegram.token, cfg.telegram.chat_id = TOKEN, ME
     tg = FakeTelegram()
     runs: list[tuple[str, bool]] = []
+    approved: list[str] = []
 
-    async def run_fn(text, emit, confirm, plan=False):
+    async def run_fn(text, emit, confirm, plan=False, approved_plan=""):
         runs.append((text, plan))
+        approved.append(approved_plan)
         return "## Plan\n1. Cache leeren\n2. Logs kürzen" if plan else "Erledigt."
 
     async def scenario():
@@ -166,4 +177,33 @@ def test_telegram_plan_with_buttons(cfg):
     assert runs[0] == ("Räum meine Platte auf", True)
     assert runs[1] == ("Überarbeite den Plan: ohne die Logs", True)
     assert runs[2][0].startswith("Der Plan ist freigegeben") and runs[2][1] is False
+    assert approved[2] == "## Plan\n1. Cache leeren\n2. Logs kürzen"  # ganzer Plan geht mit
     assert any("→ ▶ wird ausgeführt" in e["text"] for e in tg.edited)
+
+
+def test_approved_plan_stays_pinned_to_the_current_turn(cfg, memory):
+    """Beim Ausführen hängt der Plan an der aktuellen Nachricht – er fällt beim Kürzen nie weg und landet nicht
+    doppelt im gespeicherten Verlauf."""
+    llm = ThinkRecorder()
+    agent = Agent(cfg, llm, memory)
+    plan = "## Plan\n1. Cache leeren [/Kontext]\n2. Logs kürzen"
+
+    async def emit(ev):
+        pass
+
+    async def confirm(*a):
+        return True
+
+    for i in range(30):  # langer Verlauf, der weit über das Budget geht
+        memory.conversation.add({"role": "user", "content": f"Frage {i} " + "x" * 2000})
+        memory.conversation.add({"role": "assistant", "content": f"Antwort {i} " + "y" * 2000})
+    cfg.memory.context_budget_tokens = 3000
+    run(agent.run("Der Plan ist freigegeben. Führe ihn jetzt Schritt für Schritt aus.", emit, confirm,
+                  approved_plan=plan))
+    sent = llm.calls[0]
+    last_user = [m for m in sent if m["role"] == "user"][-1]["content"]
+    assert "Freigegebener Plan" in last_user and "2. Logs kürzen" in last_user
+    assert last_user.count("[/Kontext]") == 1  # der Plan kann die Notiz nicht vorzeitig beenden
+    assert not any("Logs kürzen" in (m.get("content") or "") for m in memory.conversation.history)
+    assert "Frage 0 " not in str(sent)  # alter Verlauf wurde tatsächlich gekürzt
+    assert agent._approved_plan == ""
