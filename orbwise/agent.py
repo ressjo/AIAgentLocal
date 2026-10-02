@@ -224,9 +224,10 @@ class Agent:
     async def run(self, user_text: str, emit: Emit, confirm: Confirm, think: bool | None = None,
                   plan: bool = False) -> str:
         """think: Denkmodus für diese Anfrage (None = Einstellung des Modell-Profils).
-        plan: Planmodus – gründlich nachdenken, nur lesend nachsehen und einen Plan zur Freigabe vorlegen."""
+        plan: Planmodus – nur lesend nachsehen und einen Plan zur Freigabe vorlegen (gedacht wird nur, wenn der
+        Denkmodus an ist)."""
         async with self.lock:
-            self._think, self._plan = (True if plan else think), plan
+            self._think, self._plan = think, plan
             self._tainted = False
             try:
                 return await self._run(user_text, emit, confirm)
@@ -234,11 +235,11 @@ class Agent:
                 self._think, self._plan = None, False
 
     async def run_in_chat(self, chat_id: str, title: str, text: str, emit: Emit, confirm: Confirm,
-                          plan: bool = False) -> tuple[str, str]:
+                          plan: bool = False, think: bool | None = None) -> tuple[str, str]:
         """Für Routinen und Telegram: Aufgabe in einem eigenen Chat erledigen – der aktive Chat des Nutzers bleibt
         unberührt. Liefert (Antwort, Chat-ID)."""
         async with self.lock:
-            self._think, self._plan = (True if plan else None), plan
+            self._think, self._plan = think, plan
             self._tainted = False
             try:
                 with self.memory.in_chat(chat_id, title) as conv:

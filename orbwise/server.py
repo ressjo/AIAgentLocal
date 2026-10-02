@@ -530,7 +530,8 @@ def create_app(cfg: Config) -> FastAPI:
                 if ev.get("type") in ("tool_call", "tool_result", "tool_output", "state"):
                     await hub.broadcast({**ev, "routine": "Telegram"})  # Aktivität/Orb im Dashboard
 
-            answer, chat_id = await agent.run_in_chat(chat_id, CHAT_TITLE, text, emit_all, confirm, plan=plan)
+            answer, chat_id = await agent.run_in_chat(chat_id, CHAT_TITLE, text, emit_all, confirm, plan=plan,
+                                                    think=hub.think)  # Denken-Knopf gilt auch vom Handy
             tg_state.parent.mkdir(parents=True, exist_ok=True)
             tg_state.write_text(json.dumps({"chat_id": chat_id}), encoding="utf-8")
             await hub.broadcast({"type": "chats_changed"})

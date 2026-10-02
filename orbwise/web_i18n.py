@@ -40,9 +40,9 @@ HTML_EN = [
     ('title="Halten zum Sprechen (Leertaste) · kurz tippen = zuhören bis Stille" aria-label="Mikrofon"',
      'title="Hold to talk (space bar) · tap = listen until silence" aria-label="Microphone"'),
     ('placeholder="Frag Jarvis oder sag „Hey Jarvis“ …"', 'placeholder="Ask Jarvis or say “Hey Jarvis” …"'),
-    ('title="Planmodus: Jarvis denkt nach, schaut nur lesend nach und legt erst einen Plan vor – ausgeführt wird nach '
+    ('title="Planmodus: Jarvis schaut nur lesend nach und legt erst einen Plan vor – ausgeführt wird nach '
      'deiner Freigabe."><svg class="i"><use href="#i-plan"/></svg><span>Plan<',
-     'title="Plan mode: Jarvis thinks, only looks things up and presents a plan first – it is carried out once you '
+     'title="Plan mode: Jarvis only looks things up and presents a plan first – it is carried out once you '
      'approve it."><svg class="i"><use href="#i-plan"/></svg><span>Plan<'),
     ('title="Denkmodus: Jarvis denkt vor der Antwort nach – langsamer, dafür gründlicher."><svg class="i"><use '
      'href="#i-sparkles"/></svg><span>Denken<',

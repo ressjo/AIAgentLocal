@@ -40,7 +40,7 @@ def test_plan_mode_only_reads_and_presents_a_plan(cfg, memory):
         return True
 
     async def scenario():
-        await agent.run('/tool run_shell {"command": "sudo pacman -Syu"}', emit, confirm, plan=True)
+        await agent.run('/tool run_shell {"command": "sudo pacman -Syu"}', emit, confirm, think=True, plan=True)
         await agent.run("/tool system_info {}", emit, confirm, plan=True)
 
     run(scenario())
@@ -50,7 +50,7 @@ def test_plan_mode_only_reads_and_presents_a_plan(cfg, memory):
     plans = [e for e in events if e["type"] == "plan"]
     assert len(plans) == 2 and plans[0]["text"].startswith("## Plan") and plans[0]["steps"] == 3
     assert all(e.get("plan") for e in events if e["type"] == "assistant_start")
-    assert set(llm.think) == {True}  # Planmodus denkt immer gründlich nach
+    assert llm.think[0] is True and llm.think[-1] is None  # gedacht wird nur mit Denken-Knopf
     assert "PLANMODUS" in [m for m in llm.calls[0] if m["role"] == "user"][-1]["content"]
     assert agent._plan is False  # danach wieder normal
     assert plan_steps("## Plan\n1. a\n2) b\n  3. c\nkein Schritt") == 3

@@ -20,7 +20,7 @@ All notable changes to this project are documented here. The format follows
   chats, Planner/Memory sheets and a settings page (models, voices, general, status) instead of the top pills; big orb
   with greeting and suggestions on an empty chat that shrinks to a live strip during a conversation; activity panel
   with telemetry opens by itself when a tool runs; send turns into stop while Jarvis works; works on phones.
-- **Plan mode** (PLAN button, Telegram `/plan`): Jarvis thinks the request through, only uses read-only tools and
+- **Plan mode** (PLAN button, Telegram `/plan`): Jarvis (thinking only if *Think* is on) only uses read-only tools and
   presents a step-by-step plan to run, change (revised by the AI from your feedback) or discard; a short spoken
   "yes"/"no" decides too. Chat Markdown now renders headings and numbered lists.
 - **Understand the screen and images:** "What's that error message?" – Orbwise takes a screenshot (spectacle,

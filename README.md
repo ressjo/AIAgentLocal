@@ -512,10 +512,11 @@ second Orbwise instance (service + terminal) is fetching the bot's messages at t
 
 ### Plan mode
 
-For bigger jobs switch on **Plan** in the input bar. Jarvis then thinks the request through (thinking mode), may only
+For bigger jobs switch on **Plan** in the input bar. Jarvis then may only
 look things up with read-only tools (system info, file and package search, status …) and answers with a numbered
 plan: what it will do, with which tool or exact command, and where it will ask for confirmation. Anything that would
-change something is not run – it becomes a step of the plan.
+change something is not run – it becomes a step of the plan. Plan mode uses thinking only when **Think** is
+switched on too – leave it off for fast plans, switch it on for more thorough ones (also for Telegram `/plan`).
 
 Under the plan: **▶ RUN** carries it out (confirmations for changes still appear as usual), **✎ CHANGE** lets you
 write what should be different ("keep the journal logs") and Jarvis presents a revised plan, **✕ DISCARD** drops it.
