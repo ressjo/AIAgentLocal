@@ -160,6 +160,15 @@ TEXTS = {
         "context_note": "[Kontext – nicht vom Nutzer geschrieben: Uhrzeit {time}]",
         "tainted_confirm": "Nach dem Lesen einer E-Mail oder eines Bildschirm-/Bildinhalts – Schutz vor versteckten "
                            "Anweisungen. Nur erlauben, wenn du diese Aktion selbst verlangt hast.",
+        "plan_mode": "PLANMODUS: Führe noch nichts aus, was etwas verändert. Du darfst mit lesenden Werkzeugen "
+                     "nachsehen (Systeminfo, Dateien, Pakete suchen, Status …), um den Plan konkret zu machen. "
+                     "Antworte dann NUR mit dem Plan als Markdown: Überschrift „## Plan“, darunter nummerierte "
+                     "Schritte – je Schritt was du tust, womit (Werkzeug bzw. genauer Befehl) und ob eine Rückfrage "
+                     "kommt. Danach kurz „Risiken/Annahmen“, falls es welche gibt. Kein Vorwort.",
+        "plan_skipped": "PLANMODUS: nicht ausgeführt – diese Aktion verändert etwas. Nimm sie als Schritt in den "
+                        "Plan auf.",
+        "plan_execute": "Der Plan ist freigegeben. Führe ihn jetzt Schritt für Schritt aus.",
+        "plan_revise": "Überarbeite den Plan: {feedback}",
     },
     "en": {
         "final_nudge": "(System: The step limit for this task has been reached. Do not call any more tools. Summarise "
@@ -177,6 +186,14 @@ TEXTS = {
         "context_note": "[Context – not written by the user: time {time}]",
         "tainted_confirm": "After reading an e-mail or screen/image content – protection against hidden "
                            "instructions. Only allow it if you asked for this action yourself.",
+        "plan_mode": "PLAN MODE: Do not run anything that changes something yet. You may look things up with "
+                     "read-only tools (system info, files, package search, status …) to make the plan concrete. "
+                     "Then answer ONLY with the plan in Markdown: heading “## Plan”, then numbered steps – for each "
+                     "step what you will do, with what (tool or exact command) and whether it asks for confirmation. "
+                     "Afterwards briefly “Risks/assumptions” if there are any. No preamble.",
+        "plan_skipped": "PLAN MODE: not executed – this action changes something. Add it to the plan as a step.",
+        "plan_execute": "The plan is approved. Carry it out now, step by step.",
+        "plan_revise": "Revise the plan: {feedback}",
     },
 }
 
@@ -234,6 +251,8 @@ SPOKEN = {
         "confirm_shell": "Möchtest du folgenden Befehl ausführen?",
         "confirm_mail": "Soll ich die Mail an {v} senden? Du kannst sie im Fenster noch bearbeiten.",
         "yes_no": "Bitte mit Ja oder Nein antworten.",
+        "plan_ready": "Mein Plan hat {n} Schritte. Soll ich ihn ausführen?",
+        "plan_ready_short": "Mein Plan steht. Soll ich ihn ausführen?",
         "password": "Dafür brauche ich dein Passwort. Bitte gib es im Dashboard ein.",
         "reminder": "Erinnerung: {text}",
         "timer": "Der Timer ist abgelaufen: {text}",
@@ -253,6 +272,8 @@ SPOKEN = {
         "confirm_shell": "Do you want to run the following command?",
         "confirm_mail": "Shall I send the e-mail to {v}? You can still edit it in the dialog.",
         "yes_no": "Please answer yes or no.",
+        "plan_ready": "My plan has {n} steps. Shall I carry it out?",
+        "plan_ready_short": "My plan is ready. Shall I carry it out?",
         "password": "I need your password for that. Please enter it in the dashboard.",
         "reminder": "Reminder: {text}",
         "timer": "Your timer is up: {text}",
@@ -280,9 +301,11 @@ def spoken(cfg, key: str, **values) -> str:
 _NOTE_RE = re.compile(r"^\[(?:Kontext|Context)\b.*?\[/(?:Kontext|Context)\]\n*", re.S)
 
 
-def context_note(cfg, time: str, memories: str = "") -> str:
+def context_note(cfg, time: str, memories: str = "", plan: bool = False) -> str:
     head = TEXTS[lang_of(cfg)]["context_note"].format(time=time)
     body = f"\n{SECTIONS[lang_of(cfg)]['memories']}\n{memories}" if memories else ""
+    if plan:
+        body += "\n" + TEXTS[lang_of(cfg)]["plan_mode"]
     close = "[/Context]" if lang_of(cfg) == "en" else "[/Kontext]"
     return f"{head}{body}\n{close}\n\n"
 

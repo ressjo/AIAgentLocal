@@ -86,7 +86,7 @@ def protect_logs(token: str) -> None:
             logger.addFilter(RedactToken(token))
 
 
-Runner = Callable[[str, Callable[[dict], Awaitable[None]], Callable[..., Awaitable[Any]]], Awaitable[str]]
+Runner = Callable[..., Awaitable[str]]  # run(text, emit, confirm, plan=False) → Antwort
 
 
 def split_text(text: str, limit: int = MAX_TEXT) -> list[str]:
@@ -129,7 +129,9 @@ class TelegramBot:
                                         timeout=httpx.Timeout(poll_timeout + 15))
         self.offset = 0
         self.pending: dict[str, asyncio.Future] = {}
-        self.queue: asyncio.Queue[tuple[str, int]] = asyncio.Queue()
+        self.queue: asyncio.Queue[tuple[str, int, bool]] = asyncio.Queue()  # (Text, Nachricht, Planmodus)
+        self.plan: dict | None = None  # vorgelegter Plan: {"key", "message_id", "text"}
+        self.revising = False  # nach „Ändern“: die nächste Nachricht ist der Änderungswunsch
         self.en = getattr(cfg, "language", "de") == "en"
         # für /api/status und die Oberfläche: läuft der Bot, wie heißt er, was ist das letzte Problem?
         self.status: dict[str, Any] = {"running": False, "bot": "", "error": "", "chat_id": self.t.chat_id}
@@ -268,13 +270,24 @@ class TelegramBot:
         if text in ("/start", "/help"):
             await self.send(self.L("Hallo! Schreib oder sprich mir einfach, was du brauchst – z. B. „Erinner mich "
                                    "morgen um 9 an den Zahnarzt“. Erinnerungen kommen hierher. Mit /stop (oder "
-                                   "„stopp“) brichst du ab, was gerade läuft – auch am PC.",
+                                   "„stopp“) brichst du ab, was gerade läuft – auch am PC. Mit /plan <Anfrage> legt "
+                                   "Jarvis erst einen Plan vor, den du freigibst.",
                                    "Hi! Just write or speak what you need – e.g. “Remind me tomorrow at 9 about the "
                                    "dentist”. Reminders arrive here. /stop (or “stop”) cancels whatever is running – "
-                                   "on the PC too."))
+                                   "on the PC too. /plan <request> makes Jarvis present a plan for you to approve "
+                                   "first."))
             return
         if text.lower().strip(" .!") in STOP_WORDS:
             await self.stop()  # sofort – nicht hinter der laufenden Anfrage anstellen
+            return
+        if text.split(maxsplit=1)[:1] == ["/plan"]:
+            request = text[len("/plan"):].strip()
+            if not request:
+                await self.send(self.L("Schreib dazu, was geplant werden soll – z. B. „/plan Räum meine Festplatte auf“.",
+                                       "Add what to plan – e.g. “/plan clean up my disk”."))
+                return
+            await self.close_plan(self.L("ersetzt", "replaced"))
+            await self.queue.put((request, msg.get("message_id", 0), True))
             return
         if msg.get("document") or msg.get("photo"):
             path = await self._receive_file(msg)
@@ -289,7 +302,7 @@ class TelegramBot:
                                        "Paperless” or “summarise it”."))
                 return
             await self.send(f"📥 {path.name}")
-            await self.queue.put((self._file_note(path) + caption, msg.get("message_id", 0)))
+            await self.queue.put((self._file_note(path) + caption, msg.get("message_id", 0), False))
             return
         if not text and (msg.get("voice") or msg.get("audio")):
             text = await self._voice(msg.get("voice") or msg.get("audio"))
@@ -300,7 +313,12 @@ class TelegramBot:
             if self.last_file and time.monotonic() - self.last_file[1] < FILE_CONTEXT_SECONDS:
                 text = self._file_note(self.last_file[0]) + text  # Bezug auf die eben geschickte Datei
             self.last_file = None
-            await self.queue.put((text, msg.get("message_id", 0)))
+            if self.revising:  # Änderungswunsch zum vorgelegten Plan (getippt oder gesprochen)
+                await self.close_plan(self.L("✎ wird überarbeitet", "✎ being revised"))
+                await self.queue.put((self.prompt("plan_revise").format(feedback=text), msg.get("message_id", 0), True))
+                return
+            await self.close_plan(self.L("ersetzt", "replaced"))
+            await self.queue.put((text, msg.get("message_id", 0), False))
 
     def _file_note(self, path: Path) -> str:
         size = path.stat().st_size if path.exists() else 0
@@ -354,11 +372,16 @@ class TelegramBot:
             await self.send(self.L("Die Sprachnachricht konnte ich nicht verstehen.", "I couldn't understand that."))
             return ""
 
+    def prompt(self, key: str) -> str:
+        from . import prompts
+        return prompts.text(self.cfg, key)
+
     async def _worker(self) -> None:
         while True:
-            text, _ = await self.queue.get()
+            text, _, plan = await self.queue.get()
             typing = asyncio.create_task(self._typing())
-            self.current = asyncio.create_task(self.run(text, self._emit, self._confirm))
+            self.current = asyncio.create_task(self.run(text, self._emit, self._confirm, plan=plan) if plan
+                                               else self.run(text, self._emit, self._confirm))
             try:
                 await asyncio.wait({self.current})  # wirft nicht, wenn nur die Anfrage abgebrochen wurde
             except asyncio.CancelledError:
@@ -375,7 +398,49 @@ class TelegramBot:
                 answer = self.L(f"Da ist etwas schiefgegangen: {error}", f"Something went wrong: {error}")
             else:
                 answer = self.current.result()
+                if plan and answer:
+                    await self.present_plan(answer)
+                    continue
             await self.notify(answer or self.L("(keine Antwort)", "(no answer)"))
+
+    # ---------- Planmodus ----------
+    async def present_plan(self, text: str) -> None:
+        """Plan schicken; unter dem letzten Teil die Knöpfe Ausführen / Ändern / Verwerfen."""
+        key = uuid.uuid4().hex[:10]
+        parts = split_text(text)
+        buttons = {"inline_keyboard": [[
+            {"text": self.L("✅ Ausführen", "✅ Run"), "callback_data": f"plan:ok:{key}"},
+            {"text": self.L("✏️ Ändern", "✏️ Change"), "callback_data": f"plan:edit:{key}"},
+            {"text": self.L("❌ Verwerfen", "❌ Discard"), "callback_data": f"plan:no:{key}"}]]}
+        try:
+            for part in parts[:-1]:
+                await self.send(part)
+            sent = await self.send(parts[-1], reply_markup=buttons)
+        except (httpx.HTTPError, RuntimeError, ValueError) as e:
+            log.warning("Plan nicht gesendet: %s", self.redact(e))
+            return
+        self.plan = {"key": key, "message_id": sent[-1]["message_id"], "text": parts[-1]}
+
+    async def close_plan(self, status: str) -> None:
+        """Knöpfe unter dem offenen Plan entfernen und die Entscheidung anzeigen."""
+        plan, self.plan = self.plan, None
+        self.revising = False
+        if plan:
+            with contextlib.suppress(Exception):
+                await self.call("editMessageText", chat_id=self.t.chat_id, message_id=plan["message_id"],
+                                text=f"{plan['text']}\n\n→ {status}")
+
+    async def _plan_button(self, action: str, key: str) -> None:
+        if not self.plan or self.plan["key"] != key:
+            return
+        if action == "ok":
+            await self.close_plan(self.L("▶ wird ausgeführt", "▶ being carried out"))
+            await self.queue.put((self.prompt("plan_execute"), 0, False))
+        elif action == "edit":
+            self.revising = True
+            await self.notify(self.L("Schreib mir, was anders sein soll.", "Tell me what should be different."))
+        elif action == "no":
+            await self.close_plan(self.L("✕ verworfen", "✕ discarded"))
 
     def cancel_current(self) -> int:
         """Laufende und wartende Anfragen vom Handy sowie offene Knopf-Rückfragen abbrechen (auch für STOP am PC)."""
@@ -453,6 +518,10 @@ class TelegramBot:
         if chat != self.t.chat_id:
             return
         action, _, key = str(cq.get("data", "")).partition(":")
+        if action == "plan":
+            sub, _, key = key.partition(":")
+            await self._plan_button(sub, key)
+            return
         fut = self.pending.get(key)
         if fut and not fut.done():
             fut.set_result(action == "ok")

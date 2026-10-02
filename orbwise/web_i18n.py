@@ -68,6 +68,10 @@ HTML_EN = [
      'im Orb.">DENKEN<',
      'title="Thinking mode: Jarvis reasons before answering – slower but more thorough. The thoughts appear in the '
      'orb.">THINK<'),
+    ('title="Planmodus: Jarvis denkt nach, schaut nur lesend nach und legt erst einen Plan vor – ausgeführt wird nach '
+     'deiner Freigabe.">PLAN<',
+     'title="Plan mode: Jarvis thinks, only looks things up and presents a plan first – it is carried out once you '
+     'approve it.">PLAN<'),
     ('title="Wake-Word „Hey Jarvis“"', 'title="Wake word “Hey Jarvis”"'),
     ('title="Sprachausgabe">TON<', 'title="Speech output">SOUND<'),
     ('title="Aktuelle Aufgabe abbrechen (Esc)"', 'title="Cancel the current task (Esc)"'),

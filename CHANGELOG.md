@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Plan mode** (PLAN button, Telegram `/plan`): Jarvis thinks the request through, only uses read-only tools and
+  presents a step-by-step plan to run, change (revised by the AI from your feedback) or discard; a short spoken
+  "yes"/"no" decides too. Chat Markdown now renders headings and numbered lists.
 - **Understand the screen and images:** "What's that error message?" – Orbwise takes a screenshot (spectacle,
   gnome-screenshot, grim, maim, … or `vision.screenshot_command`), asks a local vision model (`vision.model`,
   default `qwen2.5vl:7b`, Ollama or OpenAI-compatible) and answers; also for image files and photos from Telegram.

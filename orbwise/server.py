@@ -100,6 +100,9 @@ class Hub:
         self.askpass = None  # AskpassBroker (Passwortfeld für sudo -A)
         self.cancellers: list = []  # weitere Abbrecher für STOP (z. B. laufende Telegram-Anfrage) → int
         self.think: bool | None = None  # Denkmodus-Knopf der Oberfläche (None = Profil-Einstellung)
+        self.plan_mode = False  # PLAN-Knopf: erst einen Plan vorlegen, ausführen nach Freigabe
+        self.plan_pending: str | None = None  # ID des Plans, der auf Ausführen/Ändern/Verwerfen wartet
+        self._plan_msgs: set[str] = set()  # Antworten, die ein Plan sind – werden nicht vorgelesen
         self.clients: set[Client] = set()
         # Erinnerungen, die fällig wurden, als keine Oberfläche offen war – werden beim Verbinden zugestellt
         self.undelivered: list[dict] = []
@@ -118,13 +121,40 @@ class Hub:
 
     async def emit(self, event: dict) -> None:
         t = event.get("type")
-        if t == "token":
-            self.speaker.feed(event["id"], event["text"])
+        if t == "assistant_start" and event.get("plan"):
+            self._plan_msgs = {event["id"]}
+        elif t == "token":
+            if event["id"] not in self._plan_msgs:  # einen ganzen Plan vorzulesen wäre zu lang – kurze Ansage
+                self.speaker.feed(event["id"], event["text"])
         elif t in ("segment_end", "assistant_end"):
             self.speaker.end(event["id"])
         elif t == "error":
             self.speaker.say(event["text"])
+        elif t == "plan":
+            self.plan_pending = event["id"]
+            steps = int(event.get("steps") or 0)
+            self.speaker.say(prompts.spoken(self.cfg, "plan_ready", n=steps) if steps
+                             else prompts.spoken(self.cfg, "plan_ready_short"))
         await self.broadcast(event)
+
+    async def close_plan(self, outcome: str) -> None:
+        """Offenen Plan abschließen: accepted · revised · discarded · replaced."""
+        if self.plan_pending:
+            plan_id, self.plan_pending = self.plan_pending, None
+            await self.broadcast({"type": "plan_closed", "id": plan_id, "outcome": outcome})
+
+    async def plan_decision(self, plan_id: str, action: str, feedback: str = "") -> None:
+        """Ausführen / Ändern (mit Wunsch) / Verwerfen eines vorgelegten Plans."""
+        if not self.plan_pending or plan_id != self.plan_pending:
+            return
+        if action == "accept":
+            await self.close_plan("accepted")
+            await self.submit(prompts.text(self.cfg, "plan_execute"), plan=False)
+        elif action == "revise" and feedback.strip():
+            await self.close_plan("revised")
+            await self.submit(prompts.text(self.cfg, "plan_revise").format(feedback=feedback.strip()), plan=True)
+        elif action == "discard":
+            await self.close_plan("discarded")
 
     async def confirm(self, call_id: str, name: str, args: dict, reason: str) -> bool | tuple[bool, dict]:
         """Wartet auf Ja/Nein. Bei Tools mit bearbeitbaren Feldern (z. B. mail_send) liefert eine Bestätigung
@@ -153,10 +183,18 @@ class Hub:
         if fut and not fut.done():
             fut.set_result((True, changes) if approved and changes and call_id in self.editable_pending else approved)
 
-    async def submit(self, text: str, source: str = "text") -> None:
+    async def submit(self, text: str, source: str = "text", plan: bool | None = None) -> None:
+        """plan: None = wie der PLAN-Knopf steht; True/False erzwingt (Ausführen/Überarbeiten eines Plans)."""
         text = text.strip()
         if not text:
             return
+        if self.plan_pending and plan is None and not self.pending:
+            # Kurzes „ja/ausführen“ bzw. „nein“ entscheidet über den offenen Plan; alles andere ersetzt ihn
+            decision = parse_yes_no(text) if len(text.split()) <= 4 else None
+            if decision is not None:
+                await self.plan_decision(self.plan_pending, "accept" if decision else "discard")
+                return
+            await self.close_plan("replaced")
         # Wartet eine Bestätigung, wird gesprochener Text als Ja/Nein interpretiert
         if self.pending:
             decision = parse_yes_no(text)
@@ -176,13 +214,13 @@ class Hub:
         self.speaker.stop()
         await self.broadcast({"type": "audio_stop"})
         await self.broadcast({"type": "user", "text": text, "source": source})
-        task = asyncio.create_task(self._run(text))
+        task = asyncio.create_task(self._run(text, self.plan_mode if plan is None else plan))
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
 
-    async def _run(self, text: str) -> None:
+    async def _run(self, text: str, plan: bool = False) -> None:
         try:
-            await self.agent.run(text, self.emit, self.confirm, think=self.think)
+            await self.agent.run(text, self.emit, self.confirm, think=self.think, plan=plan)
         except asyncio.CancelledError:
             pass
         except Exception as e:  # noqa: BLE001
@@ -378,7 +416,7 @@ def create_app(cfg: Config) -> FastAPI:
         from .telegram import CHAT_TITLE, TelegramBot, chat_state_file, transcribe_voice
         tg_state = chat_state_file(cfg)
 
-        async def run_telegram(text: str, emit, confirm) -> str:
+        async def run_telegram(text: str, emit, confirm, plan: bool = False) -> str:
             """Anfrage vom Handy: eigener Chat „📱 Telegram“ – der offene Chat im Dashboard bleibt unberührt."""
             try:
                 chat_id = json.loads(tg_state.read_text(encoding="utf-8")).get("chat_id", "")
@@ -390,7 +428,7 @@ def create_app(cfg: Config) -> FastAPI:
                 if ev.get("type") in ("tool_call", "tool_result", "tool_output", "state"):
                     await hub.broadcast({**ev, "routine": "Telegram"})  # Aktivität/Orb im Dashboard
 
-            answer, chat_id = await agent.run_in_chat(chat_id, CHAT_TITLE, text, emit_all, confirm)
+            answer, chat_id = await agent.run_in_chat(chat_id, CHAT_TITLE, text, emit_all, confirm, plan=plan)
             tg_state.parent.mkdir(parents=True, exist_ok=True)
             tg_state.write_text(json.dumps({"chat_id": chat_id}), encoding="utf-8")
             await hub.broadcast({"type": "chats_changed"})
@@ -1052,6 +1090,11 @@ def create_app(cfg: Config) -> FastAPI:
                     broker.answer(str(data.get("id", "")), None)
                 elif t == "think":
                     hub.think = bool(data.get("enabled"))
+                elif t == "plan_mode":
+                    hub.plan_mode = bool(data.get("enabled"))
+                elif t in ("plan_accept", "plan_revise", "plan_discard"):
+                    await hub.plan_decision(str(data.get("id", "")), t.split("_", 1)[1],
+                                            str(data.get("text", ""))[:4000])
                 elif t == "voice_settings" and tts:
                     if data.get("voice"):
                         tts.select(str(data["voice"]))

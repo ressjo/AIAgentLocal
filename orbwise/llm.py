@@ -373,6 +373,11 @@ def generation_stats(chunk: dict) -> dict:
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.S)
 
 
+def strip_context_note_text(text: str) -> str:
+    from .prompts import strip_context_note
+    return strip_context_note(text)
+
+
 def strip_think(text: str) -> str:
     return _THINK_RE.sub("", text).strip()
 
@@ -396,6 +401,10 @@ class FakeLLM:
 
     def _decide(self, messages: list[dict]) -> dict:
         last = messages[-1]
+        user = next((m.get("content") or "" for m in reversed(messages) if m["role"] == "user"), "")
+        planning = "PLANMODUS:" in user or "PLAN MODE:" in user
+        if planning and (last["role"] == "tool" or not strip_context_note_text(user).startswith("/tool ")):
+            return {"role": "assistant", "content": self._demo_plan(strip_context_note_text(user))}
         if last["role"] == "tool":
             done = "Done. Result" if self.en else "Erledigt. Ergebnis"
             return {"role": "assistant", "content": f"{done}: {last['content'][:200]}"}
@@ -421,6 +430,17 @@ class FakeLLM:
         return {"role": "assistant",
                 "content": f"Certainly. You said: {text}. How else may I help?" if self.en
                 else f"Sehr wohl. Sie sagten: {text}. Wie kann ich sonst behilflich sein?"}
+
+    def _demo_plan(self, request: str) -> str:
+        if self.en:
+            return (f"## Plan\n1. Check free disk space with `df -h` (read-only, no confirmation)\n"
+                    f"2. Clear the package cache and old journal logs with `cleanup_system` (asks for confirmation)\n"
+                    f"3. Show the result and how much space was freed\n\n**Risks/assumptions:** nothing is deleted "
+                    f"outside caches and logs. (Request: {request})")
+        return (f"## Plan\n1. Freien Speicher mit `df -h` prüfen (nur lesend, keine Rückfrage)\n"
+                f"2. Paket-Cache und alte Journal-Logs mit `cleanup_system` leeren (mit Rückfrage)\n"
+                f"3. Ergebnis zeigen und wie viel Platz frei wurde\n\n**Risiken/Annahmen:** Gelöscht werden nur "
+                f"Caches und Logs. (Anfrage: {request})")
 
     async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
                           think: bool | None = None) -> AsyncIterator[dict]:

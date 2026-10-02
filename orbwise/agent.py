@@ -8,6 +8,7 @@ import getpass
 import json
 import logging
 import platform
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -45,6 +46,11 @@ TAINT_GUARDED = {"shell", "web", "files", "apps", "obsidian", "trilium", "calend
 def is_taint_source(name: str, result: str) -> bool:
     """Bringt dieses Tool-Ergebnis fremden Text (Mails) in den Verlauf?"""
     return name in TAINT_SOURCES and (name != "daily_briefing" or "E-Mail:" in result)
+
+
+def plan_steps(text: str) -> int:
+    """Anzahl nummerierter Schritte in einem Plan (für „Mein Plan hat n Schritte“)."""
+    return len(re.findall(r"^\s*\d+[.)]\s", text, re.M))
 
 
 def prompt_size(stats: dict, estimated: int) -> int:
@@ -111,6 +117,7 @@ class Agent:
         self._token_ratio: dict[str, float] = {}
         self._turn_time = ""  # Uhrzeit der aktuellen Anfrage (bleibt über alle Schritte gleich → Cache)
         self._think: bool | None = None
+        self._plan = False  # Planmodus: nur lesen, am Ende einen Plan vorlegen
         self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
         self.tools = load_all_tools()
         self.all_schemas = tool_schemas(cfg)
@@ -145,7 +152,7 @@ class Agent:
         # Uhrzeit und Erinnerungen wechseln – sie kommen vor die aktuelle Nutzernachricht, nicht in den
         # System-Prompt, damit der Anfang gleich bleibt (KV-Cache des Modell-Servers)
         note = prompts.context_note(self.cfg, self._turn_time or datetime.now().strftime("%H:%M"),
-                                    self.memory.format_hits(hits))
+                                    self.memory.format_hits(hits), plan=self._plan)
         note_t = est_tokens(note)
         total_budget = self.context_budget()
         budget = total_budget - est_tokens(system) - self.schema_tokens - note_t
@@ -213,25 +220,31 @@ class Agent:
         return max(1500, self.context_budget() - fixed)
 
     # ---------- Ablauf ----------
-    async def run(self, user_text: str, emit: Emit, confirm: Confirm, think: bool | None = None) -> str:
-        """think: Denkmodus für diese Anfrage (None = Einstellung des Modell-Profils)."""
+    async def run(self, user_text: str, emit: Emit, confirm: Confirm, think: bool | None = None,
+                  plan: bool = False) -> str:
+        """think: Denkmodus für diese Anfrage (None = Einstellung des Modell-Profils).
+        plan: Planmodus – gründlich nachdenken, nur lesend nachsehen und einen Plan zur Freigabe vorlegen."""
         async with self.lock:
-            self._think = think
+            self._think, self._plan = (True if plan else think), plan
             self._tainted = False
             try:
                 return await self._run(user_text, emit, confirm)
             finally:
-                self._think = None
+                self._think, self._plan = None, False
 
-    async def run_in_chat(self, chat_id: str, title: str, text: str, emit: Emit, confirm: Confirm) -> tuple[str, str]:
-        """Für Routinen: Aufgabe in einem eigenen Chat erledigen – der aktive Chat des Nutzers bleibt unberührt.
-        Liefert (Antwort, Chat-ID)."""
+    async def run_in_chat(self, chat_id: str, title: str, text: str, emit: Emit, confirm: Confirm,
+                          plan: bool = False) -> tuple[str, str]:
+        """Für Routinen und Telegram: Aufgabe in einem eigenen Chat erledigen – der aktive Chat des Nutzers bleibt
+        unberührt. Liefert (Antwort, Chat-ID)."""
         async with self.lock:
-            self._think = None
+            self._think, self._plan = (True if plan else None), plan
             self._tainted = False
-            with self.memory.in_chat(chat_id, title) as conv:
-                answer = await self._run(text, emit, confirm)
-                return answer, conv.chat_id
+            try:
+                with self.memory.in_chat(chat_id, title) as conv:
+                    answer = await self._run(text, emit, confirm)
+                    return answer, conv.chat_id
+            finally:
+                self._think, self._plan = None, False
 
     async def _run(self, user_text: str, emit: Emit, confirm: Confirm) -> str:
         self._turn_time = datetime.now().strftime("%H:%M")
@@ -246,7 +259,7 @@ class Agent:
         spoken: list[str] = []
         tool_notes: list[str] = []
         msg_id = uuid.uuid4().hex[:8]
-        await emit({"type": "assistant_start", "id": msg_id})
+        await emit({"type": "assistant_start", "id": msg_id, "plan": self._plan})
         try:
             seen: dict[str, int] = {}  # gleiche Tool-Aufrufe zählen (Schleifenerkennung)
             finished = False
@@ -310,6 +323,8 @@ class Agent:
 
         answer = "\n\n".join(spoken)
         await emit({"type": "assistant_end", "id": msg_id, "text": answer})
+        if self._plan and answer.strip():
+            await emit({"type": "plan", "id": msg_id, "text": answer, "steps": plan_steps(answer)})
         # Antwort ist fertig – das Nachbereiten (Tagebuch, Verdichten per LLM) läuft still im Hintergrund
         await emit({"type": "state", "state": "idle"})
         conv.age_tool_results()  # lange Tool-Ergebnisse älterer Runden auf einen Auszug kürzen
@@ -415,6 +430,10 @@ class Agent:
         args_str = json.dumps(args, ensure_ascii=False)
         await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": reason,
                     "group": spec.group})
+        if self._plan and risk != SAFE:  # Planmodus: Veränderndes nur vormerken, nicht ausführen, nicht nachfragen
+            result = prompts.text(self.cfg, "plan_skipped")
+            await emit({"type": "tool_result", "id": call_id, "status": "planned", "text": result})
+            return name, result, f"{name} {args_str} → im Plan vorgemerkt"
 
         if risk == BLOCKED:
             result = f"BLOCKIERT ({reason}). Dieser Befehl wird aus Sicherheitsgründen nie ausgeführt."

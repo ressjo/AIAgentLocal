@@ -51,6 +51,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation), upload local files or files sent from the phone |
 | **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, list folders, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional **writing and replying** (SMTP) – To, Cc, subject and text are editable in a dialog before anything is sent |
+| **Plan mode** | **PLAN** button: Jarvis thinks it through, only looks things up (read-only) and presents a step-by-step plan – **RUN**, **CHANGE** (say what should be different) or **DISCARD**; also by voice ("yes") and via Telegram (`/plan …`) |
 | **Screen & images** | "What's that error message?", "What does this window say?", "Help me with this dialog" – Orbwise takes a screenshot and asks a **local vision model** (e.g. Qwen2.5-VL); also for image files and photos sent from the phone. Nothing leaves your PC |
 | **Telegram** | Chat with Orbwise from your phone (text or voice messages, own chat in HISTORY), reminders also arrive on the phone, confirmations via ✅/❌ buttons, **files in both directions** (PDFs/photos → PC or Paperless, local files and Paperless documents → phone), `/stop` cancels what is running |
 | **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
@@ -499,6 +500,18 @@ secret; if it leaks, `/revoke` it in @BotFather. Details in [SECURITY.md](SECURI
 logs "Telegram-Bot @name aktiv" at startup, and problems also appear as a notice in the dashboard. Typical causes:
 Orbwise was not restarted after editing the config (`systemctl --user restart orbwise`), the token is wrong, or a
 second Orbwise instance (service + terminal) is fetching the bot's messages at the same time.
+
+### Plan mode
+
+For bigger jobs switch on **PLAN** next to THINK. Jarvis then thinks the request through (thinking mode), may only
+look things up with read-only tools (system info, file and package search, status …) and answers with a numbered
+plan: what it will do, with which tool or exact command, and where it will ask for confirmation. Anything that would
+change something is not run – it becomes a step of the plan.
+
+Under the plan: **▶ RUN** carries it out (confirmations for changes still appear as usual), **✎ CHANGE** lets you
+write what should be different ("keep the journal logs") and Jarvis presents a revised plan, **✕ DISCARD** drops it.
+By voice, a short "yes" or "no" decides; the plan itself is not read out, Jarvis only says how many steps it has.
+From the phone: `/plan clean up my disk` – the plan arrives with ✅ Run / ✏️ Change / ❌ Discard buttons.
 
 ### Screen & images
 

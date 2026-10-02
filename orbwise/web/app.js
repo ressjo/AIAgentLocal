@@ -15,8 +15,10 @@
     confirm: L("WARTE AUF FREIGABE", "AWAITING APPROVAL"), error: L("FEHLER", "ERROR"),
   };
   const STATUS_TEXT = EN
-    ? { running: "running", waiting: "waiting", ok: "done", denied: "denied", blocked: "blocked", error: "error" }
-    : { running: "läuft", waiting: "wartet", ok: "fertig", denied: "abgelehnt", blocked: "blockiert", error: "fehler" };
+    ? { running: "running", waiting: "waiting", ok: "done", denied: "denied", blocked: "blocked", error: "error",
+        planned: "planned" }
+    : { running: "läuft", waiting: "wartet", ok: "fertig", denied: "abgelehnt", blocked: "blockiert", error: "fehler",
+        planned: "geplant" };
 
   const store = {
     get(k, d) { try { const v = localStorage.getItem("orbwise." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -26,7 +28,7 @@
   const S = {
     ws: null, connected: false, retry: 0,
     serverState: "idle", substate: "",
-    tts: store.get("tts", true), wake: store.get("wake", false), think: store.get("think", false),
+    tts: store.get("tts", true), wake: store.get("wake", false), think: store.get("think", false), plan: store.get("plan", false),
     voiceName: store.get("voice", ""), fxOn: store.get("fx", true), fxAmount: store.get("fxAmount", 0.6),
     recording: false, transcribing: false, streamMic: false,
     playing: false, confirm: null, confirmListenSent: false,
@@ -210,6 +212,7 @@
     $("btn-wake").classList.toggle("on", S.wake);
     $("btn-tts").classList.toggle("on", S.tts);
     $("btn-think").classList.toggle("on", S.think);
+    $("btn-plan").classList.toggle("on", S.plan);
   }
 
   // ---------------------------------------------------------------- WebSocket
@@ -223,6 +226,7 @@
       S.retry = 0;
       send({ type: "tts", enabled: S.tts });
       send({ type: "think", enabled: S.think });
+      send({ type: "plan_mode", enabled: S.plan });
       sendVoiceSettings();
       if (S.wake && A.micReady) send({ type: "wake", enabled: true });
       refresh();
@@ -274,7 +278,14 @@
         if (ev.source === "voice") S.voiceUsed = true;
         break;
       case "assistant_start":
-        startAssistant(ev.id);
+        startAssistant(ev.id, ev.plan);
+        if (ev.plan) S.substate = L("plant …", "planning …");
+        break;
+      case "plan":
+        showPlan(ev);
+        break;
+      case "plan_closed":
+        closePlan(ev.id, ev.outcome);
         break;
       case "token":
         appendToken(ev.id, ev.text);
@@ -464,11 +475,25 @@
       .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
     const html = text.split(/\n{2,}/).map((para) => {
       if (/^\u0000\d+\u0000$/.test(para.trim())) return para.trim();
-      const lines = para.split("\n");
-      if (lines.every((l) => /^\s*([-*•]|\d+\.)\s+/.test(l) || !l.trim())) {
-        return "<ul>" + lines.filter((l) => l.trim()).map((l) => `<li>${l.replace(/^\s*([-*•]|\d+\.)\s+/, "")}</li>`).join("") + "</ul>";
+      // Zeilenweise: Überschriften (## …), Listen (- … / 1. …) und normaler Text, auch gemischt in einem Absatz
+      const out = [];
+      let list = null, text = [];
+      const flushText = () => { if (text.length) out.push(`<p>${text.join("<br>")}</p>`); text = []; };
+      const flushList = () => { if (list) out.push(`<${list.tag}>${list.items.join("")}</${list.tag}>`); list = null; };
+      for (const l of para.split("\n")) {
+        const h = /^\s*#{1,4}\s+(.+)$/.exec(l);
+        const li = /^\s*([-*•]|\d+[.)])\s+(.*)$/.exec(l);
+        if (h) { flushText(); flushList(); out.push(`<div class="md-h">${h[1]}</div>`); }
+        else if (li) {
+          const tag = /\d/.test(li[1]) ? "ol" : "ul";
+          flushText();
+          if (list && list.tag !== tag) flushList();
+          list = list || { tag, items: [] };
+          list.items.push(`<li>${li[2]}</li>`);
+        } else if (l.trim()) { flushList(); text.push(l); }
       }
-      return `<p>${lines.join("<br>")}</p>`;
+      flushText(); flushList();
+      return out.join("");
     }).join("");
     return html.replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[+i]);
   }
@@ -519,8 +544,9 @@
   }
   function addError(text) { addMsg("assistant error", "SYSTEM", escapeHtml(text)); }
 
-  function startAssistant(id) {
-    const el = addMsg("assistant streaming", "JARVIS", "");
+  function startAssistant(id, plan) {
+    const el = addMsg("assistant streaming" + (plan ? " plan" : ""), "JARVIS", "");
+    el.dataset.msg = id;
     assistants[id] = { el, raw: "" };
     S.currentMsg = id;
   }
@@ -620,6 +646,46 @@
       if (!cancelled && !a.el.querySelector(".tool-chip")) a.el.remove();
     }
     delete assistants[id];
+  }
+
+  // ---------------------------------------------------------------- Planmodus
+  const PLAN_OUTCOME = {
+    accepted: L("▶ wird ausgeführt", "▶ being carried out"), revised: L("✎ wird überarbeitet", "✎ being revised"),
+    discarded: L("✕ verworfen", "✕ discarded"), replaced: L("ersetzt", "replaced"),
+  };
+  function showPlan(ev) {
+    const el = chat.querySelector(`.msg[data-msg="${ev.id}"]`);
+    if (!el || el.querySelector(".plan-bar")) return;
+    const bar = document.createElement("div");
+    bar.className = "plan-bar";
+    bar.innerHTML = `<div class="plan-actions">
+        <button class="btn plan-run">▶ ${L("AUSFÜHREN", "RUN")}</button>
+        <button class="btn plan-edit">✎ ${L("ÄNDERN", "CHANGE")}</button>
+        <button class="btn plan-drop">✕ ${L("VERWERFEN", "DISCARD")}</button></div>
+      <form class="plan-revise hidden"><input type="text" maxlength="4000"
+        placeholder="${L("Was soll anders sein? (Enter sendet)", "What should be different? (Enter sends)")}"></form>
+      <div class="plan-status"></div>`;
+    el.appendChild(bar);
+    const input = bar.querySelector("input");
+    bar.querySelector(".plan-run").onclick = () => send({ type: "plan_accept", id: ev.id });
+    bar.querySelector(".plan-drop").onclick = () => send({ type: "plan_discard", id: ev.id });
+    bar.querySelector(".plan-edit").onclick = () => {
+      bar.querySelector(".plan-revise").classList.toggle("hidden");
+      input.focus();
+    };
+    bar.querySelector(".plan-revise").onsubmit = (e) => {
+      e.preventDefault();
+      if (input.value.trim()) send({ type: "plan_revise", id: ev.id, text: input.value.trim() });
+    };
+    scrollChat();
+  }
+  function closePlan(id, outcome) {
+    const bar = chat.querySelector(`.msg[data-msg="${id}"] .plan-bar`);
+    if (!bar) return;
+    bar.querySelectorAll("button, input").forEach((b) => { b.disabled = true; });
+    bar.querySelector(".plan-revise").classList.add("hidden");
+    bar.querySelector(".plan-status").textContent = PLAN_OUTCOME[outcome] || outcome;
+    bar.classList.add("closed", outcome);
   }
 
   function showTranscript(text) {
@@ -914,6 +980,16 @@
     send({ type: "user_message", text });
     $("input").value = "";
   });
+
+  $("btn-plan").onclick = () => {
+    S.plan = !S.plan;
+    store.set("plan", S.plan);
+    send({ type: "plan_mode", enabled: S.plan });
+    toast(S.plan ? L("Planmodus an – Jarvis legt erst einen Plan vor, ausgeführt wird nach deiner Freigabe.",
+                     "Plan mode on – Jarvis presents a plan first and carries it out once you approve it.")
+                 : L("Planmodus aus – Jarvis legt direkt los.", "Plan mode off – Jarvis gets going right away."));
+    refresh();
+  };
 
   $("btn-think").onclick = () => {
     S.think = !S.think;
