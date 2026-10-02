@@ -307,6 +307,11 @@
       case "plan_closed":
         closePlan(ev.id, ev.outcome);
         break;
+      case "plan_mode":  // Server schaltet den Planmodus aus (z. B. nach „Ausführen“)
+        S.plan = !!ev.enabled;
+        store.set("plan", S.plan);
+        if (!S.plan) toast(L("Plan angenommen – Planmodus ist jetzt aus.", "Plan accepted – plan mode is now off."));
+        break;
       case "token":
         appendToken(ev.id, ev.text);
         orb.token();

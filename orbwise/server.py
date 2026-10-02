@@ -149,6 +149,9 @@ class Hub:
             return
         if action == "accept":
             await self.close_plan("accepted")
+            if self.plan_mode:  # Plan angenommen → Planmodus geht aus, ausgeführt wird normal
+                self.plan_mode = False
+                await self.broadcast({"type": "plan_mode", "enabled": False})
             await self.submit(prompts.text(self.cfg, "plan_execute"), plan=False)
         elif action == "revise" and feedback.strip():
             await self.close_plan("revised")

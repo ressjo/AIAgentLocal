@@ -91,12 +91,15 @@ def test_dashboard_plan_accept_revise_discard(app):
         ws.send_json({"type": "plan_accept", "id": plan2["id"]})
         closed, _ = receive_until(ws, "plan_closed")
         assert closed["outcome"] == "accepted" and closed["id"] == plan2["id"]
+        mode, _ = receive_until(ws, "plan_mode")
+        assert mode["enabled"] is False  # nach dem Annehmen ist der Planmodus aus
         user, _ = receive_until(ws, "user")
         assert user["text"].startswith("Der Plan ist freigegeben")
         start, _ = receive_until(ws, "assistant_start")
         assert not start["plan"]  # ausführen läuft normal, nicht wieder als Plan
         receive_until(ws, "assistant_end")
 
+        ws.send_json({"type": "plan_mode", "enabled": True})
         ws.send_json({"type": "user_message", "text": "Installiere htop"})
         plan3, _ = receive_until(ws, "plan")
         ws.send_json({"type": "user_message", "text": "nein"})  # kurzes Nein verwirft
@@ -118,7 +121,7 @@ def test_spoken_yes_runs_the_plan(app):
         receive_until(ws, "plan")
         client.portal.call(hub.submit, "Ja, mach das", "voice")
         closed, _ = receive_until(ws, "plan_closed")
-        assert closed["outcome"] == "accepted"
+        assert closed["outcome"] == "accepted" and hub.plan_mode is False
 
 
 # ---------------------------------------------------------------- Telegram
