@@ -185,3 +185,23 @@ def test_cached_prompt_counts_are_not_taken_as_prompt_size():
     assert prompt_size({"prompt_total": 5400}, 6000) == 5400      # echte Größe
     assert prompt_size({}, 6000) == 0
     assert prompt_size({"prompt_total": 900, "prompt_cached": 850}, 6000) == 900  # llama-server: volle Größe
+
+
+def test_auto_read_off_asks_even_for_read_only_shell(cfg, llm, memory):
+    agent = Agent(cfg, llm, memory)
+    agent.auto_read = False
+    asked, events = [], []
+
+    async def emit(ev):
+        events.append(ev)
+
+    async def confirm(*a):
+        asked.append(a)
+        return False
+
+    run(agent.run('/tool run_shell {"command": "ls"}', emit, confirm))
+    run(agent.run("/tool system_info {}", emit, confirm))
+    assert len(asked) == 1 and "Auto" in asked[0][3]  # nur der Shell-Befehl fragt
+    agent.auto_read = True
+    run(agent.run('/tool run_shell {"command": "ls"}', emit, confirm))
+    assert len(asked) == 1

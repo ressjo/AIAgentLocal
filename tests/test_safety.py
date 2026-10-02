@@ -115,3 +115,26 @@ def test_globs_are_expanded_like_the_shell(tmp_path, monkeypatch):
                                  "grep -i error /var/log/pacman.log", "echo environment"])
 def test_everyday_reads_stay_safe(cmd, tmp_path):
     assert classify_command(cmd)[0] == SAFE
+
+
+@pytest.mark.parametrize("cmd", [
+    "docker ps -a", "docker compose ps", "podman images", "nmcli device status", "nmcli connection show",
+    "dpkg -l", "rpm -qa", "apt list --installed", "flatpak list", "ollama list", "pip list", "git branch -a",
+    "git remote -v", "git stash list", "crontab -l", "tar -tzf a.tar.gz", "unzip -l a.zip", "python3 --version",
+    "swaymsg -t get_outputs", "wmctrl -l", "tailscale status", "iw dev wlan0 link", "aplay -l", "efibootmgr",
+    "gsettings get org.gnome.desktop.interface gtk-theme", "nvme list", "mount",
+])
+def test_extended_read_only_commands_are_safe(cmd):
+    assert classify_command(cmd)[0] == SAFE, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "docker rm x", "docker compose up -d", "docker run alpine", "nmcli c up Heim", "nmcli radio wifi off",
+    "dpkg -i x.deb", "crontab -r", "dmesg -C", "fuser -k 80/tcp", "efibootmgr -B -b 0003", "tar -xzf a.tar.gz",
+    "tar czf a.tgz x", "git branch -D x", "git remote add o u", "git stash drop", "wmctrl -c Firefox",
+    "pip install x", "ollama rm x", "nvme format /dev/nvme0", "tailscale up", "iw dev wlan0 set power_save off",
+    "gsettings set a b c", "mount /dev/sdb1 /mnt", "swaymsg exit", "xdotool key ctrl+q", "hdparm -W0 /dev/sda",
+    "setxkbmap de", "arecord out.wav", "mkinitcpio -P", "nmcli d wifi show-password",
+])
+def test_extended_list_keeps_changes_confirmed(cmd):
+    assert classify_command(cmd)[0] != SAFE, cmd

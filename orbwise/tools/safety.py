@@ -30,8 +30,75 @@ SAFE_COMMANDS = {
     "locale", "inxi", "fastfetch", "neofetch", "nvidia-smi", "rocm-smi", "rocminfo", "glxinfo",
     "vulkaninfo", "nproc", "getconf", "md5sum", "sha1sum", "sha256sum", "column", "jq", "diff", "cmp",
     "zcat", "xxd", "hexdump", "strings", "cd", "true", "test", "[", "lsof", "vmstat", "iostat", "w",
-    "last", "timedatectl", "hostnamectl", "loginctl", "nmcli", "iwconfig", "xdg-mime", "tldr", "less",
-    "more", "wmctrl", "xrandr", "fc-list", "flatpak", "snap", "pactl", "wpctl", "amixer", "lsb_release",
+    "last", "timedatectl", "hostnamectl", "loginctl", "iwconfig", "xdg-mime", "tldr", "less",
+    "more", "xrandr", "fc-list", "pactl", "wpctl", "amixer", "lsb_release",
+    # weitere rein lesende Werkzeuge (stehen nur hier im Code – kosten keinen Kontext im Prompt)
+    "who", "users", "lastlog", "pstree", "pidof", "mpstat", "pidstat", "lsns", "lslocks", "lsipc", "zramctl",
+    "nl", "tac", "rev", "fold", "fmt", "expand", "comm", "join", "paste", "seq", "factor",
+    "sha224sum", "sha384sum", "sha512sum", "b2sum", "cksum", "sum", "base32", "od", "zgrep", "zless", "xzcat",
+    "bzcat", "zstdcat", "lzcat", "bat", "batcat", "eza", "exa", "lsd", "ag", "ack", "yq", "tracepath", "traceroute",
+    "mtr", "whois", "arp", "netstat", "getent", "lsattr", "getfacl", "namei", "lshw", "hwinfo", "dmidecode",
+    "upower", "acpi", "vainfo", "vdpauinfo", "clinfo", "xdpyinfo", "fc-match", "pw-dump", "lsinitcpio",
+    "sestatus", "getenforce", "aa-status", "apparmor_status", "systemd-analyze",
+}
+
+# Befehle mit Unterbefehlen: nur diese (lesenden) Unterbefehle gelten als sicher
+SAFE_SUBCOMMANDS = {
+    "docker": {"ps", "images", "image", "inspect", "logs", "stats", "version", "info", "top", "port", "diff",
+               "history", "volume", "network", "system", "compose", "container", "search"},
+    "podman": {"ps", "images", "image", "inspect", "logs", "stats", "version", "info", "top", "port", "diff",
+               "history", "volume", "network", "system", "compose", "container", "search", "pod"},
+    "kubectl": {"get", "describe", "logs", "top", "version", "explain", "api-resources", "cluster-info"},
+    "virsh": {"list", "dominfo", "domstate", "domifaddr", "nodeinfo", "net-list", "pool-list", "vol-list", "version"},
+    "apt": {"list", "show", "search", "policy", "depends", "rdepends", "showsrc", "changelog"},
+    "apt-cache": {"show", "search", "policy", "depends", "rdepends", "showpkg", "stats", "madison", "pkgnames"},
+    "dnf": {"list", "info", "search", "repolist", "check-update", "provides", "repoquery", "history", "deplist"},
+    "yum": {"list", "info", "search", "repolist", "check-update", "provides", "history"},
+    "zypper": {"search", "se", "info", "if", "list-updates", "lu", "repos", "lr", "packages", "pa", "patches"},
+    "ollama": {"list", "ls", "ps", "show", "--version", "-v"},
+    "pip": {"list", "show", "freeze", "check", "--version", "-V"},
+    "pip3": {"list", "show", "freeze", "check", "--version", "-V"},
+    "npm": {"ls", "list", "outdated", "view", "--version", "-v"},
+    "hyprctl": {"clients", "monitors", "activewindow", "activeworkspace", "workspaces", "devices", "version",
+                "layers", "binds", "getoption", "instances", "systeminfo"},
+    "gnome-extensions": {"list", "info", "show", "version"},
+    "bluetoothctl": {"show", "devices", "info", "list", "paired-devices"},
+    "powerprofilesctl": {"get", "list", ""},
+    "brightnessctl": {"get", "info", "-l", "--list", "i", "g", ""},
+    "gsettings": {"get", "list-schemas", "list-keys", "list-recursively", "list-children", "range", "describe"},
+    "tmux": {"ls", "list-sessions", "list-windows"},
+    "nvme": {"list", "list-subsys", "smart-log", "id-ctrl", "id-ns", "error-log", "fw-log"},
+    "fwupdmgr": {"get-devices", "get-updates", "get-upgrades", "get-history", "get-remotes", "security", "get-releases"},
+    "tailscale": {"status", "ip", "version", "netcheck", "whois"},
+    "zerotier-cli": {"info", "listnetworks", "listpeers", "peers", "status"},
+    "wg": {"show", ""},
+    "busctl": {"list", "status", "tree", "introspect"},
+    "resolvectl": {"status", "query", "statistics", ""},
+    "networkctl": {"list", "status", "lldp", ""},
+    "coredumpctl": {"list", "info", ""},
+    "localectl": {"status", "list-locales", "list-keymaps", "list-x11-keymap-layouts", ""},
+    "pw-cli": {"ls", "list-objects", "info", "i"},
+    "iw": {"dev", "list", "phy", "reg"},
+}
+# Sicher, solange keine dieser Optionen vorkommt
+FORBIDDEN_FLAGS = {
+    "dmesg": {"-C", "--clear", "-c", "--read-clear", "-D", "--console-off", "-E", "--console-on", "-n"},
+    "fuser": {"-k", "--kill"},
+    "crontab": {"-r", "-e", "-i"},
+    "smartctl": {"-s", "--smart", "-t", "--test", "-o", "--offlineauto", "-S", "--saveauto", "-X", "--abort"},
+}
+# Sicher nur mit genau diesen (lesenden) Optionen
+ONLY_FLAGS = {
+    "efibootmgr": {"-v", "--verbose"},
+    "hdparm": {"-I", "-i", "-g", "-C"},
+    "arecord": {"-l", "-L", "--list-devices", "--list-pcms"},
+    "aplay": {"-l", "-L", "--list-devices", "--list-pcms"},
+    "v4l2-ctl": {"--list-devices", "--all", "-l", "--list-formats", "--list-formats-ext", "-D", "--info"},
+    "kscreen-doctor": {"-o", "--outputs", "-j", "--json"},
+    "setxkbmap": {"-query", "-print"},
+    "xset": {"q", "-q"},
+    "wlr-randr": {"--json"},
+    "xprop": {"-root"},
 }
 
 CRITICAL_PATHS = {"/", "/*", "~", "~/", "~/*", "$HOME", "${HOME}", "/home", "/etc", "/usr", "/boot", "/var",
@@ -145,22 +212,103 @@ def _segment_is_safe(cmd: str, args: list[str]) -> bool:
     if cmd == "systemctl":
         sub = next((a for a in args if not a.startswith("-")), "")
         return sub in ("status", "list-units", "list-unit-files", "list-timers", "is-active", "is-enabled",
-                       "is-failed", "show", "cat", "list-dependencies") or (not sub and "--failed" in args)
+                       "is-failed", "show", "cat", "list-dependencies", "list-sockets", "list-jobs",
+                       "list-machines", "get-default", "is-system-running") or (not sub and "--failed" in args)
     if cmd == "ip":
         words = [a for a in args if not a.startswith("-")]
         return bool(words) and words[0] in ("a", "addr", "address", "l", "link", "r", "route", "n", "neigh") \
             and not any(w in ("add", "del", "delete", "set", "flush", "change", "replace") for w in words[1:])
     if cmd == "git":
         sub = next((a for a in args if not a.startswith("-")), "")
-        return sub in ("status", "log", "diff", "show", "ls-files", "blame", "rev-parse")
+        if sub in ("status", "log", "diff", "show", "ls-files", "blame", "rev-parse", "shortlog", "describe",
+                   "reflog", "ls-remote", "grep", "whatchanged", "cat-file", "ls-tree", "count-objects"):
+            return True
+        if sub not in ("branch", "remote", "tag", "stash"):
+            return False
     if cmd in ("flatpak", "snap"):
         sub = next((a for a in args if not a.startswith("-")), "")
         return sub in ("list", "info", "search", "find")
+    if cmd == "dpkg":
+        return any(a in ("-l", "--list", "-L", "--listfiles", "-s", "--status", "-S", "--search", "-p", "--print-avail",
+                         "--get-selections", "--print-architecture") for a in args)
+    if cmd == "rpm":
+        op = next((a for a in args if a.startswith("-")), "")
+        return op.startswith("-q") or op in ("--query", "-V", "--verify")
     if cmd in ("journalctl",):
         return not any(a.startswith("--vacuum") or a in ("--rotate", "--flush") for a in args)
-    if cmd in ("pactl", "wpctl", "amixer", "nmcli", "xrandr", "timedatectl", "hostnamectl", "loginctl"):
+    if cmd in ("pactl", "wpctl", "amixer", "xrandr", "timedatectl", "hostnamectl", "loginctl"):
         sub = next((a for a in args if not a.startswith("-")), "")
         return sub in ("", "status", "list", "info", "show", "get", "inspect", "get-volume", "scontents")
+    if cmd == "nmcli":  # nmcli [Objekt] [Verb]: nur anzeigen (device status, connection show, general, radio …)
+        words = [a for a in args if not a.startswith("-")]
+        obj = words[0] if words else ""
+        verb = words[1] if len(words) > 1 else ""
+        if obj in ("", "g", "ge", "general", "n", "networking", "r", "radio", "m", "monitor"):
+            return verb in ("", "status", "permissions", "hostname", "logging", "connectivity", "all", "wifi", "wwan") \
+                and len(words) <= 2
+        if obj in ("d", "dev", "device", "c", "con", "connection"):
+            if verb == "wifi":
+                return len(words) <= 3 and (words[2] if len(words) > 2 else "list") in ("list", "show-password") \
+                    and "show-password" not in words
+            return verb in ("", "status", "show", "s", "list", "monitor")
+        return False
+    if cmd in SAFE_SUBCOMMANDS:
+        sub = next((a for a in args if not a.startswith("-")), "")
+        if sub not in SAFE_SUBCOMMANDS[cmd] and not (sub == "" and "" in SAFE_SUBCOMMANDS[cmd]):
+            return sub == "" and any(a in ("--version", "-v", "-V", "--help") for a in args)
+        words = [a for a in args if not a.startswith("-")]
+        if cmd in ("docker", "podman"):  # z. B. docker volume ls, docker compose ps – keine rm/prune/up …
+            return all(w not in ("rm", "rmi", "prune", "create", "run", "exec", "kill", "stop", "start", "restart",
+                                 "up", "down", "pull", "push", "build", "pause", "unpause", "update", "connect",
+                                 "disconnect", "cp", "commit", "tag", "load", "save", "import") for w in words[1:])
+        if cmd == "gsettings":
+            return "set" not in words and "reset" not in words
+        if cmd == "iw":  # iw dev / iw dev wlan0 link / iw list – kein set/connect/del …
+            return not any(w in ("set", "connect", "disconnect", "del", "add", "ibss", "mesh", "join", "leave",
+                                 "interface", "switch", "offchannel", "vendor", "wowlan", "coalesce") for w in words)
+        if cmd == "wg":
+            return len(words) <= 2 and not any(w in ("private-key", "preshared-keys") for w in words)
+        return True
+    if cmd in ONLY_FLAGS:  # Geräte/Pfade als Argument erlaubt, Optionen nur aus der Liste
+        flags = [a for a in args if a.startswith("-") or cmd in ("xset",)]
+        return all(a in ONLY_FLAGS[cmd] for a in flags) and (cmd not in ("hdparm", "setxkbmap", "xset", "arecord", "aplay", "v4l2-ctl") or bool(flags))
+    if cmd in FORBIDDEN_FLAGS:
+        return not any(a in FORBIDDEN_FLAGS[cmd] or any(a.startswith(f + "=") for f in FORBIDDEN_FLAGS[cmd])
+                       for a in args)
+    if cmd == "wmctrl":  # -l/-d/-m listen nur; -c/-k/-r … ändern Fenster
+        return bool(args) and all(a in ("-l", "-d", "-m", "-p", "-G", "-x", "-lp", "-lx", "-lG") for a in args)
+    if cmd == "xdotool":
+        return bool(args) and (args[0].startswith("get") or args[0] in ("search", "version")) \
+            and not any(a in ("key", "type", "click", "mousemove", "windowkill", "windowclose", "set_window",
+                              "exec", "behave") for a in args)
+    if cmd == "swaymsg":
+        i = args.index("-t") if "-t" in args else -1
+        return 0 <= i < len(args) - 1 and args[i + 1].startswith("get_")
+    if cmd == "mount":
+        return not [a for a in args if not a.startswith("-")] and set(args) <= {"-l", "--show-labels"}
+    if cmd == "route":
+        return not [a for a in args if a in ("add", "del", "delete", "flush")]
+    if cmd in ("tar", "bsdtar"):  # nur auflisten (t / --list), nie entpacken/erstellen
+        if "--list" in args:
+            return not any(a in ("-x", "-c", "--extract", "--create", "--get") for a in args)
+        mode = (args[0].lstrip("-") if args else "")
+        return "t" in mode and not set(mode) & set("cxruA")
+    if cmd == "unzip":
+        return "-l" in args or "-v" in args or "-Z" in args
+    if cmd == "7z":
+        return bool(args) and args[0] in ("l", "t", "i")
+    if cmd == "git":
+        sub = next((a for a in args if not a.startswith("-")), "")
+        if sub == "branch":
+            return all(a in ("-a", "-r", "-v", "-vv", "--list", "--all", "--remotes", "--show-current") or not a.startswith("-")
+                       for a in args[1:]) and len([a for a in args[1:] if not a.startswith("-")]) == 0
+        if sub in ("remote", "tag", "stash"):
+            rest = [a for a in args[1:] if not a.startswith("-")]
+            return (sub == "remote" and not rest) or (sub == "tag" and not rest) or (rest[:1] == ["list"])
+        return False
+    if cmd in ("python3", "python", "node", "java", "go", "rustc", "cargo", "gcc", "clang", "make", "cmake",
+               "docker-compose", "kubectl", "ruby", "perl", "php", "deno", "bun"):
+        return args in (["--version"], ["-V"], ["-v"], ["version"])
     return cmd in SAFE_COMMANDS
 
 

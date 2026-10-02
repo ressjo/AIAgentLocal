@@ -48,6 +48,10 @@ HTML_EN = [
      'href="#i-sparkles"/></svg><span>Denken<',
      'title="Thinking mode: Jarvis reasons before answering – slower but more thorough."><svg class="i"><use '
      'href="#i-sparkles"/></svg><span>Think<'),
+    ('title="Auto: erkannte lesende Befehle (ls, df, docker ps, git status …) laufen ohne Rückfrage. Aus = jeder '
+     'Shell-Befehl fragt vorher."',
+     'title="Auto: recognised read-only commands (ls, df, docker ps, git status …) run without asking. Off = every '
+     'shell command asks first."'),
     ('title="Senden" aria-label="Senden"', 'title="Send" aria-label="Send"'),
     ('title="Aktuelle Aufgabe abbrechen (Esc)" aria-label="Abbrechen"', 'title="Cancel the current task (Esc)" aria-label="Cancel"'),
     ('>Leertaste halten zum Sprechen · Esc bricht ab · Änderungen am System fragt Jarvis vorher<',
@@ -113,6 +117,8 @@ HTML_EN = [
      '<b>Wake word</b><small>“Hey Jarvis” starts voice input.</small>'),
     ('<b>Planmodus</b><small>Erst einen Plan vorlegen, ausführen nach Freigabe.</small>',
      '<b>Plan mode</b><small>Present a plan first, carry it out once approved.</small>'),
+    ('<b>Lesendes automatisch</b><small>Erkannte lesende Befehle ohne Rückfrage ausführen.</small>',
+     '<b>Read-only automatically</b><small>Run recognised read-only commands without asking.</small>'),
     ('<b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small>',
      '<b>Thinking mode</b><small>More thorough, but slower.</small>'),
     ('data-mirror="btn-tts">Aus<', 'data-mirror="btn-tts">Off<'),

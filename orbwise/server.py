@@ -1197,6 +1197,8 @@ def create_app(cfg: Config) -> FastAPI:
                     broker.answer(str(data.get("id", "")), None)
                 elif t == "think":
                     hub.think = bool(data.get("enabled"))
+                elif t == "auto_read":
+                    hub.agent.auto_read = bool(data.get("enabled", True))
                 elif t == "plan_mode":
                     hub.plan_mode = bool(data.get("enabled"))
                 elif t in ("plan_accept", "plan_revise", "plan_discard"):

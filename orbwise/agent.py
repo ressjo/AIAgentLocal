@@ -118,6 +118,7 @@ class Agent:
         self._turn_time = ""  # Uhrzeit der aktuellen Anfrage (bleibt über alle Schritte gleich → Cache)
         self._think: bool | None = None
         self._plan = False  # Planmodus: nur lesen, am Ende einen Plan vorlegen
+        self.auto_read = True  # Auto-Knopf: erkannte lesende Shell-Befehle ohne Rückfrage ausführen
         self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
         self.tools = load_all_tools()
         self.all_schemas = tool_schemas(cfg)
@@ -427,6 +428,8 @@ class Agent:
         risk, reason = spec.assess(ctx, args)
         if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED:
             risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
+        if risk == SAFE and name == "run_shell" and not self.auto_read:
+            risk, reason = CONFIRM, prompts.text(self.cfg, "auto_read_off")
         args_str = json.dumps(args, ensure_ascii=False)
         await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": reason,
                     "group": spec.group})

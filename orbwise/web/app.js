@@ -28,7 +28,7 @@
   const S = {
     ws: null, connected: false, retry: 0,
     serverState: "idle", substate: "",
-    tts: store.get("tts", true), wake: store.get("wake", false), think: store.get("think", false), plan: store.get("plan", false),
+    tts: store.get("tts", true), wake: store.get("wake", false), think: store.get("think", false), auto: store.get("auto", true), plan: store.get("plan", false),
     voiceName: store.get("voice", ""), fxOn: store.get("fx", true), fxAmount: store.get("fxAmount", 0.6),
     recording: false, transcribing: false, streamMic: false,
     playing: false, confirm: null, confirmListenSent: false,
@@ -214,6 +214,7 @@
     $("btn-wake").classList.toggle("on", S.wake);
     $("btn-tts").classList.toggle("on", S.tts);
     $("btn-think").classList.toggle("on", S.think);
+    $("btn-auto").classList.toggle("on", S.auto);
     $("btn-plan").classList.toggle("on", S.plan);
     // Senden wird während einer Anfrage zum Stopp-Knopf
     const busy = S.connected && (["thinking", "executing", "confirm", "speaking"].includes(s) || S.playing);
@@ -238,6 +239,7 @@
       S.retry = 0;
       send({ type: "tts", enabled: S.tts });
       send({ type: "think", enabled: S.think });
+      send({ type: "auto_read", enabled: S.auto });
       send({ type: "plan_mode", enabled: S.plan });
       sendVoiceSettings();
       if (S.wake && A.micReady) send({ type: "wake", enabled: true });
@@ -1022,6 +1024,16 @@
     toast(S.think ? L("Denkmodus an – Antworten dauern länger, der Gedankengang erscheint beim Orb.",
                       "Thinking mode on – answers take longer, the reasoning appears next to the orb.")
                   : L("Denkmodus aus – schnelle Antworten.", "Thinking mode off – fast answers."));
+    refresh();
+  };
+
+  $("btn-auto").onclick = () => {
+    S.auto = !S.auto;
+    store.set("auto", S.auto);
+    send({ type: "auto_read", enabled: S.auto });
+    toast(S.auto ? L("Auto an – erkannte lesende Befehle laufen ohne Rückfrage, Veränderndes fragt weiter.",
+                     "Auto on – recognised read-only commands run without asking, changes still ask.")
+                 : L("Auto aus – jeder Shell-Befehl fragt vorher.", "Auto off – every shell command asks first."));
     refresh();
   };
 

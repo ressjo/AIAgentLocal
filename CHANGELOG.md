@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Auto button for read-only commands** (next to *Think*, on by default): many more harmless commands are recognised
+  as read-only and run without a confirmation – containers (`docker/podman ps|images|logs`, `kubectl get`), packages
+  (`dpkg -l`, `rpm -q`, `apt list`, `flatpak list`, `pip list`, `ollama list`), network (`nmcli … show/status`,
+  `resolvectl status`, `tailscale status`), git (`branch`, `remote -v`, `stash list` …), archives (list only), desktop
+  (`wmctrl -l`, `swaymsg -t get_*`, `gsettings get`) and more. Subcommands and options that change something keep
+  asking. Switched off, every shell command asks. The rules live in code and add nothing to the prompt.
 - **Start screen shows what is loading:** connection, memory, language model (server start and preloading the Ollama
   model into memory, with progress), speech recognition, voice, wake word, Telegram and the last chat – live, with a
   progress bar; Orbwise starts by itself once everything is loaded (or start early, the rest keeps loading and the orb

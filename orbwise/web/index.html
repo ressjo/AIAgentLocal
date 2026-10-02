@@ -26,6 +26,7 @@
       <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
       <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
       <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8Z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8Z"/></symbol>
+      <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7Z"/></symbol>
       <symbol id="i-plan" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
       <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
@@ -106,6 +107,7 @@
           <button type="button" class="mic" id="btn-mic" title="Halten zum Sprechen (Leertaste) · kurz tippen = zuhören bis Stille" aria-label="Mikrofon"><svg class="i"><use href="#i-mic"/></svg></button>
           <input id="input" type="text" autocomplete="off" placeholder="Frag Jarvis oder sag „Hey Jarvis“ …">
           <button type="button" class="chip-toggle" id="btn-plan" title="Planmodus: Jarvis denkt nach, schaut nur lesend nach und legt erst einen Plan vor – ausgeführt wird nach deiner Freigabe."><svg class="i"><use href="#i-plan"/></svg><span>Plan</span></button>
+          <button type="button" class="chip-toggle" id="btn-auto" title="Auto: erkannte lesende Befehle (ls, df, docker ps, git status …) laufen ohne Rückfrage. Aus = jeder Shell-Befehl fragt vorher."><svg class="i"><use href="#i-bolt"/></svg><span>Auto</span></button>
           <button type="button" class="chip-toggle" id="btn-think" title="Denkmodus: Jarvis denkt vor der Antwort nach – langsamer, dafür gründlicher."><svg class="i"><use href="#i-sparkles"/></svg><span>Denken</span></button>
           <button type="submit" class="send" id="btn-send" title="Senden" aria-label="Senden"><svg class="i"><use href="#i-send"/></svg></button>
           <button type="button" class="send stop hidden" id="btn-stop" title="Aktuelle Aufgabe abbrechen (Esc)" aria-label="Abbrechen"><svg class="i"><use href="#i-stop"/></svg></button>
@@ -277,6 +279,8 @@
             <button class="switch" data-mirror="btn-wake">Aus</button></div>
           <div class="set-row"><div><b>Planmodus</b><small>Erst einen Plan vorlegen, ausführen nach Freigabe.</small></div>
             <button class="switch" data-mirror="btn-plan">Aus</button></div>
+          <div class="set-row"><div><b>Lesendes automatisch</b><small>Erkannte lesende Befehle ohne Rückfrage ausführen.</small></div>
+            <button class="switch" data-mirror="btn-auto">Aus</button></div>
           <div class="set-row"><div><b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small></div>
             <button class="switch" data-mirror="btn-think">Aus</button></div>
           <p class="set-hint">Weitere Einstellungen (Integrationen, Telegram, Mail …) stehen in <code>~/.config/orbwise/config.yaml</code> – <code>orbwise doctor</code> prüft sie.</p>
