@@ -144,7 +144,9 @@ from now on. Your assistant keeps its name "Jarvis".
 - **Sidebar:** new chat, search, all chats; at the bottom **Planner** (routines, reminders, morning briefing),
   **Memory** (facts, journal) and **Settings** (models, voices, general, status). The model chip at the top opens the
   model settings, the pulse icon the **activity** panel (live tool output and telemetry) – it opens by itself when a
-  tool runs.
+  tool runs. Between tools a **Model** row shows what the model is doing right now (reading the prompt with estimated
+  time or real progress, thinking, writing a tool call, answering, reloading, folding history) with a running timer,
+  and afterwards where the time went.
 
 Examples:
 

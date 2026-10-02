@@ -73,7 +73,8 @@ def test_ollama_token_stats():
     lines = [
         {"message": {"role": "assistant", "content": "Hallo"}, "done": False},
         {"message": {"role": "assistant", "content": ""}, "done": True, "eval_count": 120,
-         "eval_duration": 2_000_000_000, "prompt_eval_count": 900, "prompt_eval_duration": 500_000_000},
+         "eval_duration": 2_000_000_000, "prompt_eval_count": 900, "prompt_eval_duration": 500_000_000,
+         "load_duration": 1_200_000_000},
     ]
     llm = OllamaLLM(LLMConfig())
     llm._client = httpx.AsyncClient(base_url="http://o", transport=httpx.MockTransport(
@@ -84,7 +85,7 @@ def test_ollama_token_stats():
 
     done = run(go())[-1]
     assert done["stats"] == {"tokens": 120, "tps": 60.0, "prompt_tokens": 900, "prompt_total": 900,
-                             "prompt_tps": 1800.0}
+                             "prompt_tps": 1800.0, "prompt_ms": 500, "load_ms": 1200}
 
 
 def test_agent_emits_llm_stats(cfg, llm, memory):

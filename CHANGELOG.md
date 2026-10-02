@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Activity shows what the model is doing between tools:** one live "Model" row per step with a running timer –
+  reading the prompt (how many new tokens, how much is cached, estimated time or real progress with llama-server),
+  thinking, writing a tool call (e.g. `write_file` with its size), answering, reloading after image analysis,
+  retrying with a trimmed context and folding older history. Afterwards the row sums up where the time went
+  (tokens read and how long, tokens written, tok/s, model load time). The current phase also shows under the orb.
 - **Auto button for read-only commands** (next to *Think*, on by default): many more harmless commands are recognised
   as read-only and run without a confirmation – containers (`docker/podman ps|images|logs`, `kubectl get`), packages
   (`dpkg -l`, `rpm -q`, `apt list`, `flatpak list`, `pip list`, `ollama list`), network (`nmcli … show/status`,

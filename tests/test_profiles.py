@@ -101,20 +101,24 @@ def test_stream_text_and_timings():
         seen["auth"] = req.headers.get("authorization")
         return httpx.Response(200, text=sse(
             {"choices": [{"delta": {"role": "assistant"}}]},
+            {"choices": [], "prompt_progress": {"total": 800, "cache": 200, "processed": 500}},
             {"choices": [{"delta": {"content": "Guten "}}]},
             {"choices": [{"delta": {"content": "Abend."}}]},
             {"choices": [], "timings": {"predicted_n": 5, "predicted_per_second": 19.244,
-                                        "prompt_n": 800, "prompt_per_second": 300.0}}))
+                                        "prompt_n": 800, "prompt_per_second": 300.0, "prompt_ms": 2666.7}}))
 
     events = collect(client_with(handler, api_key="geheim"), [{"role": "user", "content": "Hi"}], [{"type": "function"}])
     assert [e["text"] for e in events if e["type"] == "token"] == ["Guten ", "Abend."]
     done = events[-1]
     assert done["message"] == {"role": "assistant", "content": "Guten Abend."}
     assert done["stats"] == {"tokens": 5, "tps": 19.2, "prompt_tokens": 800, "prompt_total": 800,
-                             "prompt_tps": 300.0}
+                             "prompt_tps": 300.0, "prompt_ms": 2667}
+    assert [e for e in events if e["type"] == "prompt_progress"] == [
+        {"type": "prompt_progress", "total": 800, "cache": 200, "processed": 500}]
     assert seen["auth"] == "Bearer geheim"
     body = seen["body"]
     assert body["stream"] and body["tools"] and body["chat_template_kwargs"] == {"enable_thinking": False}
+    assert body["return_progress"] is True
 
 
 def test_stream_fragmented_tool_calls():

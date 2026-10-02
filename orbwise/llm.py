@@ -245,6 +245,7 @@ class OpenAICompatLLM:
         payload["chat_template_kwargs"] = {"enable_thinking": bool(p.think if think is None else think)}
         if stream:
             payload["stream_options"] = {"include_usage": True}
+            payload["return_progress"] = True  # neuere llama-server melden den Fortschritt beim Einlesen
         if tools:
             payload["tools"] = tools
         return payload
@@ -289,6 +290,10 @@ class OpenAICompatLLM:
                         raise LLMError(str(chunk["error"]))
                     timings = chunk.get("timings") or timings
                     usage = chunk.get("usage") or usage
+                    progress = chunk.get("prompt_progress")
+                    if isinstance(progress, dict) and progress.get("total"):
+                        yield {"type": "prompt_progress", "total": progress.get("total"),
+                               "cache": progress.get("cache") or 0, "processed": progress.get("processed") or 0}
                     for choice in chunk.get("choices") or []:
                         delta = choice.get("delta") or {}
                         reasoning = delta.get("reasoning_content") or delta.get("reasoning")
@@ -311,6 +316,8 @@ class OpenAICompatLLM:
                                 slot["name"] += fn["name"]
                             if fn.get("arguments"):
                                 slot["arguments"] += fn["arguments"]
+                            # Werkzeug-Aufruf entsteht (z. B. write_file mit langem Inhalt) – sichtbar machen
+                            yield {"type": "tool_delta", "name": slot["name"], "chars": len(slot["arguments"])}
         except httpx.HTTPError as e:
             raise self._error(e) from e
         message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}
@@ -364,7 +371,8 @@ def openai_stats(timings: dict, usage: dict, first_token: float | None, started:
         return {"tokens": timings.get("predicted_n"), "tps": round(timings["predicted_per_second"], 1),
                 "prompt_tokens": timings.get("prompt_n"), "prompt_total": total,
                 **({"prompt_cached": timings["cache_n"]} if timings.get("cache_n") is not None else {}),
-                "prompt_tps": round(timings["prompt_per_second"], 1) if timings.get("prompt_per_second") else None}
+                "prompt_tps": round(timings["prompt_per_second"], 1) if timings.get("prompt_per_second") else None,
+                "prompt_ms": round(timings["prompt_ms"]) if timings.get("prompt_ms") else None}
     tokens = usage.get("completion_tokens")
     elapsed = time.monotonic() - (first_token or started)
     return {"tokens": tokens, "tps": round(tokens / elapsed, 1) if tokens and elapsed > 0 else None,
@@ -381,6 +389,8 @@ def generation_stats(chunk: dict) -> dict:
         "prompt_tokens": chunk.get("prompt_eval_count"),
         "prompt_total": chunk.get("prompt_eval_count"),
         "prompt_tps": rate(chunk.get("prompt_eval_count"), chunk.get("prompt_eval_duration")),
+        "prompt_ms": round(chunk["prompt_eval_duration"] / 1e6) if chunk.get("prompt_eval_duration") else None,
+        "load_ms": round(chunk["load_duration"] / 1e6) if chunk.get("load_duration") else None,
     }
 
 
@@ -460,6 +470,8 @@ class FakeLLM:
                           think: bool | None = None) -> AsyncIterator[dict]:
         self.calls.append(messages)
         msg = self._decide(messages)
+        for name in [c["function"]["name"] for c in msg.get("tool_calls") or []]:
+            yield {"type": "tool_delta", "name": name, "chars": 24}
         if think:
             for word in re.findall(r"\S+\s*", "Der Nutzer möchte etwas wissen. Ich überlege kurz, welche Werkzeuge "
                                                "passen, und antworte dann knapp."):
@@ -472,7 +484,7 @@ class FakeLLM:
             yield {"type": "token", "text": word}
         n = max(1, len(msg["content"].split()))
         yield {"type": "done", "message": msg,
-               "stats": {"tokens": n, "tps": 42.0, "prompt_tokens": 800, "prompt_tps": 950.0}}
+               "stats": {"tokens": n, "tps": 42.0, "prompt_tokens": 800, "prompt_tps": 950.0, "prompt_ms": 842}}
 
     async def chat(self, messages: list[dict]) -> str:
         self.calls.append(messages)

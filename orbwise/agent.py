@@ -9,6 +9,7 @@ import json
 import logging
 import platform
 import re
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -118,6 +119,8 @@ class Agent:
         self._turn_time = ""  # Uhrzeit der aktuellen Anfrage (bleibt über alle Schritte gleich → Cache)
         self._think: bool | None = None
         self._plan = False  # Planmodus: nur lesen, am Ende einen Plan vorlegen
+        self._prefill_tps: dict[str, float] = {}  # gelernte Einlese-Geschwindigkeit je Modell (Token/s)
+        self._last_prompt: dict[str, int] = {}  # Prompt-Größe des letzten Schritts (für „neu einzulesen“)
         self._approved_plan = ""  # beim Ausführen: der freigegebene Plan (hängt an der aktuellen Nachricht)
         self.auto_read = True  # Auto-Knopf: erkannte lesende Shell-Befehle ohne Rückfrage ausführen
         self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
@@ -335,34 +338,104 @@ class Agent:
         conv.age_tool_results()  # lange Tool-Ergebnisse älterer Runden auf einen Auszug kürzen
         conv.save()
         await self.memory.log_exchange(user_text, answer, tool_notes)
+        shown = conv.needs_compact(self.history_budget())  # dauert ein paar Sekunden – in der Aktivität zeigen
+        compact_id, started = uuid.uuid4().hex[:8], time.monotonic()
+        if shown:
+            await emit({"type": "llm_phase", "id": compact_id, "msg": msg_id, "phase": "compact"})
         try:
             if await conv.compact(self.llm, self.history_budget()):
                 await emit({"type": "memory", "text": "Älterer Gesprächsverlauf wurde ins Gedächtnis verdichtet."})
         except Exception as e:  # noqa: BLE001
             log.warning("Kompaktierung fehlgeschlagen: %s", e)
+        if shown:
+            await emit({"type": "llm_phase", "id": compact_id, "msg": msg_id, "phase": "done", "compact": True,
+                        "seconds": round(time.monotonic() - started, 1)})
         return answer
 
+    def _prompt_phase(self) -> dict:
+        """Was vor dem ersten Token passiert: Prompt einlesen (mit geschätzter Dauer) oder Modell neu laden."""
+        key = self._profile_key()
+        tokens = int((self.last_context or {}).get("used", 0) * self.token_ratio())
+        last = self._last_prompt.get(key, 0)
+        new = tokens - last if 0 < last <= tokens else tokens  # gleicher Anfang liegt im KV-Cache
+        phase = {"phase": "prompt", "tokens": tokens, "new": max(new, 0)}
+        if self._prefill_tps.get(key):
+            phase["eta_s"] = round(phase["new"] / self._prefill_tps[key], 1)
+        hist = self.memory.conversation.history
+        backend = getattr(getattr(self.llm, "profile", None), "backend", "")
+        if (backend == "ollama" and self.cfg.vision.backend == "ollama" and hist and hist[-1].get("role") == "tool"
+                and hist[-1].get("tool_name") in ("look_at_screen", "look_at_image")):
+            phase["phase"] = "loading"  # Ollama hat fürs Bild das Vision-Modell geladen – jetzt zurück
+        return phase
+
+    def _learn_prefill(self, stats: dict) -> None:
+        key = self._profile_key()
+        if stats.get("prompt_total"):
+            self._last_prompt[key] = int(stats["prompt_total"])
+        tps, n = stats.get("prompt_tps"), stats.get("prompt_tokens") or 0
+        if tps and n >= 200:  # kleine Häppchen messen eher die Latenz als die Geschwindigkeit
+            old = self._prefill_tps.get(key)
+            self._prefill_tps[key] = round(tps if old is None else 0.7 * old + 0.3 * tps, 1)
+
     async def _step(self, hits, emit: Emit, msg_id: str, final: bool = False) -> tuple[str, list]:
-        """Ein Modellschritt: streamt Tokens an die UI, liefert (Text, Tool-Aufrufe)."""
+        """Ein Modellschritt: streamt Tokens an die UI, liefert (Text, Tool-Aufrufe).
+        Nebenbei meldet llm_phase, was das Modell gerade tut (Einlesen, Denken, Aufruf schreiben, Antworten) –
+        für die Aktivität, damit lange Pausen nicht wie Stillstand aussehen."""
         filt = ThinkFilter()
         result: dict = {}
+        step_id, started = uuid.uuid4().hex[:8], time.monotonic()
+        current, last_sent, thought_n = "", 0.0, 0
+
+        async def phase(kind: str, throttle: bool = False, **data) -> None:
+            nonlocal current, last_sent
+            now = time.monotonic()
+            if kind == current and (not throttle or now - last_sent < 0.5):
+                return
+            current, last_sent = kind, now
+            await emit({"type": "llm_phase", "id": step_id, "msg": msg_id, "phase": kind, **data})
+
         await emit({"type": "state", "state": "thinking"})
         async for ev in self._stream_fitting(hits, final=final):
             if ev["type"] == "context":
                 await emit(ev)
+                current = ""
+                info = self._prompt_phase()
+                await phase(info.pop("phase"), **info)
+            elif ev["type"] == "retry":
+                await phase("retry", n_prompt=ev.get("n_prompt"), n_ctx=ev.get("n_ctx"))
+            elif ev["type"] == "prompt_progress":
+                todo = max(1, ev["total"] - ev["cache"])
+                current = ""  # jede Fortschrittsmeldung zählt (gedrosselt)
+                if time.monotonic() - last_sent >= 0.5 or ev["processed"] >= ev["total"]:
+                    await phase("prompt", tokens=ev["total"], new=todo,
+                                progress=round(min(1.0, max(0, ev["processed"] - ev["cache"]) / todo), 3))
+            elif ev["type"] == "tool_delta":
+                await phase("tool_args", throttle=True, name=ev.get("name", ""), chars=ev.get("chars", 0))
             elif ev["type"] == "token":
                 text = filt.feed(ev["text"])
                 thought = filt.take_thought()
                 if thought:
+                    thought_n += 1
+                    await phase("thinking", throttle=True, tokens=thought_n)
                     await emit({"type": "reasoning", "id": msg_id, "text": thought})
                 if text:
+                    await phase("writing")
                     await emit({"type": "token", "id": msg_id, "text": text})
             elif ev["type"] == "reasoning":
                 # Denkkette: nicht Teil der Antwort, wird nur angezeigt (Orb-Zoom) und nicht vorgelesen
+                thought_n += 1
+                await phase("thinking", throttle=True, tokens=thought_n)
                 await emit({"type": "reasoning", "id": msg_id, "text": ev.get("text", "")})
             elif ev["type"] == "done":
                 result = ev["message"]
                 stats = ev.get("stats") or {}
+                self._learn_prefill(stats)
+                current = ""
+                await phase("done", seconds=round(time.monotonic() - started, 1),
+                            calls=[c.get("function", {}).get("name", "") for c in result.get("tool_calls") or []],
+                            **{k: stats.get(k) for k in ("tokens", "tps", "prompt_tokens", "prompt_total",
+                                                         "prompt_cached", "prompt_ms", "load_ms")
+                               if stats.get(k) is not None})
                 if stats.get("tps"):
                     await emit({"type": "llm_stats", **stats})
                 total = prompt_size(stats, (self.last_context or {}).get("used", 0))
@@ -396,6 +469,7 @@ class Agent:
             except ContextOverflow as e:
                 if attempt == 2:
                     raise
+                yield {"type": "retry", "n_prompt": e.n_prompt, "n_ctx": e.n_ctx}
                 ratio = (e.n_ctx - ANSWER_RESERVE) / e.n_prompt if e.n_ctx and e.n_prompt else 0.7
                 self._budget_scale *= max(0.3, min(0.85, ratio * 0.9))
                 log.warning("Kontext zu klein (%s/%s Token) – kürze Verlauf und versuche es erneut",

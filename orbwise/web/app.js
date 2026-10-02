@@ -344,6 +344,9 @@
         if (!$("tab-chats").classList.contains("hidden")) loadChats();
         if (!$("tab-memory").classList.contains("hidden")) loadReminders();
         break;
+      case "llm_phase":
+        modelPhase(ev);
+        break;
       case "tool_call":
         toolCall(ev);  // im Denkmodus bleibt der Zoom – das Werkzeug erscheint als Chip im Gedankenkasten
         break;
@@ -732,6 +735,113 @@
     if (name === "run_shell") return args.command || "";
     const entries = Object.entries(args || {});
     return entries.map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join("  ");
+  }
+
+  // ---------------------------------------------------------------- Modell-Schritte in der Aktivität
+  // Zwischen den Werkzeugen arbeitet das Modell unsichtbar (Prompt einlesen, denken, Aufruf schreiben …) –
+  // je Schritt eine Zeile mit Phase und mitlaufender Zeit, danach eine Zusammenfassung, wohin die Zeit ging.
+  const num = (n) => Number(n || 0).toLocaleString(LOCALE);
+  const secs = (s) => `${Number(s).toLocaleString(LOCALE, { maximumFractionDigits: 1 })} s`;
+  const kChars = (n) => (n >= 1000 ? `${(n / 1000).toLocaleString(LOCALE, { maximumFractionDigits: 1 })} k` : String(n || 0));
+  let phaseTimer = null;
+
+  function phaseText(ev) {
+    switch (ev.phase) {
+      case "prompt": {
+        const fresh = ev.new != null && ev.new < ev.tokens ? ev.new : ev.tokens;
+        let t = L(`liest ${num(fresh)} Token ein`, `reading ${num(fresh)} tokens`);
+        if (fresh < ev.tokens) t += L(` (von ${num(ev.tokens)}, Rest im Cache)`, ` (of ${num(ev.tokens)}, rest cached)`);
+        if (ev.progress != null) t += ` · ${Math.round(ev.progress * 100)} %`;
+        else if (ev.eta_s >= 1) t += L(` · ≈ ${secs(ev.eta_s)}`, ` · ≈ ${secs(ev.eta_s)}`);
+        return t;
+      }
+      case "loading": return L("lädt das Modell neu (nach der Bildanalyse)", "reloading the model (after image analysis)");
+      case "thinking": return L(`denkt nach · ${num(ev.tokens)} Token`, `thinking · ${num(ev.tokens)} tokens`);
+      case "tool_args": return L(`schreibt Aufruf ${ev.name} · ${kChars(ev.chars)} Zeichen`,
+                                 `writing call ${ev.name} · ${kChars(ev.chars)} chars`);
+      case "writing": return L("antwortet", "answering");
+      case "retry": return L("Kontext zu voll – kürzt den Verlauf und versucht es erneut",
+                             "context too full – trimming the history and retrying");
+      case "compact": return L("verdichtet älteren Verlauf ins Gedächtnis", "folding older history into memory");
+      default: return "";
+    }
+  }
+
+  function phaseSummary(ev) {
+    if (ev.compact) return L("älteren Verlauf verdichtet", "folded older history");
+    const parts = [];
+    if (ev.load_ms >= 1000) parts.push(L(`Modell geladen in ${secs(ev.load_ms / 1000)}`, `model loaded in ${secs(ev.load_ms / 1000)}`));
+    if (ev.prompt_tokens) {
+      let p = L(`${num(ev.prompt_tokens)} Token eingelesen`, `${num(ev.prompt_tokens)} tokens read`);
+      if (ev.prompt_ms) p += L(` in ${secs(ev.prompt_ms / 1000)}`, ` in ${secs(ev.prompt_ms / 1000)}`);
+      if (ev.prompt_cached) p += L(` (+${num(ev.prompt_cached)} aus Cache)`, ` (+${num(ev.prompt_cached)} cached)`);
+      parts.push(p);
+    }
+    if (ev.tokens) parts.push(L(`${num(ev.tokens)} Token geschrieben`, `${num(ev.tokens)} tokens written`)
+                              + (ev.tps ? `, ${ev.tps} tok/s` : ""));
+    if (ev.calls && ev.calls.length) parts.push("→ " + ev.calls.join(", "));
+    return parts.join(" · ") || L("fertig", "done");
+  }
+
+  function tickPhases() {
+    const open = activity.querySelectorAll(".act.model.running");
+    open.forEach((el) => {
+      el.querySelector(".act-status").textContent = secs(Math.floor((performance.now() - el._start) / 1000));
+    });
+    if (!open.length) { clearInterval(phaseTimer); phaseTimer = null; }
+  }
+
+  function modelPhase(ev) {
+    let el = acts["m-" + ev.id];
+    if (!el) {
+      if (ev.phase === "done") return;
+      const empty = activity.querySelector(".empty");
+      if (empty) empty.remove();
+      el = document.createElement("div");
+      el.className = "act model running";
+      el.innerHTML = `<div class="act-head"><span class="act-name">🧠 ${L("Modell", "Model")}</span>
+        <span><span class="act-time">${new Date().toLocaleTimeString(LOCALE)}</span>
+        <span class="act-status">0 s</span></span></div>
+        <div class="act-args"></div><div class="act-bar"><i></i></div>`;
+      el._start = performance.now();
+      activity.prepend(el);
+      acts["m-" + ev.id] = el;
+      while (activity.children.length > 60) activity.lastChild.remove();
+      if (!phaseTimer) phaseTimer = setInterval(tickPhases, 1000);
+    }
+    const bar = el.querySelector(".act-bar i");
+    if (ev.phase === "done") {
+      el.className = "act model ok";
+      el.querySelector(".act-args").textContent = phaseSummary(ev);
+      el.querySelector(".act-status").textContent = secs(ev.seconds ?? (performance.now() - el._start) / 1000);
+      if (S.phaseSub && S.substate === S.phaseSub) S.substate = "";
+      S.phaseSub = "";
+      delete acts["m-" + ev.id];
+      return;
+    }
+    const text = phaseText(ev);
+    el.querySelector(".act-args").textContent = text;
+    el.dataset.phase = ev.phase;
+    if (ev.phase === "prompt" && ev.progress != null) {  // echter Fortschritt (llama-server)
+      bar.style.transition = "width .4s";
+      bar.style.width = `${Math.round(ev.progress * 100)}%`;
+    } else if (ev.phase === "prompt" && ev.eta_s > 0) {  // geschätzt aus der gelernten Einlese-Geschwindigkeit
+      bar.style.transition = "none";
+      bar.style.width = "0";
+      void bar.offsetWidth;
+      bar.style.transition = `width ${ev.eta_s}s linear`;
+      bar.style.width = "95%";
+    } else if (ev.phase !== "prompt") {
+      bar.style.transition = "none";
+      bar.style.width = "0";
+    }
+    // Unsichtbare Phasen auch unter dem Orb nennen; Denken und Antworten sieht man dort ohnehin
+    const quiet = ["prompt", "loading", "retry", "tool_args", "compact"].includes(ev.phase);
+    if (quiet) {  // unter dem Orb kurz – ohne den Klammerzusatz zum Cache
+      const short = text.replace(/ \([^)]*\)/, "");
+      S.substate = S.phaseSub = short.charAt(0).toUpperCase() + short.slice(1) + " …";
+    }
+    else if (S.phaseSub && S.substate === S.phaseSub) { S.substate = ""; S.phaseSub = ""; }
   }
 
   // Kurzname für den Werkzeug-Satelliten am Orb

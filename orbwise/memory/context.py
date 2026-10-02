@@ -144,10 +144,13 @@ class Conversation:
             n += 1
         return n
 
+    def needs_compact(self, budget: int) -> bool:
+        return self.history_tokens() > int(budget * 0.85)
+
     async def compact(self, llm, budget: int) -> bool:
         """Faltet alte Nachrichten, sobald ~85 % des Budgets erreicht sind, bis der Verlauf unter ~60 % liegt."""
         total = self.history_tokens()
-        if total <= int(budget * 0.85):
+        if not self.needs_compact(budget):
             return False
         cut = self._cut_index(total - int(budget * 0.6))
         if cut <= 0:
