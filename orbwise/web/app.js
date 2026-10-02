@@ -763,12 +763,16 @@
       case "retry": return L("Kontext zu voll – kürzt den Verlauf und versucht es erneut",
                              "context too full – trimming the history and retrying");
       case "compact": return L("verdichtet älteren Verlauf ins Gedächtnis", "folding older history into memory");
+      case "fold": return L(`faltet ältere Schritte · −${num(ev.freed)} Token`, `folding older steps · −${num(ev.freed)} tokens`);
       default: return "";
     }
   }
 
   function phaseSummary(ev) {
     if (ev.compact) return L("älteren Verlauf verdichtet", "folded older history");
+    if (ev.fold) return L(`${ev.steps} ältere Schritte gefaltet · −${num(ev.freed)} Token (bei Bedarf abrufbar)`,
+                          `folded ${ev.steps} older steps · −${num(ev.freed)} tokens (retrievable)`);
+    if (ev.error) return L("abgebrochen – Fehler beim Modell", "stopped – model error");
     const parts = [];
     if (ev.load_ms >= 1000) parts.push(L(`Modell geladen in ${secs(ev.load_ms / 1000)}`, `model loaded in ${secs(ev.load_ms / 1000)}`));
     if (ev.prompt_tokens) {
@@ -811,7 +815,7 @@
     }
     const bar = el.querySelector(".act-bar i");
     if (ev.phase === "done") {
-      el.className = "act model ok";
+      el.className = "act model " + (ev.error ? "error" : "ok");
       el.querySelector(".act-args").textContent = phaseSummary(ev);
       el.querySelector(".act-status").textContent = secs(ev.seconds ?? (performance.now() - el._start) / 1000);
       if (S.phaseSub && S.substate === S.phaseSub) S.substate = "";

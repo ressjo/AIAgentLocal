@@ -16,6 +16,16 @@ async def remember(ctx: ToolContext, fact: Annotated[str, "Der Fakt als vollstä
     return "Gespeichert." if added else "Das war bereits bekannt."
 
 
+@tool("Holt die vollständige Ausgabe eines früheren Werkzeug-Ergebnisses, das bei einer langen Aufgabe auf einen "
+      "Auszug gefaltet wurde (Nummer aus dem Hinweis 'earlier_output(step=N)'). Nur nutzen, wenn die Details "
+      "wirklich gebraucht werden.")
+async def earlier_output(ctx: ToolContext, step: Annotated[int, "Nummer aus dem Hinweis"]) -> str:
+    entry = ctx.memory.conversation.stash.get(str(step))
+    if not entry:
+        return "Keine gefaltete Ausgabe mit dieser Nummer (ältere Einträge werden irgendwann verworfen)."
+    return f"[Schritt {step} · {entry.get('tool', '')}] {entry.get('call', '')}\n{entry.get('text', '')}"
+
+
 @tool("Löscht gespeicherte Fakten, die den Suchtext enthalten.")
 async def forget(ctx: ToolContext, query: Annotated[str, "Suchtext des zu löschenden Fakts"]) -> str:
     removed = await ctx.memory.forget(query)

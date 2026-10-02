@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -63,6 +64,8 @@ class Conversation:
         self.state_path = state_path
         self.history: list[dict] = []
         self.running_summary = ""
+        # Vollständige Fassung gefalteter Werkzeug-Ergebnisse (Nummer → {tool, call, text}) – holt earlier_output
+        self.stash: dict[str, dict] = {}
         # Metadaten des Chats (Titel, Stern, Zeitstempel) – siehe memory/chats.py
         self.meta: dict = {"id": chat_id, "title": "", "starred": False, "created": time.time()}
         self.load()
@@ -78,6 +81,7 @@ class Conversation:
                 data = json.loads(self.state_path.read_text(encoding="utf-8"))
                 self.history = data.get("history", [])
                 self.running_summary = data.get("running_summary", "")
+                self.stash = data.get("stash") or {}
                 self.meta.update(data.get("meta") or {})
             except (json.JSONDecodeError, OSError) as e:
                 log.warning("Sitzungszustand nicht lesbar (%s) – starte neu", e)
@@ -88,8 +92,10 @@ class Conversation:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.state_path.with_suffix(".tmp")
         self.meta["updated"] = time.time()
-        tmp.write_text(json.dumps({"meta": self.meta, "history": self.history, "running_summary": self.running_summary},
-                                  ensure_ascii=False), encoding="utf-8")
+        data = {"meta": self.meta, "history": self.history, "running_summary": self.running_summary}
+        if self.stash:
+            data["stash"] = self.stash
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         tmp.replace(self.state_path)
 
     def add(self, msg: dict) -> None:
@@ -102,6 +108,7 @@ class Conversation:
     def reset(self) -> None:
         self.history = []
         self.running_summary = ""
+        self.stash = {}
         self.save()
 
     # ---------- Budget ----------
@@ -143,6 +150,77 @@ class Conversation:
             m["content"] = content[:TOOL_AGE_CHARS].rstrip() + AGED_NOTE
             n += 1
         return n
+
+    # ---------- Lange Aufgaben: ältere Schritte der laufenden Runde falten ----------
+    def turn_start(self) -> int:
+        return max((i for i, m in enumerate(self.history) if m["role"] == "user"), default=0)
+
+    def turn_tokens(self) -> int:
+        return sum(msg_tokens(m) for m in self.history[self.turn_start():])
+
+    def fold_current_turn(self, budget: int, keep_last: int = 2, trigger: float = 0.75,
+                          target: float = 0.5) -> tuple[int, int]:
+        """Braucht die laufende Runde mehr als trigger·budget, werden ihre älteren Werkzeug-Ergebnisse (ohne die
+        letzten keep_last Schritte) auf einen Auszug gefaltet, bis target·budget erreicht ist – auf einmal, damit
+        der Prompt-Anfang danach stabil bleibt (KV-Cache). Die volle Fassung bleibt in stash und ist per
+        earlier_output abrufbar. Frage, eigene Texte des Modells und kurze Ergebnisse bleiben unverändert.
+        Liefert (gefaltete Schritte, gesparte Token)."""
+        start = self.turn_start()
+        used = self.turn_tokens()
+        if used <= int(budget * trigger):
+            return 0, 0
+        goal = used - int(budget * target)
+        calls = [i for i in range(start, len(self.history))
+                 if self.history[i]["role"] == "assistant" and self.history[i].get("tool_calls")]
+        protected_from = calls[-keep_last] if keep_last and len(calls) >= keep_last else len(self.history)
+        folded = freed = 0
+        call_text = {i: call_for(self.history, i) for i in range(start, protected_from)
+                     if self.history[i]["role"] == "tool"}  # vor dem Kürzen der Argumente festhalten
+        for i in range(start, protected_from):
+            if freed >= goal:
+                break
+            m = self.history[i]
+            if m["role"] == "assistant" and m.get("tool_calls"):
+                before = msg_tokens(m)
+                m["tool_calls"] = [shorten_call(c) for c in m["tool_calls"]]
+                freed += before - msg_tokens(m)
+                continue
+            content = m.get("content") or ""
+            if m["role"] != "tool" or m.get("folded") or len(content) <= FOLD_KEEP_CHARS:
+                continue
+            again = re.match(r"\[Schritt (\d+) · ", content) if m.get("tool_name") == "earlier_output" else None
+            n = again.group(1) if again and again.group(1) in self.stash else \
+                str(max(map(int, self.stash), default=0) + 1)  # schon geholte Ausgabe nicht doppelt ablegen
+            short = digest(content, n)
+            if len(short) + 100 > len(content):
+                continue  # lohnt nicht
+            if not (again and n == again.group(1)):
+                self.stash[n] = {"tool": m.get("tool_name", ""), "call": call_text.get(i, ""), "text": content}
+            before = msg_tokens(m)
+            m["content"], m["folded"] = short, n
+            freed += before - msg_tokens(m)
+            folded += 1
+        # Reicht das nicht (sehr kleines Fenster, viele Schritte): ältere Auszüge auf ihre Kopfzeile kürzen –
+        # der Verweis auf earlier_output bleibt, die volle Fassung liegt weiter im stash
+        for i in range(start, protected_from):
+            if freed >= goal:
+                break
+            m = self.history[i]
+            if m["role"] == "tool" and m.get("folded") and "\n" in (m.get("content") or ""):
+                before = msg_tokens(m)
+                m["content"] = m["content"].split("\n", 1)[0]
+                freed += before - msg_tokens(m)
+        self._trim_stash()
+        return folded, max(freed, 0)
+
+    def _trim_stash(self, max_chars: int = 400_000) -> None:
+        """Speicher begrenzen: älteste Einträge zuerst (ihr Auszug im Verlauf bleibt)."""
+        total = sum(len(v.get("text", "")) for v in self.stash.values())
+        for key in sorted(self.stash, key=int):
+            if total <= max_chars:
+                break
+            total -= len(self.stash[key].get("text", ""))
+            del self.stash[key]
 
     def needs_compact(self, budget: int) -> bool:
         return self.history_tokens() > int(budget * 0.85)
@@ -200,7 +278,60 @@ class Conversation:
         # Nie mit einem verwaisten Tool-Ergebnis beginnen
         while earlier and earlier[0]["role"] == "tool":
             earlier.pop(0)
-        return [{k: v for k, v in m.items() if k != "ts"} for m in earlier + turn]
+        return [{k: v for k, v in m.items() if k not in ("ts", "folded")} for m in earlier + turn]
+
+
+FOLD_KEEP_CHARS = 400  # kürzere Werkzeug-Ergebnisse werden nie gefaltet
+FOLD_ARG_CHARS = 300  # längere Argumente (z. B. Dateiinhalt bei write_file) werden im gefalteten Aufruf gekürzt
+_KEY_LINE = re.compile(r"error|fehler|warn|fail|denied|verweigert|not found|nicht gefunden|exit|abgelehnt|"
+                       r"blockiert|timeout|zeitüberschreitung|permission|cannot|kann nicht|missing|fehlt", re.I)
+
+
+def digest(content: str, n: str) -> str:
+    """Auszug eines gefalteten Werkzeug-Ergebnisses: Status, auffällige Zeilen, letzte Zeile, Größe."""
+    lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
+    picked: list[str] = []
+    for ln in [lines[0]] + [ln for ln in lines[1:-1] if _KEY_LINE.search(ln)] + [lines[-1]] if lines else []:
+        ln = ln if len(ln) <= 160 else ln[:157] + "…"
+        if ln not in picked:
+            picked.append(ln)
+    body, used = [], 0
+    for ln in picked:
+        if used + len(ln) > 450 and body:
+            break
+        body.append(ln)
+        used += len(ln)
+    if body and lines and body[-1] != picked[-1]:  # letzte Zeile (oft das Ergebnis) immer behalten
+        body.append(picked[-1])
+    return (f"[gefaltet: {len(content)} Zeichen, {len(lines)} Zeilen – vollständig mit earlier_output(step={n})]\n"
+            + "\n".join(body))
+
+
+def shorten_call(call: dict) -> dict:
+    fn = call.get("function") or {}
+    args = fn.get("arguments")
+    if not isinstance(args, dict):
+        return call
+    short = {k: (f"[{len(v)} Zeichen]" if isinstance(v, str) and len(v) > FOLD_ARG_CHARS else v)
+             for k, v in args.items()}
+    return call if short == args else {**call, "function": {**fn, "arguments": short}}
+
+
+def call_for(history: list[dict], tool_index: int) -> str:
+    """Der Aufruf (Name + Argumente), zu dem das Werkzeug-Ergebnis an tool_index gehört."""
+    k = 0
+    for j in range(tool_index - 1, -1, -1):
+        m = history[j]
+        if m["role"] == "tool":
+            k += 1
+            continue
+        if m["role"] == "assistant" and m.get("tool_calls"):
+            calls = m["tool_calls"]
+            if k < len(calls):
+                fn = calls[k].get("function") or {}
+                return f"{fn.get('name', '')} {json.dumps(fn.get('arguments'), ensure_ascii=False)}"
+        break
+    return ""
 
 
 TOOL_MIN_CHARS = 600

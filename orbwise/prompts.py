@@ -149,6 +149,8 @@ TEXTS = {
                        "2–4 Sätzen zusammen, was du erledigt bzw. herausgefunden hast und was noch fehlt.)",
         "paused": "Ich habe nach vielen Einzelschritten pausiert.",
         "continue_hint": "Sag „mach weiter“, dann setze ich fort.",
+        "interrupted": "(Unterbrochen: {error} – die bisherigen Schritte sind gespeichert, mit „mach weiter“ geht es "
+                       "dort weiter.)",
         "repeat_skipped": "Dieser Aufruf wurde mit denselben Argumenten bereits ausgeführt – das Ergebnis steht oben. "
                           "Nicht wiederholen, sondern mit dem vorhandenen Ergebnis antworten.",
         "no_nas": "keins konfiguriert",
@@ -177,6 +179,7 @@ TEXTS = {
                        "in 2–4 sentences what you have done or found out and what is still missing.)",
         "paused": "I paused after a large number of steps.",
         "continue_hint": "Say “continue” and I'll carry on.",
+        "interrupted": "(Interrupted: {error} – the steps so far are saved, say “continue” to pick up there.)",
         "repeat_skipped": "This call was already made with the same arguments – the result is above. Don't repeat "
                           "it; answer with the existing result.",
         "no_nas": "none configured",

@@ -35,6 +35,12 @@ All notable changes to this project are documented here. The format follows
   orb, `orbwise doctor` checks the model and the screenshot program.
 
 ### Fixed
+- **Long tasks no longer die at a full context window** (e.g. "16k of 16k – increase the window" and the work was
+  gone): older steps of the running task are folded to a digest (status, error lines, result) once it gets tight,
+  with the full output kept in the chat and retrievable via the new `earlier_output` tool; memories and the tool list
+  are narrowed while a task fills the window, thinking keeps more room free for the reasoning. If it still does not
+  fit, Orbwise sums up and offers "continue" – finished steps are kept instead of deleted. Clearer error message with
+  concrete options. The activity panel shows when steps are folded.
 - A message with many tool calls showed a wall of `run_shell` chips; now only the current call is shown, with a
   "+N earlier" link that opens the activity panel.
 - Installer, `bootstrap.sh` and all links point to the renamed repository `ressjo/orbwise-linux-agent` (they pointed to

@@ -184,8 +184,17 @@ overflowing the model. The **CONTEXT** tile shows how full the prompt is.
    answer (the tile then says *condensed*).
 2. Long tool results (web pages, documents, logs) of older turns are shortened to an excerpt; the latest turn stays
    complete, and Orbwise simply calls the tool again if it needs the details.
-3. If a single request is still too big, the oldest messages are left out and the current turn's tool results are
-   trimmed (*trimmed*); if the model server still refuses the prompt, it is retried once with a smaller budget.
+3. **Long tasks** (many tool rounds in one request): once the current task fills ~75 % of the free room, its older
+   steps are folded in one go to a short digest – status, error/warning lines, the last line and the size. The
+   question, an approved plan, the model's own text and the last two steps stay word for word, short results are
+   never touched. Nothing is lost: the full output stays with the chat and the model can fetch it again with
+   `earlier_output` (that tool is only offered once something was folded, so normal prompts stay as they were).
+   While a task fills the window, only the best-matching memories are added and the tool list is narrowed to the
+   relevant groups. With thinking on, more room is kept free for the reasoning.
+4. If a single request is still too big, the oldest messages are left out and the current turn's tool results are
+   trimmed (*trimmed*); if the model server still refuses the prompt, it is retried with a smaller budget.
+5. If it still does not fit, Orbwise folds harder and sums up where it stands with "say *continue*" – the steps
+   done so far stay in the chat instead of being thrown away.
 
 **Faster answers through the prompt cache:** the start of the prompt (instructions, facts, summary, tools and the
 earlier conversation) stays identical from one message to the next – the current time and the memories found for

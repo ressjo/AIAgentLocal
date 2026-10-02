@@ -42,9 +42,16 @@ def _check_overflow(status: int, body: str) -> None:
         n_ctx, n_prompt = err.get("n_ctx"), err.get("n_prompt_tokens")
     except (json.JSONDecodeError, AttributeError):
         pass
-    raise ContextOverflow(
-        f"Das Gespräch passt nicht mehr ins Kontextfenster des Modells ({n_prompt or '?'} von {n_ctx or '?'} Token). "
-        "Mehr Kontext: BONSAI_CTX bzw. --ctx-size im Startbefehl erhöhen.", n_ctx, n_prompt)
+    from .lang import T
+    raise ContextOverflow(T(
+        f"Das passt nicht mehr ins Kontextfenster des Modells ({n_prompt or '?'} von {n_ctx or '?'} Token). "
+        "Möglichkeiten: „mach weiter“ (ältere Schritte werden gefaltet) oder einen neuen Chat beginnen; "
+        "memory.retrieval_max_tokens verkleinern; dauerhaft mehr Platz mit BONSAI_CTX bzw. --ctx-size im "
+        "Startbefehl (grob +1 GB Grafikspeicher je +8k Token bei 7–9B-Modellen).",
+        f"This no longer fits into the model's context window ({n_prompt or '?'} of {n_ctx or '?'} tokens). "
+        "Options: say “continue” (older steps get folded) or start a new chat; lower memory.retrieval_max_tokens; "
+        "for more room raise BONSAI_CTX or --ctx-size in the start command (roughly +1 GB VRAM per +8k tokens "
+        "for 7–9B models)."), n_ctx, n_prompt)
 
 
 class OllamaLLM:

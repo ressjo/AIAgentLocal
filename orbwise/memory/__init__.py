@@ -160,9 +160,10 @@ class Memory:
         return await self.index.search(query, k=self.cfg.retrieval_top_k, exclude_after=exclude_after,
                                        exclude_source=f"chat:{chat}" if chat else None)
 
-    def format_hits(self, hits: list[Hit]) -> str:
+    def format_hits(self, hits: list[Hit], budget: int | None = None) -> str:
+        """Treffer nach Relevanz (beste zuerst), bis das Budget voll ist – weniger Budget behält die besten."""
         out, used = [], 0
-        budget = self.cfg.retrieval_max_tokens
+        budget = self.cfg.retrieval_max_tokens if budget is None else budget
         labels = {"journal": "Gespräch", "summary": "Tageszusammenfassung", "fact": "Fakt"}
         for h in hits:
             entry = f"[{h.day} · {labels.get(h.kind, h.kind)}]\n{h.text.strip()}"
