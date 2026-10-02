@@ -158,8 +158,8 @@ TEXTS = {
                           "werden ggf. abgelehnt – dann nenne kurz, was noch zu tun wäre.)\n\nAufgabe: {task}",
         "routine_confirm": "Routine „{name}“: {reason}",
         "context_note": "[Kontext – nicht vom Nutzer geschrieben: Uhrzeit {time}]",
-        "tainted_confirm": "Nach dem Lesen einer E-Mail – Schutz vor versteckten Anweisungen in Mails. Nur erlauben, "
-                           "wenn du diese Aktion selbst verlangt hast.",
+        "tainted_confirm": "Nach dem Lesen einer E-Mail oder eines Bildschirm-/Bildinhalts – Schutz vor versteckten "
+                           "Anweisungen. Nur erlauben, wenn du diese Aktion selbst verlangt hast.",
     },
     "en": {
         "final_nudge": "(System: The step limit for this task has been reached. Do not call any more tools. Summarise "
@@ -175,8 +175,8 @@ TEXTS = {
                           "Task: {task}",
         "routine_confirm": "Routine “{name}”: {reason}",
         "context_note": "[Context – not written by the user: time {time}]",
-        "tainted_confirm": "After reading an e-mail – protection against hidden instructions in e-mails. Only allow "
-                           "it if you asked for this action yourself.",
+        "tainted_confirm": "After reading an e-mail or screen/image content – protection against hidden "
+                           "instructions. Only allow it if you asked for this action yourself.",
     },
 }
 

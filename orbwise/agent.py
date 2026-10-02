@@ -36,7 +36,8 @@ log = logging.getLogger(__name__)
 
 # Nach dem Lesen fremder Mailinhalte brauchen auch sonst sichere Tools dieser Gruppen eine Bestätigung –
 # eine Mail könnte versteckte Anweisungen enthalten (z. B. Daten per fetch_url nach außen schicken).
-TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_briefing"}
+TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_briefing",
+                 "look_at_screen", "look_at_image"}  # auch Bildschirm/Bild: eine Webseite kann Anweisungen zeigen
 TAINT_GUARDED = {"shell", "web", "files", "apps", "obsidian", "trilium", "calendar_tools", "homeassistant",
                  "memory_tools", "reminder_tools", "power", "telegram_tools"}
 

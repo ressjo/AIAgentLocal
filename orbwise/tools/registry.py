@@ -177,6 +177,7 @@ def load_all_tools() -> dict[str, ToolSpec]:
         system,
         telegram_tools,
         trilium,
+        vision,
         weather,
         web,
     )

@@ -642,7 +642,7 @@
 
   // Kurzname für den Werkzeug-Satelliten am Orb
   const SAT_GROUPS = [
-    [/^(web_search|fetch_url|open_website)$/, ["WEB", "WEB"]], [/^paperless_/, ["PAPERLESS", "PAPERLESS"]],
+    [/^look_at_/, ["SEHEN", "VISION"]], [/^(web_search|fetch_url|open_website)$/, ["WEB", "WEB"]], [/^paperless_/, ["PAPERLESS", "PAPERLESS"]],
     [/^mail_/, ["MAIL", "MAIL"]], [/^obsidian_/, ["OBSIDIAN", "OBSIDIAN"]], [/^trilium_/, ["TRILIUM", "TRILIUM"]],
     [/^ha_/, ["SMART HOME", "SMART HOME"]], [/^calendar_/, ["KALENDER", "CALENDAR"]], [/^run_shell$/, ["SHELL", "SHELL"]],
     [/(package|system_update)/, ["PAKETE", "PACKAGES"]], [/(file|folder)/, ["DATEIEN", "FILES"]],
@@ -656,7 +656,7 @@
 
   // Symbol je Aktionsart (weitere Symbole: ICONS in orb.js); Gedächtnis leuchtet im Kern statt als Satellit
   const ICON_GROUPS = { shell: "cli", packages: "cli", sysadmin: "cli", system: "cli", power: "cli", web: "cloud",
-                        mail: "mail", paperless: "paperless" };
+                        mail: "mail", paperless: "paperless", vision: "eye" };
 
   function toolCall(ev) {
     if (ev.group === "memory_tools") orb.memoryGlow(ev.id, true, satLabel(ev.name));

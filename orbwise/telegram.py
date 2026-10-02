@@ -304,8 +304,11 @@ class TelegramBot:
 
     def _file_note(self, path: Path) -> str:
         size = path.stat().st_size if path.exists() else 0
-        return self.L(f"[Datei vom Handy empfangen und gespeichert unter {path} ({size // 1024} KB)]\n",
-                      f"[File received from the phone and saved as {path} ({size // 1024} KB)]\n")
+        image = path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")
+        hint = self.L(" – ein Bild, look_at_image kann es ansehen", " – an image, look_at_image can view it") \
+            if image else ""
+        return self.L(f"[Datei vom Handy empfangen und gespeichert unter {path} ({size // 1024} KB){hint}]\n",
+                      f"[File received from the phone and saved as {path} ({size // 1024} KB){hint}]\n")
 
     async def _receive_file(self, msg: dict) -> Path | None:
         """Dokument/Foto herunterladen und im Eingangsordner ablegen (Name bereinigt, nie überschreiben)."""

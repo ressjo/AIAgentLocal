@@ -101,6 +101,24 @@
         },
       };
     },
+    eye() {  // Auge (Bildschirm/Bild ansehen); die Pupille wandert suchend hin und her
+      const frame = new Path2D();
+      frame.moveTo(-1, 0);
+      frame.quadraticCurveTo(0, -1.05, 1, 0);
+      frame.quadraticCurveTo(0, 1.05, -1, 0);
+      frame.closePath();
+      return {
+        frame, cursor: null,
+        animate(ctx, t, rgb) {
+          const x = 0.32 * Math.sin(t * 1.7);
+          ctx.strokeStyle = `rgba(${rgb},0.9)`;
+          ctx.lineWidth = 0.09;
+          ctx.beginPath(); ctx.arc(x, 0, 0.34, 0, TAU); ctx.stroke();
+          ctx.fillStyle = `rgba(${rgb},${0.75 + 0.25 * Math.sin(t * 3.1)})`;
+          ctx.beginPath(); ctx.arc(x, 0, 0.15, 0, TAU); ctx.fill();
+        },
+      };
+    },
   };
   const iconPaths = {};
   const iconPath = (name) => iconPaths[name] || (iconPaths[name] = ICONS[name] ? ICONS[name]() : null);

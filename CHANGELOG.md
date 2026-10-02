@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Understand the screen and images:** "What's that error message?" – Orbwise takes a screenshot (spectacle,
+  gnome-screenshot, grim, maim, … or `vision.screenshot_command`), asks a local vision model (`vision.model`,
+  default `qwen2.5vl:7b`, Ollama or OpenAI-compatible) and answers; also for image files and photos from Telegram.
+  Screenshots are deleted afterwards, screen content counts as untrusted (like e-mails), an eye symbol shows at the
+  orb, `orbwise doctor` checks the model and the screenshot program.
+
 ### Fixed
 - Installer, `bootstrap.sh` and all links point to the renamed repository `ressjo/orbwise-linux-agent` (they pointed to
   a non-existent `ressjo/orbwise`, so fresh installs failed at `git clone`).

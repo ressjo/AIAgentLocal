@@ -51,6 +51,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation), upload local files or files sent from the phone |
 | **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, list folders, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional **writing and replying** (SMTP) – To, Cc, subject and text are editable in a dialog before anything is sent |
+| **Screen & images** | "What's that error message?", "What does this window say?", "Help me with this dialog" – Orbwise takes a screenshot and asks a **local vision model** (e.g. Qwen2.5-VL); also for image files and photos sent from the phone. Nothing leaves your PC |
 | **Telegram** | Chat with Orbwise from your phone (text or voice messages, own chat in HISTORY), reminders also arrive on the phone, confirmations via ✅/❌ buttons, **files in both directions** (PDFs/photos → PC or Paperless, local files and Paperless documents → phone), `/stop` cancels what is running |
 | **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
 | **Trilium** | Search and read notes, create notes in the inbox, append to and update notes |
@@ -499,6 +500,23 @@ logs "Telegram-Bot @name aktiv" at startup, and problems also appear as a notice
 Orbwise was not restarted after editing the config (`systemctl --user restart orbwise`), the token is wrong, or a
 second Orbwise instance (service + terminal) is fetching the bot's messages at the same time.
 
+### Screen & images
+
+Ask about whatever is on your screen: "What's that error message?", "What does it say in this window?", "In 5 seconds,
+look at my screen" (time to bring the window to the front). Orbwise takes a screenshot, hands it to a local vision
+model and answers with what it sees – error messages and commands quoted verbatim. The screenshot is deleted right
+afterwards. The same works for image files and for photos you send the bot from your phone ("what plant is this?").
+
+```bash
+ollama pull qwen2.5vl:7b        # once (~6 GB); little VRAM: qwen2.5vl:3b or gemma3:4b → vision.model
+```
+
+Your main model does not need to understand images – Orbwise asks the vision model separately (`vision:` in the config,
+an OpenAI-compatible server works too). Screenshots use whatever your desktop has: `spectacle` (KDE),
+`gnome-screenshot` (GNOME), `grim` (Sway/Hyprland) or `maim`/`scrot` (X11); `orbwise doctor` shows what was found. As
+with e-mails, screen content is treated as untrusted: after looking at the screen, actions in that chat need
+confirmation, so a web page cannot slip instructions to Orbwise.
+
 ### Morning briefing
 
 "Good morning", "briefing" or "what's on today?" gives you a short overview. Choose its items and their order in
@@ -531,8 +549,8 @@ Orbwise can run commands on your system, so:
 - **Confirmation required:** everything that changes something (installs, updates, `rm`, writing files, service
   control, killing processes, unknown programs, command substitution `$(…)`) shows a dialog with the exact
   command. Confirm by click, `Enter`/`Esc` or voice ("yes"/"no").
-- **Read-only commands** (`ls`, `df`, `systemctl status`, `grep`, …) run directly – except after an e-mail was read
-  in the same request (hidden instructions in mails), then every action needs confirmation.
+- **Read-only commands** (`ls`, `df`, `systemctl status`, `grep`, …) run directly – except while an e-mail or screen content is
+  part of the chat (it could contain hidden instructions), then every action needs confirmation.
 - **Blocklist:** `rm -rf /`, formatting or overwriting disks, fork bombs, `chmod -R … /` and similar are never run –
   not even after confirmation.
 - **Local only:** the server listens on `127.0.0.1` and checks the `Host` header and `Origin` – other websites
@@ -583,6 +601,7 @@ See [SECURITY.md](SECURITY.md) for details and how to report vulnerabilities.
 | `user_name`, `persona_extra` | How the assistant addresses you and extra personality instructions (its name: `assistant_name`) |
 | `host`, `allow_remote` | Keep `127.0.0.1`; other addresses only with `allow_remote: true` |
 | `mail.send_enabled` | Let Orbwise write and send mails (always through the edit-and-confirm dialog) |
+| `vision.model` | Vision model for screen and images, e.g. `qwen2.5vl:7b` (`ollama pull` it once) |
 | `telegram.token`, `telegram.chat_id` | Telegram bot, see [Telegram](#telegram-phone) |
 
 Passwords and tokens can also come from environment variables (`ORBWISE_MAIL_PASSWORD`, `ORBWISE_TELEGRAM_TOKEN`,

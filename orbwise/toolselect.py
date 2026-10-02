@@ -33,6 +33,9 @@ KEYWORDS = {
     "trilium": r"notiz|note|trilium|notier|aufschrieb|anleitung|how-?to|wiki|schreib (das |mir )?auf|write down",
     "obsidian": r"notiz|note|obsidian|notier|aufschrieb|anleitung|how-?to|wiki|protokoll|minutes|vault|"
                 r"schreib (das |mir )?auf|write down",
+    "vision": r"bildschirm|screen|monitor|fenster|window|siehst du|sieh dir|schau (dir |mal )?|guck|"
+              r"fehlermeldung|error message|meldung|dialog|popup|pop-up|foto|photo|bild\b|bilder|image|picture|"
+              r"screenshot|was steht da|what does it say|look at|anschau",
     "calendar_tools": r"termin|kalender|calendar|meeting|appointment|\bevent|verabred|besprechung|"
                       r"frei(e zeit)?\b|free time|schedule|wann habe ich|when do i",
 }
