@@ -597,7 +597,7 @@ def create_app(cfg: Config) -> FastAPI:
             "wake_error": wake.error if wake else None,
         }
         return {
-            "name": cfg.assistant_name,
+            "name": cfg.assistant_name, "user": cfg.user_name,
             "llm": await llm.status(),
             "voice": voice,
             "memory": {

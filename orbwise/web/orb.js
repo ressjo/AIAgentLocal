@@ -423,6 +423,8 @@
       this.reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       this._resize = this._resize.bind(this);
       window.addEventListener("resize", this._resize);
+      // Die Bühne ändert ihre Größe auch ohne Fenster-Resize (großer Orb ↔ kompakter Streifen)
+      if (window.ResizeObserver) new ResizeObserver(() => this._resize()).observe(this.canvas);
       this._resize();
       this.last = performance.now();
       requestAnimationFrame(this._frame.bind(this));
@@ -528,6 +530,8 @@
       const r = this.canvas.getBoundingClientRect();
       this.w = Math.max(1, r.width);
       this.h = Math.max(1, r.height);
+      // Maßstab für Symbole und Beschriftungen: klein im kompakten Streifen, normal ab ~380 px Höhe
+      this.k = Math.max(0.55, Math.min(1, Math.min(this.w, this.h) / 380));
       this.canvas.width = this.w * dpr;
       this.canvas.height = this.h * dpr;
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -702,7 +706,7 @@
       q.reset();
       ctx.clearRect(0, 0, w, h);
       const cx = w / 2, cy = h / 2 - h * 0.03;
-      const R = Math.min(w, h) * 0.3;
+      const R = Math.min(w, h) * (this.k < 0.6 ? 0.24 : 0.3);  // kompakter Streifen: Ringe nicht abschneiden
       const lvl = this.level;
       const pulse = 1 + 0.04 * Math.sin(this.t * 2.2) * this.energy + lvl * 0.12;
 
@@ -888,8 +892,8 @@
       const label = this._label(`CTX ${Math.round(this.ctxShow * 100)} %`);
       const lx = Math.cos(end) * (r + 16), ly = Math.sin(end) * (r + 16);
       ctx.globalAlpha = 0.75 * fade;
-      const lw = label.w * 0.8, lh = label.h * 0.8;  // links vom Punkt nach links, rechts nach rechts
-      ctx.drawImage(label, lx - (lw / 2) * (1 - Math.cos(end)), ly - lh / 2, lw, lh);
+      const lw = label.w * 0.8 * this.k, lh = label.h * 0.8 * this.k;  // links vom Punkt nach links, rechts nach rechts
+      if (this.k >= 0.6) ctx.drawImage(label, lx - (lw / 2) * (1 - Math.cos(end)), ly - lh / 2, lw, lh);  // kompakt: ohne
       ctx.globalAlpha = 1;
       const m = start + TAU * 0.85;  // Marke: ab hier wird verdichtet
       ctx.strokeStyle = `rgba(255,179,71,${0.45 * fade})`;
@@ -921,7 +925,9 @@
       // Gedankenkasten wie im CSS: min(58 % Breite, 540) × min(48 % Höhe des Kerns, 380)
       const boxW = Math.min(this.w * 0.58, 540), boxH = Math.min((this.h + 92) * 0.48, 380);
       return {
-        rx: lerp(R * 1.36, boxW / 2 + 34, z), ry: lerp(R * 1.36, boxH / 2 + 30, z),
+        // im flachen, breiten Streifen (kompakter Orb) weichen die Satelliten zur Seite aus
+        rx: lerp(Math.max(R * 1.36, Math.min(this.w * 0.32, R * 3.2) * (this.k < 0.6 ? 1 : 0)), boxW / 2 + 34, z),
+        ry: lerp(Math.min(R * 1.36, this.h / 2 - 12), boxH / 2 + 30, z),
         ix: lerp(R * 0.3, boxW / 2 - 6, z), iy: lerp(R * 0.3, boxH / 2 - 6, z),
       };
     }
@@ -972,7 +978,7 @@
         // zurück: Ergebnis fließt grün (ok) bzw. rot (Fehler) zum Kern
         if (s.back !== null && s.back < 1) this._beamHead(ctx, at, 1 - s.back, s.err ? "255,93,108" : "77,255,184", true);
         // Satellit: Symbol (z. B. Terminal, Wolke) oder leuchtender Punkt
-        const size = (s.icon ? 30 : 22) + 4 * Math.sin(this.t * 6 + s.a * 3);
+        const size = ((s.icon ? 30 : 22) + 4 * Math.sin(this.t * 6 + s.a * 3)) * this.k;
         ctx.drawImage(sprite, x - size, y - size, size * 2, size * 2);
         const pad = s.icon ? this._drawIcon(ctx, s, x, y, col) : 8;
         if (!s.icon) {
@@ -981,8 +987,9 @@
         }
         // Beschriftung zentriert über (obere Hälfte) bzw. unter (untere Hälfte) dem Punkt, nie auf dem Kopf
         const label = this._label(s.label);
-        const ly = y + (sa < 0 ? -label.h - pad : pad);
-        ctx.drawImage(label, x - label.w / 2, ly, label.w, label.h);
+        const lw = label.w * this.k, lh = label.h * this.k;
+        const ly = y + (sa < 0 ? -lh - pad : pad);
+        ctx.drawImage(label, x - lw / 2, ly, lw, lh);
       }
       ctx.globalAlpha = 1;
     }
@@ -990,7 +997,7 @@
     /* Symbol zeichnen; liefert den Abstand für die Beschriftung. Blitzt beim Ergebnis grün bzw. rot auf. */
     _drawIcon(ctx, s, x, y, col) {
       const paths = iconPath(s.icon);
-      const scale = 21;
+      const scale = 21 * this.k;
       const flashCol = s.err ? "255,93,108" : "77,255,184";
       ctx.save();
       ctx.translate(x, y);

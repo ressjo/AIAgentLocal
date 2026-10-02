@@ -202,7 +202,7 @@
     orb.setState(s);
     const label = $("state-label");
     label.textContent = S.modelSwitching && S.connected ? L("LADE MODELL", "LOADING MODEL") : (LABELS[s] || s.toUpperCase());
-    label.style.color = { listening: "#4dffb8", executing: "#ffb347", confirm: "#ffb347", error: "#ff5d6c", offline: "#6d93aa", thinking: "#9aa6ff" }[s] || "";
+    label.style.color = { listening: "#3ddc97", executing: "#f5b14c", confirm: "#f5b14c", error: "#ff5f6d", offline: "#8a92a5", thinking: "#a9b3ff" }[s] || "";
     let sub = S.substate;
     if (S.recording) sub = S.recordingMode === "ptt" ? L("Loslassen zum Senden", "Release to send") : L("Sprich jetzt …", "Speak now …");
     else if (S.transcribing) sub = L("Transkribiere …", "Transcribing …");
@@ -213,6 +213,16 @@
     $("btn-tts").classList.toggle("on", S.tts);
     $("btn-think").classList.toggle("on", S.think);
     $("btn-plan").classList.toggle("on", S.plan);
+    // Senden wird während einer Anfrage zum Stopp-Knopf
+    const busy = S.connected && (["thinking", "executing", "confirm", "speaking"].includes(s) || S.playing);
+    $("btn-send").classList.toggle("hidden", busy);
+    $("btn-stop").classList.toggle("hidden", !busy);
+    // Schalter in den Einstellungen spiegeln die Knöpfe in Kopf- und Eingabezeile
+    document.querySelectorAll("[data-mirror]").forEach((sw) => {
+      const on = $(sw.dataset.mirror).classList.contains("on");
+      sw.classList.toggle("on", on);
+      sw.textContent = on ? L("An", "On") : L("Aus", "Off");
+    });
   }
 
   // ---------------------------------------------------------------- WebSocket
@@ -313,7 +323,7 @@
         if (!$("chat-title").textContent) {
           getJSON("/api/chats").then((l) => {
             const c = l.find((x) => x.active);
-            if (c && c.messages) $("chat-title").textContent = "· " + c.title;
+            if (c && c.messages) $("chat-title").textContent = c.title;
           }).catch(() => {});
         }
         if (!$("tab-chats").classList.contains("hidden")) loadChats();
@@ -590,8 +600,8 @@
         this.text = "";
         clearTimeout(this.outTimer);
         $("thought-text").textContent = "";
-        document.querySelector(".core").classList.add("zoomed");
-        orb.setZoom(true);  // Satelliten kreisen dann um den Gedankenkasten
+        $("stage").classList.add("zoomed");
+        if (!isCompact()) orb.setZoom(true);  // Satelliten kreisen dann um den Gedankenkasten
       }
       this.text += text;
       if (!this.queued) {
@@ -615,7 +625,7 @@
       // kurz stehen lassen, damit das Zoomen nicht flackert
       const wait = Math.max(0, 700 - (performance.now() - this.since));
       clearTimeout(this.outTimer);
-      this.outTimer = setTimeout(() => { document.querySelector(".core").classList.remove("zoomed"); orb.setZoom(false); }, wait);
+      this.outTimer = setTimeout(() => { $("stage").classList.remove("zoomed"); orb.setZoom(false); }, wait);
     },
     finish(id) {
       this.zoomOut();
@@ -625,7 +635,7 @@
       if (text && a) {
         const d = document.createElement("details");
         d.className = "thought-log";
-        d.innerHTML = `<summary>${L("GEDANKENGANG", "THOUGHTS")}</summary><pre></pre>`;
+        d.innerHTML = `<summary>${L("Gedankengang", "Thoughts")}</summary><pre></pre>`;
         d.querySelector("pre").textContent = text;
         a.el.insertBefore(d, a.el.querySelector(".body"));
       } else if (!text && S.think && !this.warned) {
@@ -725,6 +735,7 @@
                         mail: "mail", paperless: "paperless", vision: "eye" };
 
   function toolCall(ev) {
+    activityArrived();
     if (ev.group === "memory_tools") orb.memoryGlow(ev.id, true, satLabel(ev.name));
     else orb.addSatellite(ev.id, satLabel(ev.name), ICON_GROUPS[ev.group] || null);
     const empty = activity.querySelector(".empty");
@@ -958,6 +969,8 @@
     }
     if (e.key === "Escape") {
       if (!$("day-modal").classList.contains("hidden")) { $("day-modal").classList.add("hidden"); return; }
+      if (closeSheet()) return;
+      if (app.classList.contains("side-open")) { app.classList.remove("side-open"); $("scrim").classList.add("hidden"); return; }
       send({ type: "stop" });
       stopSpeech(true);
       return;
@@ -1023,20 +1036,81 @@
   };
 
   $("btn-stop").onclick = () => { send({ type: "stop" }); stopSpeech(true); };
-  $("btn-reset").onclick = () => newChat();
 
-  document.querySelectorAll(".tab").forEach((tab) => {
-    tab.onclick = () => {
-      document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
-      $("tab-activity").classList.toggle("hidden", tab.dataset.tab !== "activity");
-      $("tab-chats").classList.toggle("hidden", tab.dataset.tab !== "chats");
-      if (tab.dataset.tab === "chats") loadChats();
-      $("tab-memory").classList.toggle("hidden", tab.dataset.tab !== "memory");
-      $("tab-planner").classList.toggle("hidden", tab.dataset.tab !== "planner");
-      if (tab.dataset.tab === "planner") loadPlanner();
-      if (tab.dataset.tab === "memory") loadMemory();
-    };
-  });
+  // ---------------------------------------------------------------- Navigation: Sheets, Seitenleiste, Aktivität
+  const app = $("app");
+  const main = $("main");
+  function isCompact() { return main.classList.contains("has-messages"); }
+  // Kompakter Orb, sobald das Gespräch Nachrichten hat (Begrüßung + großer Orb nur im leeren Chat)
+  const updateStage = () => {
+    const has = !!$("chat").querySelector(".msg.user, .msg.assistant");
+    if (has !== isCompact()) {
+      main.classList.toggle("has-messages", has);
+      if (has) orb.setZoom(false);
+    }
+  };
+  new MutationObserver(updateStage).observe($("chat"), { childList: true });
+
+  let openSheetName = null;
+  function openSheet(name, section) {
+    closeSheet();
+    openSheetName = name;
+    $("sheet-" + name).classList.remove("hidden");
+    $("scrim").classList.remove("hidden");
+    document.querySelectorAll(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.sheet === name));
+    app.classList.remove("side-open");
+    if (name === "planner") loadPlanner();
+    if (name === "memory") loadMemory();
+    if (name === "settings") showSection(section || "models");
+  }
+  function closeSheet() {
+    if (!openSheetName) return false;
+    $("sheet-" + openSheetName).classList.add("hidden");
+    $("scrim").classList.add("hidden");
+    document.querySelectorAll(".nav-item").forEach((n) => n.classList.remove("active"));
+    openSheetName = null;
+    return true;
+  }
+  function showSection(section) {
+    document.querySelectorAll(".set-tab").forEach((t) => t.classList.toggle("active", t.dataset.section === section));
+    document.querySelectorAll(".set-section").forEach((el) => el.classList.toggle("hidden", el.id !== "set-" + section));
+    if (section === "models") openModelMenu();
+    if (section === "voice") openVoiceMenu();
+    if (section === "status") loadStatus();
+  }
+  document.querySelectorAll(".nav-item").forEach((n) => { n.onclick = () => openSheet(n.dataset.sheet); });
+  document.querySelectorAll(".set-tab").forEach((t) => { t.onclick = () => showSection(t.dataset.section); });
+  document.querySelectorAll("[data-close-sheet]").forEach((b) => { b.onclick = closeSheet; });
+  $("scrim").onclick = () => { closeSheet(); app.classList.remove("side-open"); };
+  document.querySelectorAll("[data-mirror]").forEach((sw) => { sw.onclick = () => $(sw.dataset.mirror).click(); });
+
+  // Seitenleiste ein-/ausklappen (Desktop) bzw. als Menü öffnen (schmal)
+  app.classList.toggle("side-collapsed", !!store.get("sideCollapsed", false));
+  $("btn-sidebar").onclick = () => {
+    const c = !app.classList.contains("side-collapsed");
+    app.classList.toggle("side-collapsed", c);
+    store.set("sideCollapsed", c);
+  };
+  $("btn-menu").onclick = () => { app.classList.add("side-open"); $("scrim").classList.remove("hidden"); };
+
+  // Aktivität: öffnet sich beim ersten Werkzeug von selbst – außer man hat sie bewusst geschlossen
+  let actUnseen = 0;
+  function setDrawer(open, byUser) {
+    app.classList.toggle("drawer-open", open);
+    if (byUser) store.set("drawer", open ? "open" : "closed");
+    if (open) { actUnseen = 0; $("act-badge").classList.add("hidden"); }
+    $("btn-activity").classList.toggle("on", open);
+  }
+  setDrawer(store.get("drawer", "") === "open" && window.innerWidth > 1200);
+  $("btn-activity").onclick = () => setDrawer(!app.classList.contains("drawer-open"), true);
+  $("drawer-close").onclick = () => setDrawer(false, true);
+  function activityArrived() {
+    if (app.classList.contains("drawer-open")) return;
+    if (store.get("drawer", "") !== "closed" && window.innerWidth > 1200) { setDrawer(true); return; }
+    actUnseen += 1;
+    $("act-badge").textContent = actUnseen > 9 ? "9+" : String(actUnseen);
+    $("act-badge").classList.remove("hidden");
+  }
 
   // ---------------------------------------------------------------- Stimme & Effekt
   function fxRate() {
@@ -1048,7 +1122,7 @@
   }
 
   function renderFx() {
-    $("fx-toggle").textContent = S.fxOn ? "AN" : "AUS";
+    $("fx-toggle").textContent = S.fxOn ? L("An", "On") : L("Aus", "Off");
     $("fx-toggle").classList.toggle("on", S.fxOn);
     $("fx-amount").value = Math.round(S.fxAmount * 100);
     $("fx-value").textContent = Math.round(S.fxAmount * 100) + " %";
@@ -1149,7 +1223,6 @@
     }
     voiceMenu.classList.toggle("catalog", catalog);
     voiceMenu.classList.remove("hidden");
-    $("pill-voice").setAttribute("aria-expanded", "true");
   }
 
   function catalogItem(v) {
@@ -1267,15 +1340,8 @@
     uploadVoice([...e.dataTransfer.files]);
   });
 
-  function closeVoiceMenu() {
-    voiceMenu.classList.add("hidden");
-    $("pill-voice").setAttribute("aria-expanded", "false");
-  }
-  $("pill-voice").onclick = (e) => {
-    e.stopPropagation();
-    voiceMenu.classList.contains("hidden") ? openVoiceMenu() : closeVoiceMenu();
-  };
-  document.addEventListener("click", (e) => { if (!voiceMenu.contains(e.target)) closeVoiceMenu(); });
+  function closeVoiceMenu() { /* Stimmen stehen jetzt dauerhaft in den Einstellungen */ }
+  $("pill-voice").onclick = () => openSheet("settings", "voice");
 
   async function previewVoice(name) {
     await initAudio();
@@ -1457,7 +1523,6 @@
       modelMenu.appendChild(add);
     }
     modelMenu.classList.remove("hidden");
-    $("pill-llm").setAttribute("aria-expanded", "true");
   }
   // Vorauswahl bekannter Ollama-Modelle: passend zum Grafikspeicher, Laden mit Fortschritt (model_pull-Events)
   async function openPresetMenu() {
@@ -1561,15 +1626,8 @@
       + L(" · abbrechen im LLM-Menü", " · cancel in the LLM menu"));
   }
 
-  function closeModelMenu() {
-    modelMenu.classList.add("hidden");
-    $("pill-llm").setAttribute("aria-expanded", "false");
-  }
-  $("pill-llm").onclick = (e) => {
-    e.stopPropagation();
-    modelMenu.classList.contains("hidden") ? openModelMenu() : closeModelMenu();
-  };
-  document.addEventListener("click", (e) => { if (!modelMenu.contains(e.target)) closeModelMenu(); });
+  function closeModelMenu() { /* Modelle stehen jetzt dauerhaft in den Einstellungen */ }
+  $("pill-llm").onclick = () => openSheet("settings", "models");
 
   let toastTimer;
   function toast(text) {
@@ -1795,7 +1853,8 @@
     try {
       const st = await getJSON("/api/status");
       S.status = st;
-      if (st.name) document.querySelector(".brand-name").textContent = st.name.toUpperCase();  // Persona (assistant_name)
+      if (st.name) document.querySelector(".brand-name").textContent = st.name;  // Persona (assistant_name)
+      greet();
       const l = st.llm;
       const name = l.label && l.label !== l.model ? `${l.label} · ${l.model}` : l.model;
       if (l.switching) { S.modelSwitching = S.modelSwitching || l.switching; refresh(); }
@@ -1806,6 +1865,8 @@
       setPill("pill-voice", vCls, [v.stt ? "STT" : null, v.tts ? "TTS" : "TTS(Browser)", v.wake ? "WAKE" : null].filter(Boolean).join(" · "));
       setPill("pill-mem", "ok", `${st.memory.days} ${L("Tage", "days")} · ${st.memory.facts} ${L("Fakten", "facts")}`);
       const tg = st.telegram || {};
+      setPill("pill-tg", tg.running ? "ok" : tg.error ? "bad" : "warn",
+        tg.running ? (tg.bot || L("aktiv", "active")) : tg.error || (tg.configured === false ? L("nicht eingerichtet", "not set up") : L("startet …", "starting …")));
       if (tg.error && tg.error !== S.telegramError) toast("Telegram: " + tg.error);  // jedes Problem einmal melden
       S.telegramError = tg.error || "";
       return st;
@@ -1857,7 +1918,7 @@
         <div><div class="t"></div><div class="m"></div><div class="p"></div></div>
         <button class="del" title="${L("Chat löschen (auch aus dem Gedächtnis)", "Delete chat (also from memory)")}">✕</button>`;
       li.querySelector(".t").textContent = c.title;
-      li.querySelector(".m").textContent = `${chatWhen(c.updated)} · ${c.messages} ${L("Nachr.", "msgs")}` + (c.active ? L(" · AKTIV", " · ACTIVE") : "");
+      li.querySelector(".m").textContent = `${chatWhen(c.updated)} · ${c.messages} ${L("Nachr.", "msgs")}` + (c.active ? L(" · aktiv", " · active") : "");
       li.querySelector(".p").textContent = c.preview || "";
       li.onclick = () => { if (!c.active) api("POST", `/api/chats/${c.id}/activate`).catch(() => {}); };
       li.querySelector(".t").ondblclick = (e) => {
@@ -1896,18 +1957,16 @@
   function openChatView(ev) {
     for (const id of Object.keys(assistants)) delete assistants[id];
     $("chat").innerHTML = "";
-    $("chat-title").textContent = ev.title ? "· " + ev.title : "";
-    loadHistory().then(() => {
-      if (!$("chat").children.length) addSystem(L("Neuer Chat – frühere Chats findest du unter VERLAUF.", "New chat – earlier chats are under HISTORY."));
-    });
-    if (!$("tab-chats").classList.contains("hidden")) loadChats();
+    $("chat-title").textContent = ev.title || "";
+    loadHistory();
+    loadChats();
   }
 
   async function loadHistory() {
     try {
       const h = await getJSON("/api/history");
       S.historyLoaded = true;
-      $("chat-title").textContent = h.chat && h.chat.title ? "· " + h.chat.title : "";
+      $("chat-title").textContent = h.chat && h.chat.title ? h.chat.title : "";
       if (h.summary) addSystem(L("Frühere Gesprächsteile sind im Gedächtnis zusammengefasst.", "Earlier parts of this chat are summarised in memory."));
       for (const m of h.messages) {
         if (m.role === "user") addUser(m.content);
@@ -2008,14 +2067,19 @@
   }
   $("day-close").onclick = () => $("day-modal").classList.add("hidden");
 
-  // ---------------------------------------------------------------- Uhr
-  function tick() {
-    const now = new Date();
-    $("clock-time").textContent = now.toLocaleTimeString(LOCALE);
-    $("clock-date").textContent = now.toLocaleDateString(LOCALE, { weekday: "long", day: "2-digit", month: "long", year: "numeric" }).toUpperCase();
+  // ---------------------------------------------------------------- Begrüßung (leerer Chat)
+  function greet() {
+    const h = new Date().getHours();
+    const part = h < 5 ? L("Gute Nacht", "Good night") : h < 11 ? L("Guten Morgen", "Good morning")
+      : h < 18 ? L("Guten Tag", "Good afternoon") : L("Guten Abend", "Good evening");
+    const user = S.status && S.status.user ? ", " + S.status.user : "";
+    $("greeting").textContent = `${part}${user} – ${L("wie kann ich helfen?", "how can I help?")}`;
   }
-  setInterval(tick, 1000);
-  tick();
+  setInterval(greet, 60000);
+  greet();
+  document.querySelectorAll(".suggestion").forEach((b) => {
+    b.onclick = () => { $("input").value = b.dataset.text; $("form").requestSubmit(); };
+  });
 
   // ---------------------------------------------------------------- Boot
   const bootLines = $("boot-lines");
@@ -2027,8 +2091,8 @@
   }
 
   async function bootSequence() {
-    const steps = EN ? ["> Initialising neural interface …", "> Loading memory matrix …", "> Checking subsystems …"]
-      : ["> Initialisiere neuronale Schnittstelle …", "> Lade Gedächtnismatrix …", "> Prüfe Subsysteme …"];
+    const steps = EN ? ["Connecting to the server …", "Loading memory …", "Checking services …"]
+      : ["Verbinde mit dem Server …", "Lade Gedächtnis …", "Prüfe Dienste …"];
     for (const s of steps) { bootLine(s); await new Promise((r) => setTimeout(r, 220)); }
     const st = await loadStatus();
     if (!st) { bootLine(L("  ✘ Server nicht erreichbar", "  ✘ Server unreachable"), "bad"); return; }

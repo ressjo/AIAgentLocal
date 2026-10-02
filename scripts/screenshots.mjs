@@ -31,16 +31,19 @@ const boot = page.locator("#boot-btn");
 if (await boot.isVisible().catch(() => false)) await boot.click();
 await page.waitForTimeout(4500); // Startsequenz
 
-// 1) Übersicht: Unterhaltung mit Werkzeug-Aufruf, Aktivität, Orb mit Kontext-Ring
+// 1) Start: großer Orb mit Begrüßung und Vorschlägen
+await page.screenshot({ path: "docs/screenshot.png" });
+
+// 2) Gespräch: kompakter Orb, Werkzeug-Symbol am Orb, Aktivität mit Telemetrie
 await ask("Good evening! What can you help me with?");
 await page.waitForTimeout(3000);
 await ask("Search the web for Linux 6.18 release notes");
-await page.waitForTimeout(700); // Werkzeug-Symbol (Cloud) + Strahl am Orb sichtbar
-await page.screenshot({ path: "docs/screenshot.png" });
+await page.waitForTimeout(800); // Werkzeug-Symbol (Cloud) + Strahl am Orb sichtbar
+await page.screenshot({ path: "docs/screenshot-chat.png" });
 
-// 2) Rückfrage vor einer Änderung am System
+// 3) Rückfrage vor einer Änderung am System
 await page.waitForTimeout(6000);
-await page.click("#btn-reset"); // neuer Chat
+await page.click("#chat-new"); // neuer Chat
 await page.waitForTimeout(800);
 await ask("Please update my system");
 await page.locator("#confirm").waitFor({ state: "visible" });

@@ -42,7 +42,7 @@ def test_index_translation_complete():
     html = (Path(__file__).parent.parent / "orbwise" / "web" / "index.html").read_text(encoding="utf-8")
     assert all(de in html for de, _ in HTML_EN), "index.html geändert – HTML_EN anpassen"
     en = translate_index(html, "en")
-    assert '<html lang="en">' in en and "START SYSTEM" in en and "SYSTEM STARTEN" not in en
+    assert '<html lang="en">' in en and "Start Orbwise" in en and "Orbwise starten" not in en
     assert translate_index(html, "de") == html
 
 
@@ -53,7 +53,7 @@ def test_served_page_uses_language(cfg, monkeypatch):
     cfg.language = "en"
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         r = client.get("/")
-        assert '<html lang="en">' in r.text and "COMMUNICATION" in r.text
+        assert '<html lang="en">' in r.text and "New chat" in r.text
 
 
 def test_confirmation_reasons_follow_the_language(cfg):

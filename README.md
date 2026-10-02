@@ -9,7 +9,9 @@ German and English are supported (`language: de|en`). Out of the box the assista
 **"Jarvis"** and listens for "Hey Jarvis" – that is just its default persona; give it any name with
 `assistant_name` in the config.
 
-![Orbwise web interface: the orb sends a web search to its cloud symbol](docs/screenshot.png)
+![Orbwise: start screen with the orb, greeting and suggestions](docs/screenshot.png)
+
+![A conversation: compact orb sending a web search to its cloud symbol, activity panel with live telemetry](docs/screenshot-chat.png)
 
 ![Confirmation dialog before a system update](docs/screenshot-confirm.png)
 <sub>Screenshots in demo mode (`ORBWISE_FAKE_LLM=1`, no real model attached) – regenerate them with
@@ -51,15 +53,15 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation), upload local files or files sent from the phone |
 | **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, list folders, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional **writing and replying** (SMTP) – To, Cc, subject and text are editable in a dialog before anything is sent |
-| **Plan mode** | **PLAN** button: Jarvis thinks it through, only looks things up (read-only) and presents a step-by-step plan – **RUN**, **CHANGE** (say what should be different) or **DISCARD**; also by voice ("yes") and via Telegram (`/plan …`) |
+| **Plan mode** | **Plan** button: Jarvis thinks it through, only looks things up (read-only) and presents a step-by-step plan – **RUN**, **CHANGE** (say what should be different) or **DISCARD**; also by voice ("yes") and via Telegram (`/plan …`) |
 | **Screen & images** | "What's that error message?", "What does this window say?", "Help me with this dialog" – Orbwise takes a screenshot and asks a **local vision model** (e.g. Qwen2.5-VL); also for image files and photos sent from the phone. Nothing leaves your PC |
-| **Telegram** | Chat with Orbwise from your phone (text or voice messages, own chat in HISTORY), reminders also arrive on the phone, confirmations via ✅/❌ buttons, **files in both directions** (PDFs/photos → PC or Paperless, local files and Paperless documents → phone), `/stop` cancels what is running |
+| **Telegram** | Chat with Orbwise from your phone (text or voice messages, own chat in the sidebar), reminders also arrive on the phone, confirmations via ✅/❌ buttons, **files in both directions** (PDFs/photos → PC or Paperless, local files and Paperless documents → phone), `/stop` cancels what is running |
 | **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
 | **Trilium** | Search and read notes, create notes in the inbox, append to and update notes |
 | **Calendar** | iCloud or any CalDAV server: list events, find free time, create/change/delete events |
 | **Memory** | Remembers everything permanently (see below), `remember` / `recall` / `forget`, **chat history** with search, favourites, rename and delete; the search index repairs itself if it gets damaged |
-| **Dashboard** | Animated neural-network orb: thinking pulse, **tool symbols** next to the orb (CLI, cloud for the web, mail, Paperless) with a beam of dots flowing to them, golden neurons when memory is used, a **context ring** showing how full the model's context is; live chat, ACTIVITY (tool output), HISTORY, MEMORY and PLANNER (routines, reminders, briefing) tabs; live telemetry (tokens/s, context, GPU, VRAM, RAM, power) |
-| **Models & voices** | **LLM menu:** switch model profiles, download models with progress, cancel downloads, delete models · **VOICE menu:** choose, download (whole Piper catalogue), upload your own (`.onnx` + `.json`) and delete voices, "Jarvis" voice effect · **THINK** button for reasoning models |
+| **Dashboard** | Animated neural-network orb: thinking pulse, **tool symbols** next to the orb (CLI, cloud for the web, mail, Paperless) with a beam of dots flowing to them, golden neurons when memory is used, a **context ring** showing how full the model's context is; calm, modern layout: collapsible sidebar with chats, a big orb with greeting and suggestions on an empty chat that shrinks to a live strip once you talk, an activity panel with live telemetry (tokens/s, context, GPU, VRAM, RAM, power), Planner and Memory sheets, a settings page; works on the phone too |
+| **Models & voices** | **Settings → Models:** switch model profiles, download models with progress, cancel downloads, delete models · **Settings → Voice:** choose, download (whole Piper catalogue), upload your own (`.onnx` + `.json`) and delete voices, "Jarvis" voice effect · **Think** button for reasoning models |
 | **Safety** | Confirmation for everything that changes the system, blocklist for destructive commands, root only via a one-time password prompt, keys and passwords are never read or sent, local-only server – see [Security](#security) |
 
 ## Requirements
@@ -129,13 +131,17 @@ from now on. Your assistant keeps its name "Jarvis".
 
 ## Using Orbwise
 
-- **Start:** click **START SYSTEM** once (browsers only allow audio/microphone after a click).
-- **WAKE** on → say "Hey Jarvis, …". The microphone is only streamed to your own local server.
+- **Start:** click **Start Orbwise** once (browsers only allow audio/microphone after a click).
+- **Wake word** (ear icon at the top) on → say "Hey Jarvis, …". The microphone is only streamed to your own local
+  server.
 - **Hold the microphone button / space bar** → speak → release. Tap once to listen until silence.
-- **SOUND** toggles speech output, **STOP** (or `Esc`) cancels the current task,
-  **THINK** lets the model reason before answering (see [Thinking mode](#thinking-mode)).
-- Side panel: **ACTIVITY** (live tool output), **HISTORY** (chats), **MEMORY** (facts, journal),
-  **PLANNER** (routines, reminders, morning briefing). Top bar: **LLM** (models) and **VOICE** (voices, Jarvis effect).
+- The speaker icon toggles speech output; while Jarvis works, the send button turns into **stop** (or press `Esc`).
+  **Think** lets the model reason before answering (see [Thinking mode](#thinking-mode)), **Plan** makes it present
+  a plan first (see [Plan mode](#plan-mode)).
+- **Sidebar:** new chat, search, all chats; at the bottom **Planner** (routines, reminders, morning briefing),
+  **Memory** (facts, journal) and **Settings** (models, voices, general, status). The model chip at the top opens the
+  model settings, the pulse icon the **activity** panel (live tool output and telemetry) – it opens by itself when a
+  tool runs.
 
 Examples:
 
@@ -184,7 +190,7 @@ cache. Orbwise also learns from the model server's real token counts, so the bud
 
 ### Chat history
 
-The **HISTORY** tab lists all chats (starred first, then newest) with search across titles and content.
+The **sidebar** lists all chats (starred first, then newest) with search across titles and content.
 **NEW** starts a new chat; the old one is kept. Click a chat to open and continue it – Orbwise still remembers
 everything from the other chats.
 
@@ -195,7 +201,7 @@ everything from the other chats.
 
 ## Models & profiles
 
-**Adding models after installation:** click the **LLM pill** at the top → **+ ADD MODEL** and pick one of the
+**Adding models after installation:** click the **model chip** at the top (or **Settings → Models**) → **+ ADD MODEL** and pick one of the
 presets (with the same fit marks and download progress; a running download can be cancelled there with
 **✕ CANCEL**). Models added this way – including Bonsai – can be deleted in the same menu with 🗑, which also removes
 their files (the active model and models from `config.yaml` stay). Or run
@@ -207,7 +213,7 @@ orbwise model add bonsai       # Bonsai 2 27B incl. its llama.cpp server (see be
 orbwise model remove qwen3-14b # remove it from the list (optionally also delete the files)
 ```
 
-Orbwise can know several language models and switch between them – click the **LLM pill** at the top or run
+Orbwise can know several language models and switch between them – click the **model chip** at the top or run
 `orbwise model <name>` (`orbwise model` lists all profiles). The choice is remembered.
 
 - `backend: ollama` – models from Ollama (Qwen 3 recommended for tool use)
@@ -264,21 +270,21 @@ groups off: `tools: {disabled: [sysadmin, paperless]}`.
 
 ### Thinking mode
 
-By default the model answers directly (`think: false`) – fast. The **THINK** button turns reasoning on per
+By default the model answers directly (`think: false`) – fast. The **Think** button turns reasoning on per
 request: the orb zooms in and shows the thoughts live, then zooms out when the answer starts; the reasoning can be
 expanded under the answer and is never read aloud. It costs time (often 10–60 s per step on smaller GPUs). For
 llama-server, **don't** pass `--reasoning-budget 0`, which disables reasoning server-side.
 
 ## Voice & Jarvis effect
 
-Click the **VOICE** pill at the top to select, preview (▶), delete (🗑) or add Piper voices. **+ ADD VOICE** lists
+Open **Settings → Voice** to select, preview (▶), delete (🗑) or add Piper voices. **+ ADD VOICE** lists
 a recommended selection – English (Alan, Northern English male, Ryan, Joe, Jenny, Amy) or German (Thorsten, Pavoque,
 Karlsson, Kerstin, Ramona) – followed by **every official Piper voice** of your language from the
 [piper-voices catalogue](https://huggingface.co/rhasspy/piper-voices), grouped by region, with download size and a
 search field ([listen to samples](https://rhasspy.github.io/piper-samples/)). The catalogue is cached for a day and
 the selection still works offline.
 
-**Own voices** (e.g. a Piper voice from Hugging Face or a self-trained one): in the VOICE menu choose
+**Own voices** (e.g. a Piper voice from Hugging Face or a self-trained one): in **Settings → Voice** choose
 **⬆ UPLOAD OWN VOICE …** and select both files – the `.onnx` model and its `.onnx.json` config (any file name; it is
 renamed to match) – or drag them onto the menu. Alternatively copy `<name>.onnx` and `<name>.onnx.json` into
 `~/.local/share/orbwise/voices/`; the voice appears in the menu as "own voice" without a restart.
@@ -445,17 +451,17 @@ Routines are tasks Orbwise carries out on its own at a set time – daily, on ch
 - "On Saturdays at 9, tell me the weather for the weekend and what's in my calendar."
 - "Tomorrow at 7 once: check whether system updates are available."
 
-Say it like that (Orbwise asks before creating it) or use **+ ROUTINE** in the **PLANNER** tab: name, task, time,
+Say it like that (Orbwise asks before creating it) or use **+ Routine** in the **Planner**: name, task, time,
 weekdays (none = daily) or a date for a one-off run. The list shows the schedule and the next run; ▶ runs a routine
 now, ✎ edits, ✕ deletes, the checkbox pauses it. A coloured dot shows the last result.
 
-Every routine writes into **its own chat** ("⟳ Linux news" in HISTORY) – your current chat is never touched, and you
+Every routine writes into **its own chat** ("⟳ Linux news" in the sidebar) – your current chat is never touched, and you
 can ask follow-up questions right there. When a run finishes you get a short notice in the dashboard and a desktop
 notification. If a routine wants to do something that needs confirmation, the normal dialog appears when the
 dashboard is open; otherwise the action is declined and the routine says what would still be needed.
 
 Routines run while Orbwise is running (autostart). A run that was missed because the PC was off is caught up only
-if it is at most an hour late. The PLANNER tab also lists your reminders and holds the briefing settings.
+if it is at most an hour late. The Planner also lists your reminders and holds the briefing settings.
 
 ### Telegram (phone)
 
@@ -476,7 +482,7 @@ Talk to Orbwise from your phone and get reminders there – "Remind me tomorrow 
 
 The bot only answers this one chat; anyone else just gets told their chat ID. It fetches messages itself (long
 polling), so no port has to be opened on your router – but the PC with Orbwise must be running. Questions from
-the phone run in their own chat **"📱 Telegram"** in HISTORY (your open chat in the dashboard stays untouched), and
+the phone run in their own chat **"📱 Telegram"** in the sidebar (your open chat in the dashboard stays untouched), and
 **voice messages** are transcribed with Whisper. **Every reminder** is also sent to the phone. Actions that need
 confirmation come with **✅ Run / ❌ Deny** buttons; sending e-mail is only possible in the dashboard (edit dialog).
 **`/stop`** (or just "stop") cancels whatever is running – the request from the phone, open confirmations, and
@@ -503,7 +509,7 @@ second Orbwise instance (service + terminal) is fetching the bot's messages at t
 
 ### Plan mode
 
-For bigger jobs switch on **PLAN** next to THINK. Jarvis then thinks the request through (thinking mode), may only
+For bigger jobs switch on **Plan** in the input bar. Jarvis then thinks the request through (thinking mode), may only
 look things up with read-only tools (system info, file and package search, status …) and answers with a numbered
 plan: what it will do, with which tool or exact command, and where it will ask for confirmation. Anything that would
 change something is not run – it becomes a step of the plan.
@@ -533,7 +539,7 @@ confirmation, so a web page cannot slip instructions to Orbwise.
 ### Morning briefing
 
 "Good morning", "briefing" or "what's on today?" gives you a short overview. Choose its items and their order in
-the **PLANNER** tab of the dashboard under **BRIEFING CONTENT** (tick, ▲▼, **PREVIEW**) or in the config – dashboard changes take precedence
+the **Planner** of the dashboard under **Briefing content** (tick, ▲▼, **Preview**) or in the config – dashboard changes take precedence
 until you click **RESET**:
 
 ```yaml
