@@ -32,7 +32,7 @@
     voiceName: store.get("voice", ""), fxOn: store.get("fx", true), fxAmount: store.get("fxAmount", 0.6),
     recording: false, transcribing: false, streamMic: false,
     playing: false, confirm: null, confirmListenSent: false,
-    historyLoaded: false, status: null, errorUntil: 0,
+    historyLoaded: false, status: null, errorUntil: 0, modelDoneAt: 0, startupModel: null,
   };
 
   // ---------------------------------------------------------------- Audio
@@ -50,7 +50,8 @@
       A.fx = new window.VoiceFX(A.ctx, A.outAnalyser);
       A.fx.set(S.fxOn, S.fxAmount);
     }
-    if (A.ctx.state === "suspended") await A.ctx.resume();
+    // ohne vorherigen Klick bleibt der Kontext pausiert, bis der Nutzer etwas anklickt (nicht darauf warten)
+    if (A.ctx.state === "suspended") A.ctx.resume().catch(() => {});
   }
 
   async function initMic() {
@@ -389,8 +390,9 @@
         S.substate = ev.text;
         break;
       case "model_active":
-        if (S.modelSwitching) addSystem(L("Modell aktiv: ", "Model active: ") + S.modelSwitching);
+        if (S.modelSwitching && Boot.entered && !Boot.startupLoad) addSystem(L("Modell aktiv: ", "Model active: ") + S.modelSwitching);
         S.modelSwitching = null;
+        S.modelDoneAt = Date.now();
         S.substate = "";
         loadStatus();
         break;
@@ -403,6 +405,7 @@
         return;
       case "model_error":
         S.modelSwitching = null;
+        S.modelDoneAt = Date.now();
         S.substate = "";
         addError(L("Modellwechsel fehlgeschlagen: ", "Model switch failed: ") + ev.text);
         loadStatus();
@@ -1858,6 +1861,7 @@
   }
 
   async function loadStatus() {
+    const asked = Date.now();
     try {
       const st = await getJSON("/api/status");
       S.status = st;
@@ -1865,7 +1869,10 @@
       greet();
       const l = st.llm;
       const name = l.label && l.label !== l.model ? `${l.label} · ${l.model}` : l.model;
-      if (l.switching) { S.modelSwitching = S.modelSwitching || l.switching; refresh(); }
+      // Nur eine Antwort, die nach dem letzten „Modell aktiv“ angefragt wurde, darf „lädt“ setzen – sonst bliebe
+      // „Lade Modell“ nach dem Start stehen, bis man neu lädt
+      if (l.switching && asked > S.modelDoneAt) { S.modelSwitching = S.modelSwitching || l.switching; refresh(); }
+      else if (!l.switching && S.modelSwitching && asked > S.modelDoneAt) { S.modelSwitching = null; refresh(); }
       setPill("pill-llm", l.switching ? "warn" : !l.online ? "bad" : l.model_available ? "ok" : "warn",
         l.switching ? L("lädt …", "loading …") : !l.online ? `${l.label || l.model} offline` : l.model_available ? name : l.model + L(" fehlt", " missing"));
       const v = st.voice;
@@ -2110,7 +2117,10 @@
   }
   function renderBoot() {
     const model = Boot.server && Boot.server.steps.find((x) => x.key === "model");
-    S.startupModel = model && model.state === "running" ? model.text : null;  // auch nach dem Start im Orb anzeigen
+    const loading = model && model.state === "running";
+    if (S.startupModel && !loading) { S.modelSwitching = null; S.modelDoneAt = Date.now(); }
+    S.startupModel = loading ? model.text : null;  // auch nach dem Start im Orb anzeigen
+    Boot.startupLoad = !!loading;
     if (Boot.entered) { refresh(); return; }
     const rows = bootRows();
     const ul = $("boot-steps");
@@ -2137,12 +2147,20 @@
       : ready ? (problems ? L("Bereit – mit Hinweisen (siehe oben)", "Ready – with notes (see above)") : L("Alles bereit", "All set"))
         : L("Orbwise startet …", "Orbwise is starting …");
     $("boot").classList.toggle("ready", ready);
+    // Alles geladen → ohne Klick weiter (Ton/Mikrofon gibt der Browser dann beim ersten Klick/Tastendruck frei)
+    if (ready && !Boot.autoTimer) Boot.autoTimer = setTimeout(() => { if (!Boot.entered) enter(false); }, 700);
   }
   setInterval(() => { if (!Boot.entered) renderBoot(); }, 1000);
 
-  $("boot-btn").onclick = async () => {
+  async function enter(byClick) {
+    if (Boot.entered) return;
     Boot.entered = true;
     await initAudio().catch(() => {});
+    if (!byClick) {  // ohne Klick blockt der Browser Ton/Mikrofon bis zur ersten Interaktion – dann freigeben
+      const unlock = () => { if (A.ctx && A.ctx.state === "suspended") A.ctx.resume().catch(() => {}); };
+      document.addEventListener("pointerdown", unlock, { once: true });
+      document.addEventListener("keydown", unlock, { once: true });
+    }
     $("boot").classList.add("hidden");
     orb.boot();
     if (S.wake) {
@@ -2152,7 +2170,8 @@
     }
     $("input").focus();
     refresh();
-  };
+  }
+  $("boot-btn").onclick = () => enter(true);
 
   renderBoot();
   connect();

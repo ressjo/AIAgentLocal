@@ -127,7 +127,7 @@ HTML_EN = [
     # Dialoge
     ('id="boot-btn" disabled>Orbwise starten<', 'id="boot-btn" disabled>Start Orbwise<'),
     ('id="boot-sub">Orbwise startet …<', 'id="boot-sub">Orbwise is starting …<'),
-    ('>Aktiviert Audio &amp; Mikrofon im Browser<', '>Enables audio &amp; microphone in the browser<'),
+    ('>Startet von selbst, sobald alles geladen ist<', '>Starts by itself once everything has loaded<'),
     ('Bestätigung erforderlich', 'Confirmation required'),
     ('Abbrechen <kbd>', 'Cancel <kbd>'),
     ('Ausführen <kbd>', 'Run <kbd>'),
