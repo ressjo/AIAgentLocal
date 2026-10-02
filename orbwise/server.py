@@ -250,6 +250,32 @@ class Hub:
         return stopped
 
 
+STARTUP_STEPS = [("memory", "Gedächtnis", "Memory"), ("model", "Sprachmodell", "Language model"),
+                 ("stt", "Spracherkennung", "Speech recognition"), ("tts", "Sprachausgabe", "Speech output"),
+                 ("wake", "Wake-Word", "Wake word"), ("telegram", "Telegram", "Telegram")]
+
+
+class Startup:
+    """Was beim Start von Orbwise noch lädt – für die Startanzeige der Oberfläche (live per WebSocket).
+    Zustände: pending · running · ok · warn · error · off."""
+
+    def __init__(self, cfg: Config, notify):
+        en = cfg.language == "en"
+        self.notify = notify
+        self.steps = {k: {"key": k, "label": e if en else d, "state": "pending", "text": ""} for k, d, e in STARTUP_STEPS}
+
+    @property
+    def ready(self) -> bool:
+        return all(s["state"] not in ("pending", "running") for s in self.steps.values())
+
+    def snapshot(self) -> dict:
+        return {"type": "startup", "steps": list(self.steps.values()), "ready": self.ready}
+
+    async def set(self, key: str, state: str, text: str = "") -> None:
+        self.steps[key].update(state=state, text=text)
+        await self.notify(self.snapshot())
+
+
 def is_loopback(host: str) -> bool:
     import ipaddress
     if host in ("localhost", "ip6-localhost"):
@@ -322,6 +348,8 @@ def create_app(cfg: Config) -> FastAPI:
         wake = WakeWordFactory(cfg.voice)
         tts = PiperTTS(cfg.voice)
     hub = Hub(cfg, agent, tts, stt, wake)
+    startup = Startup(cfg, hub.broadcast)
+    en = cfg.language == "en"
     # Root-Rechte per Passwortfeld in der Oberfläche (sudo -A)
     helper = None
     if cfg.tools.privilege_cmd == "dashboard":
@@ -340,16 +368,19 @@ def create_app(cfg: Config) -> FastAPI:
         """Beschädigter Suchindex wurde leer neu angelegt → im Hintergrund aus den Gedächtnis-Dateien füllen."""
         if not memory.index.needs_rebuild:
             return
-        en = cfg.language == "en"
         await hub.broadcast({"type": "memory", "text": "Search index was damaged – rebuilding it from the memory files."
                              if en else "Suchindex war beschädigt – wird aus den Gedächtnis-Dateien neu aufgebaut."})
+        if not startup.ready:
+            await startup.set("memory", "running", T("Suchindex wird neu aufgebaut …", "rebuilding the search index …"))
         try:
             if await memory.heal_index_if_needed():
                 await hub.broadcast({"type": "memory", "text": "Search index rebuilt." if en
                                      else "Suchindex neu aufgebaut."})
+            await startup.set("memory", "ok", memory_summary())
         except Exception as e:  # noqa: BLE001
             heal_failed_at[0] = time.monotonic()
             log.warning("Neuaufbau des Suchindex fehlgeschlagen: %s", e)
+            await startup.set("memory", "warn", T("Suchindex nicht neu aufgebaut: ", "search index not rebuilt: ") + str(e))
 
     healing: list[asyncio.Task] = []
     heal_failed_at = [-1e9]
@@ -366,20 +397,78 @@ def create_app(cfg: Config) -> FastAPI:
         side_tasks.add(task)
         task.add_done_callback(side_tasks.discard)
 
+    def memory_summary() -> str:
+        return T(f"{len(memory.journal.days())} Tage · {len(memory.facts.list())} Fakten",
+                 f"{len(memory.journal.days())} days · {len(memory.facts.list())} facts")
+
+    async def warm_voice() -> None:
+        """Stimme, Spracherkennung und Wake-Word im Hintergrund laden – mit Anzeige, was gerade lädt."""
+        if not cfg.voice.enabled:
+            off = T("aus (voice.enabled)", "off (voice.enabled)")
+            for key in ("stt", "tts", "wake"):
+                await startup.set(key, "off", off)
+            return
+        if tts is None or not await asyncio.to_thread(tts.available):
+            await startup.set("tts", "warn", T("Browser-Stimme", "browser voice") + (f" – {tts.error}" if tts and tts.error else ""))
+        else:
+            await startup.set("tts", "running", T("lade Stimme ", "loading voice ") + tts.current + " …")
+            try:
+                await asyncio.to_thread(tts._load, tts.current)
+                await startup.set("tts", "ok", "Piper · " + tts.current)
+            except Exception as e:  # noqa: BLE001
+                await startup.set("tts", "warn", T("Browser-Stimme – ", "browser voice – ") + str(e))
+        if wake is None:
+            await startup.set("wake", "off")
+        else:
+            await startup.set("wake", "running", T("lade Wake-Word-Modell …", "loading the wake word model …"))
+            ok = await asyncio.to_thread(wake.available)
+            await startup.set("wake", "ok" if ok else "warn", "„Hey Jarvis“" if ok else (wake.error or ""))
+        if stt is None:
+            await startup.set("stt", "error", T("faster-whisper ist nicht installiert", "faster-whisper is not installed"))
+        elif env("SKIP_WARMUP") == "1":
+            await startup.set("stt", "ok", "Whisper " + cfg.voice.stt_model)
+        else:
+            await startup.set("stt", "running", T("lade Whisper „", "loading Whisper “") + cfg.voice.stt_model
+                              + T("“ …", "” …"))
+            try:
+                await asyncio.to_thread(stt.warmup)
+                await startup.set("stt", "ok", "Whisper " + cfg.voice.stt_model)
+            except Exception as e:  # noqa: BLE001
+                await startup.set("stt", "error", str(e))
+
+    async def watch_telegram() -> None:
+        if telegram_bot is None:
+            await startup.set("telegram", "off", T("nicht eingerichtet", "not set up"))
+            return
+        await startup.set("telegram", "running", T("verbinde …", "connecting …"))
+        for _ in range(240):
+            st = telegram_bot.status
+            if st.get("running"):
+                await startup.set("telegram", "ok", st.get("bot") or T("verbunden", "connected"))
+                return
+            if st.get("error"):
+                await startup.set("telegram", "error", st["error"])
+                return
+            await asyncio.sleep(0.25)
+        await startup.set("telegram", "warn", T("noch keine Verbindung", "not connected yet"))
+
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         hub.speaker.start()
+        await startup.set("memory", "ok", memory_summary())
         heal_index_soon()
         if isinstance(llm, LLMRouter):
             background.append(asyncio.create_task(start_model()))
+        else:
+            await startup.set("model", "ok", T("Demo-Modus", "demo mode"))
+        background.append(asyncio.create_task(warm_voice()))
+        background.append(asyncio.create_task(watch_telegram()))
         background.append(asyncio.create_task(summary_loop()))
         background.append(asyncio.create_task(metrics_loop()))
         background.append(asyncio.create_task(reminder_loop()))
         background.append(asyncio.create_task(routine_loop()))
         if telegram_bot is not None:
             background.append(asyncio.create_task(telegram_bot.serve()))
-        if stt and env("SKIP_WARMUP") != "1":
-            background.append(asyncio.create_task(asyncio.to_thread(stt.warmup)))
         yield
         for t in [*background, *healing, *side_tasks]:
             t.cancel()
@@ -389,6 +478,8 @@ def create_app(cfg: Config) -> FastAPI:
 
     async def model_progress(text: str) -> None:
         await hub.broadcast({"type": "model_progress", "text": text})
+        if startup.steps["model"]["state"] == "running":
+            await startup.set("model", "running", text)
 
     async def idle_if_free() -> None:
         """Oberfläche auf „bereit“ setzen – nur, wenn gerade keine Anfrage läuft."""
@@ -398,14 +489,25 @@ def create_app(cfg: Config) -> FastAPI:
     async def start_model() -> None:
         # Beim Start das aktive Profil vorbereiten (z. B. llama-server starten); Chats warten so lange
         name = llm.active
+        label = llm.profile.label or llm.profile.model
         llm.switching = name if llm.server_for(name) else None
+        await startup.set("model", "running", T("starte ", "starting ") + label + " …")
         try:
             async with agent.lock:
                 await llm.start(model_progress)
+                await startup.set("model", "running", T(f"lade {llm.profile.model} in den Speicher …",
+                                                        f"loading {llm.profile.model} into memory …"))
+                try:  # sonst wartet die erste Frage, bis Ollama das Modell geladen hat
+                    await llm.warm()
+                    warm_error = ""
+                except LLMError as e:  # Profil ist trotzdem aktiv – nur vorladen ging nicht (z. B. Ollama aus)
+                    warm_error = str(e)
             await hub.broadcast({"type": "model_active", "name": name})
+            await startup.set("model", "warn" if warm_error else "ok", warm_error or label)
         except LLMError as e:
             log.warning("Modell-Start fehlgeschlagen: %s", e)
             await hub.broadcast({"type": "model_error", "name": name, "text": str(e)})
+            await startup.set("model", "error", str(e))
         finally:
             llm.switching = None
             await idle_if_free()  # wer sich während des Ladens verbunden hat, sah „denke nach“
@@ -587,13 +689,17 @@ def create_app(cfg: Config) -> FastAPI:
         html = translate_index((WEB_DIR / "index.html").read_text(encoding="utf-8"), cfg.language)
         return HTMLResponse(versioned_assets(html), headers={"Cache-Control": "no-cache"})
 
+    @app.get("/api/startup")
+    async def startup_state():
+        return startup.snapshot()
+
     @app.get("/api/status")
     async def status():
         voice = {
             "stt": stt is not None,
             "tts": bool(tts and tts.available()),
             "tts_error": tts.error if tts else "Sprache deaktiviert",
-            "wake": bool(wake and wake.available()),
+            "wake": bool(wake and wake._ok),  # nicht hier laden (blockiert) – das macht warm_voice beim Start
             "wake_error": wake.error if wake else None,
         }
         return {
@@ -1057,6 +1163,7 @@ def create_app(cfg: Config) -> FastAPI:
         hub.clients.add(client)
         await client.send({"type": "hello", "busy": agent.lock.locked(),
                            "pending": [cid for cid in hub.pending], "context": agent.last_context})
+        await client.send(startup.snapshot())
         if hub.undelivered:
             events, hub.undelivered = hub.undelivered, []
             for event in events:

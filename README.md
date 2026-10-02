@@ -131,7 +131,8 @@ from now on. Your assistant keeps its name "Jarvis".
 
 ## Using Orbwise
 
-- **Start:** click **Start Orbwise** once (browsers only allow audio/microphone after a click).
+- **Start:** the start screen shows live what is still loading (language model, speech recognition, voice, wake word,
+  Telegram, your last chat). Click **Start Orbwise** once – browsers only allow audio/microphone after a click.
 - **Wake word** (ear icon at the top) on → say "Hey Jarvis, …". The microphone is only streamed to your own local
   server.
 - **Hold the microphone button / space bar** → speak → release. Tap once to listen until silence.

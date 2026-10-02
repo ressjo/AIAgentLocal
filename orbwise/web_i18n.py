@@ -125,7 +125,8 @@ HTML_EN = [
     ('<b>Stimme</b><em>', '<b>Voice</b><em>'),
     ('<b>Gedächtnis</b><em>', '<b>Memory</b><em>'),
     # Dialoge
-    ('>Orbwise starten<', '>Start Orbwise<'),
+    ('id="boot-btn" disabled>Orbwise starten<', 'id="boot-btn" disabled>Start Orbwise<'),
+    ('id="boot-sub">Orbwise startet …<', 'id="boot-sub">Orbwise is starting …<'),
     ('>Aktiviert Audio &amp; Mikrofon im Browser<', '>Enables audio &amp; microphone in the browser<'),
     ('Bestätigung erforderlich', 'Confirmation required'),
     ('Abbrechen <kbd>', 'Cancel <kbd>'),

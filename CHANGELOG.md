@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Start screen shows what is loading:** connection, memory, language model (server start and preloading the Ollama
+  model into memory, with progress), speech recognition, voice, wake word, Telegram and the last chat – live, with a
+  progress bar; "Start Orbwise" is ready once everything is loaded (or start early, the rest keeps loading and the orb
+  shows "loading model"). The first question no longer waits for Ollama to load the model.
 - **New, calmer design:** graphite instead of neon, system font, icons and chat bubbles; collapsible sidebar with
   chats, Planner/Memory sheets and a settings page (models, voices, general, status) instead of the top pills; big orb
   with greeting and suggestions on an empty chat that shrinks to a live strip during a conversation; activity panel

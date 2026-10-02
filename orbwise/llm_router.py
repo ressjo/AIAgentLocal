@@ -259,12 +259,15 @@ class LLMRouter:
             await server.ensure_running(progress)
 
     async def start(self, progress: Progress | None = None) -> None:
-        """Beim Start von Orbwise: aktives Profil vorbereiten (Server starten usw.)."""
-        try:
-            await self._prepare(self.active, progress)
-            await self.detect_context()
-        except LLMError as e:
-            log.error("Profil '%s' konnte nicht gestartet werden: %s", self.active, e)
+        """Beim Start von Orbwise: aktives Profil vorbereiten (Server starten usw.). Fehler gehen an den Aufrufer
+        (Startanzeige), statt nur im Log zu landen."""
+        await self._prepare(self.active, progress)
+        await self.detect_context()
+
+    async def warm(self) -> None:
+        """Ollama-Modell vorladen (bei einem eigenen Modell-Server ist es nach dem Start schon geladen)."""
+        if isinstance(self.client, OllamaLLM):
+            await self.client.preload()
 
     async def remove_profile(self, name: str) -> None:
         """Profil aus der Auswahl nehmen (vorher `orbwise.models.unregister_model`); ein gestarteter Server wird beendet."""

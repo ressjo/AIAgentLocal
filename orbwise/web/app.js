@@ -198,12 +198,13 @@
     else if (S.transcribing) s = "thinking";
     else if (S.playing) s = "speaking";
     else if (Date.now() < S.errorUntil) s = "error";
-    if (S.modelSwitching && S.connected) s = "thinking";
+    const loadingModel = S.modelSwitching || S.startupModel;
+    if (loadingModel && S.connected) s = "thinking";
     orb.setState(s);
     const label = $("state-label");
-    label.textContent = S.modelSwitching && S.connected ? L("LADE MODELL", "LOADING MODEL") : (LABELS[s] || s.toUpperCase());
+    label.textContent = loadingModel && S.connected ? L("LADE MODELL", "LOADING MODEL") : (LABELS[s] || s.toUpperCase());
     label.style.color = { listening: "#3ddc97", executing: "#f5b14c", confirm: "#f5b14c", error: "#ff5f6d", offline: "#8a92a5", thinking: "#a9b3ff" }[s] || "";
-    let sub = S.substate;
+    let sub = S.substate || (S.startupModel && !S.modelSwitching ? S.startupModel : "");
     if (S.recording) sub = S.recordingMode === "ptt" ? L("Loslassen zum Senden", "Release to send") : L("Sprich jetzt …", "Speak now …");
     else if (S.transcribing) sub = L("Transkribiere …", "Transcribing …");
     else if (s === "idle" && S.wake) sub = L("Sag „Hey Jarvis“", "Say “Hey Jarvis”");
@@ -243,6 +244,7 @@
       loadStatus();
       getJSON("/api/metrics").then(showMetrics).catch(() => {});
       if (!S.historyLoaded) loadHistory();
+      renderBoot();
     };
     ws.onclose = () => {
       S.connected = false;
@@ -250,7 +252,8 @@
       S.transcribing = false;
       updateMicStreaming();
       refresh();
-      const delay = Math.min(10000, 800 * 2 ** S.retry++);
+      // auf der Startseite zügig neu versuchen (der Server startet evtl. gerade), danach mit Abstand
+      const delay = Boot.entered ? Math.min(10000, 800 * 2 ** S.retry++) : 1000;
       setTimeout(connect, delay);
     };
     ws.onmessage = (e) => {
@@ -267,6 +270,10 @@
 
   function handle(ev) {
     switch (ev.type) {
+      case "startup":
+        Boot.server = ev;
+        renderBoot();
+        return;
       case "hello":
         S.serverState = ev.busy ? "thinking" : "idle";  // tatsächlichen Zustand übernehmen (auch nach Neuverbinden)
         S.transcribing = false;  // neue Verbindung = neue Audio-Sitzung, eine alte Transkription meldet sich nie mehr
@@ -1967,6 +1974,7 @@
     try {
       const h = await getJSON("/api/history");
       S.historyLoaded = true;
+      setTimeout(renderBoot, 0);
       $("chat-title").textContent = h.chat && h.chat.title ? h.chat.title : "";
       if (h.summary) addSystem(L("Frühere Gesprächsteile sind im Gedächtnis zusammengefasst.", "Earlier parts of this chat are summarised in memory."));
       for (const m of h.messages) {
@@ -2082,36 +2090,58 @@
     b.onclick = () => { $("input").value = b.dataset.text; $("form").requestSubmit(); };
   });
 
-  // ---------------------------------------------------------------- Boot
-  const bootLines = $("boot-lines");
-  function bootLine(text, cls) {
-    const el = document.createElement("div");
-    el.className = cls || "";
-    el.textContent = text;
-    bootLines.appendChild(el);
+  // ---------------------------------------------------------------- Start: was lädt gerade?
+  // Der Server meldet seine Schritte live (Ereignis „startup“); Verbindung und Chat-Verlauf prüft die Oberfläche selbst.
+  const Boot = { server: null, entered: false };
+  const BOOT_ICON = { ok: "✓", warn: "!", error: "✕", off: "–", running: "", pending: "" };
+  function bootRows() {
+    const rows = [{
+      key: "conn", label: L("Verbindung", "Connection"), state: S.connected ? "ok" : "running",
+      text: S.connected ? L("mit dem Orbwise-Server verbunden", "connected to the Orbwise server")
+        : L("verbinde mit dem Orbwise-Server …", "connecting to the Orbwise server …"),
+    }];
+    if (Boot.server) rows.push(...Boot.server.steps);
+    else rows.push({ key: "srv", label: L("Dienste", "Services"), state: "pending", text: L("warte auf den Server …", "waiting for the server …") });
+    rows.push({
+      key: "chat", label: "Chat", state: S.historyLoaded ? "ok" : S.connected ? "running" : "pending",
+      text: S.historyLoaded ? ($("chat-title").textContent || L("neuer Chat", "new chat")) : L("lade den letzten Chat …", "loading the last chat …"),
+    });
+    return rows;
   }
-
-  async function bootSequence() {
-    const steps = EN ? ["Connecting to the server …", "Loading memory …", "Checking services …"]
-      : ["Verbinde mit dem Server …", "Lade Gedächtnis …", "Prüfe Dienste …"];
-    for (const s of steps) { bootLine(s); await new Promise((r) => setTimeout(r, 220)); }
-    const st = await loadStatus();
-    if (!st) { bootLine(L("  ✘ Server nicht erreichbar", "  ✘ Server unreachable"), "bad"); return; }
-    const l = st.llm;
-    bootLine(`  ${l.online && l.model_available ? "✔" : "✘"} ${L("Sprachmodell", "Language model")} ${l.model}${l.online ? (l.model_available ? "" : L(" (nicht geladen – ollama pull)", " (not loaded – ollama pull)")) : " (Server offline)"}`,
-      l.online && l.model_available ? "ok" : "bad");
-    bootLine(`  ${st.voice.stt ? "✔" : "✘"} ${L("Spracherkennung", "Speech recognition")}`, st.voice.stt ? "ok" : "bad");
-    bootLine(`  ${st.voice.tts ? L("✔ Sprachausgabe (Piper)", "✔ Speech output (Piper)") : L("~ Sprachausgabe über Browser", "~ Speech output via browser")}`, st.voice.tts ? "ok" : "bad");
-    bootLine(`  ${st.voice.wake ? "✔" : "✘"} Wake-Word ${L("„Hey Jarvis“", "“Hey Jarvis”")}`, st.voice.wake ? "ok" : "bad");
-    if (st.trilium && st.trilium.enabled) {
-      bootLine(`  ${st.trilium.online ? L("✔ Trilium verbunden (v", "✔ Trilium connected (v") + st.trilium.version + ")" : "✘ Trilium: " + (st.trilium.error || "offline")}`,
-        st.trilium.online ? "ok" : "bad");
+  function renderBoot() {
+    const model = Boot.server && Boot.server.steps.find((x) => x.key === "model");
+    S.startupModel = model && model.state === "running" ? model.text : null;  // auch nach dem Start im Orb anzeigen
+    if (Boot.entered) { refresh(); return; }
+    const rows = bootRows();
+    const ul = $("boot-steps");
+    ul.innerHTML = "";
+    for (const r of rows) {
+      const li = document.createElement("li");
+      li.className = "boot-step " + r.state;
+      li.innerHTML = `<span class="bs-icon">${BOOT_ICON[r.state] || ""}</span><span class="bs-label"></span><span class="bs-text"></span>`;
+      li.querySelector(".bs-label").textContent = r.label;
+      li.querySelector(".bs-text").textContent = r.text || "";
+      li.title = r.text || "";
+      ul.appendChild(li);
     }
-    bootLine(L(`  ✔ Gedächtnis: ${st.memory.days} Tage, ${st.memory.facts} Fakten, ${st.memory.chunks} Einträge`,
-               `  ✔ Memory: ${st.memory.days} days, ${st.memory.facts} facts, ${st.memory.chunks} entries`), "ok");
+    const done = rows.filter((r) => !["running", "pending"].includes(r.state)).length;
+    $("boot-bar").style.width = Math.round((done / rows.length) * 100) + "%";
+    const ready = done === rows.length;
+    const btn = $("boot-btn");
+    btn.disabled = !S.connected;
+    btn.classList.toggle("primary", ready);
+    btn.textContent = ready ? L("Orbwise starten", "Start Orbwise")
+      : L("Schon starten – der Rest lädt im Hintergrund", "Start now – the rest keeps loading");
+    const problems = rows.filter((r) => r.state === "error").length;
+    $("boot-sub").textContent = !S.connected ? L("Warte auf den Orbwise-Server …", "Waiting for the Orbwise server …")
+      : ready ? (problems ? L("Bereit – mit Hinweisen (siehe oben)", "Ready – with notes (see above)") : L("Alles bereit", "All set"))
+        : L("Orbwise startet …", "Orbwise is starting …");
+    $("boot").classList.toggle("ready", ready);
   }
+  setInterval(() => { if (!Boot.entered) renderBoot(); }, 1000);
 
   $("boot-btn").onclick = async () => {
+    Boot.entered = true;
     await initAudio().catch(() => {});
     $("boot").classList.add("hidden");
     orb.boot();
@@ -2124,7 +2154,7 @@
     refresh();
   };
 
-  bootSequence();
+  renderBoot();
   connect();
   refresh();
 })();

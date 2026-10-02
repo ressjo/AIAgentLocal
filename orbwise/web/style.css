@@ -579,19 +579,41 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .day-body h3 { font-size: 13px; font-weight: 650; color: var(--text); margin: 16px 0 6px; }
 .day-body pre { white-space: pre-wrap; font-family: var(--mono); font-size: 12px; background: #0a0c10; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
 
-/* Startbildschirm */
+/* Startbildschirm: was lädt gerade? */
 #boot { background: radial-gradient(ellipse at 50% 40%, #11202d 0%, var(--bg) 60%); backdrop-filter: none; }
-.boot-box { text-align: center; width: min(460px, 100%); display: flex; flex-direction: column; align-items: center; }
+.boot-box { text-align: center; width: min(500px, 100%); display: flex; flex-direction: column; align-items: center; }
 .boot-mark { width: 72px; height: 72px; border-radius: 50%;
   background: radial-gradient(circle, #c9f0ff 0 14%, var(--accent) 15% 30%, transparent 32%), radial-gradient(circle, rgba(76,194,255,.3), transparent 70%);
-  box-shadow: inset 0 0 0 3px rgba(76,194,255,.7), 0 0 60px rgba(76,194,255,.25); animation: breathe 3s ease-in-out infinite; }
-@keyframes breathe { 50% { box-shadow: inset 0 0 0 3px rgba(76,194,255,.9), 0 0 90px rgba(76,194,255,.35); } }
-.boot-title { font-size: 28px; font-weight: 650; margin: 18px 0 10px; letter-spacing: -.01em; }
-.boot-lines { font-family: var(--mono); font-size: 12.5px; color: var(--muted); text-align: left; min-height: 140px; width: 100%; margin-bottom: 18px; }
-.boot-lines div { animation: msg-in .2s; padding: 1px 0; }
-.boot-lines .ok { color: var(--success); }
-.boot-lines .bad { color: var(--warn); }
+  box-shadow: inset 0 0 0 3px rgba(76,194,255,.7), 0 0 60px rgba(76,194,255,.25); animation: breathe 2.4s ease-in-out infinite; }
+#boot.ready .boot-mark { animation: none; box-shadow: inset 0 0 0 3px rgba(61,220,151,.75), 0 0 70px rgba(61,220,151,.22); }
+@keyframes breathe { 50% { transform: scale(1.06); box-shadow: inset 0 0 0 3px rgba(76,194,255,.95), 0 0 90px rgba(76,194,255,.4); } }
+.boot-title { font-size: 28px; font-weight: 650; margin: 18px 0 2px; letter-spacing: -.01em; }
+.boot-sub { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+#boot.ready .boot-sub { color: var(--success); }
+.boot-progress { width: 100%; height: 4px; border-radius: 4px; background: rgba(255,255,255,.07); overflow: hidden; margin-bottom: 14px; }
+.boot-progress i { display: block; height: 100%; width: 0; border-radius: 4px; background: linear-gradient(90deg, var(--accent), #8fdcff);
+  transition: width .5s cubic-bezier(.2,.8,.2,1); }
+#boot.ready .boot-progress i { background: var(--success); }
+.boot-steps { list-style: none; margin: 0 0 20px; padding: 6px; width: 100%; text-align: left; border-radius: 14px;
+  background: rgba(18,21,28,.7); border: 1px solid var(--border); }
+.boot-step { display: grid; grid-template-columns: 22px 130px minmax(0, 1fr); align-items: center; gap: 10px; padding: 7px 10px; border-radius: 9px; font-size: 13.5px; }
+.boot-step + .boot-step { border-top: 1px solid var(--border); border-radius: 0; }
+.bs-label { color: var(--text); font-weight: 500; }
+.bs-text { color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bs-icon { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; }
+.boot-step.ok .bs-icon { background: rgba(61,220,151,.16); color: var(--success); }
+.boot-step.warn .bs-icon { background: var(--warn-soft); color: var(--warn); }
+.boot-step.error .bs-icon { background: var(--danger-soft); color: var(--danger); }
+.boot-step.error .bs-text { color: #ffb3ba; white-space: normal; }
+.boot-step.off .bs-icon { color: var(--faint); }
+.boot-step.off .bs-label, .boot-step.off .bs-text { color: var(--faint); }
+.boot-step.pending .bs-icon { border: 2px solid rgba(255,255,255,.12); }
+.boot-step.running .bs-icon { border: 2px solid rgba(76,194,255,.25); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+.boot-step.running .bs-text { color: var(--text-2); }
+@keyframes spin { to { transform: rotate(360deg); } }
+#boot-btn:not(.primary) { background: var(--surface-2); color: var(--text-2); font-size: 13.5px; }
 .boot-hint { margin-top: 10px; color: var(--faint); font-size: 12px; }
+@media (max-width: 480px) { .boot-step { grid-template-columns: 22px 1fr; } .bs-text { grid-column: 2; } }
 
 /* Hinweise und Erinnerungen */
 .toast { position: fixed; right: 16px; top: 16px; z-index: 40; max-width: min(560px, 92vw);

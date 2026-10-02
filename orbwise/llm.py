@@ -118,6 +118,20 @@ class OllamaLLM:
             raise LLMError(f"Ollama antwortet mit {resp.status_code}: {resp.text[:300]}")
         return strip_think(resp.json().get("message", {}).get("content", ""))
 
+    async def preload(self) -> None:
+        """Modell schon beim Start in den (Grafik-)Speicher laden – sonst wartet die erste Frage darauf."""
+        try:
+            resp = await self._client.post("/api/generate", json={
+                "model": self.cfg.model, "prompt": "", "keep_alive": self.cfg.keep_alive}, timeout=600)
+        except httpx.ConnectError as e:
+            raise LLMError(f"Ollama unter {self.cfg.base_url} nicht erreichbar – läuft 'ollama serve'?") from e
+        except httpx.HTTPError as e:
+            raise LLMError(f"Ollama: {e}") from e
+        if resp.status_code == 404 or "not found" in resp.text.lower():
+            raise LLMError(f"Modell {self.cfg.model} fehlt – einmalig laden: ollama pull {self.cfg.model}")
+        if resp.status_code != 200:
+            raise LLMError(f"Ollama antwortet mit {resp.status_code}: {resp.text[:200]}")
+
     async def embed(self, texts: list[str]) -> list[list[float]]:
         payload: dict[str, Any] = {"model": self.cfg.embed_model, "input": texts, "keep_alive": self.cfg.keep_alive}
         if self.embed_on_cpu:

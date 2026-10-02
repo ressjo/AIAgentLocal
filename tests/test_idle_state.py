@@ -138,3 +138,44 @@ def test_page_loads_ui_files_with_content_version(cfg):
         for name, digest in refs.items():
             assert hashlib.sha1((server.WEB_DIR / name).read_bytes()).hexdigest()[:10] == digest
         assert client.get(f"/static/orb.js?v={refs['orb.js']}").status_code == 200
+
+
+def test_startup_progress_is_reported_until_ready(cfg, monkeypatch):
+    """Die Startanzeige sieht live, was noch lädt – erst wenn alles fertig ist, meldet der Server „ready“."""
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    with TestClient(server.create_app(cfg), base_url="http://localhost:8765") as client:
+        with client.websocket_connect(WS, headers=ORIGIN) as ws:
+            assert ws.receive_json()["type"] == "hello"
+            snap = ws.receive_json()
+            assert snap["type"] == "startup"
+            keys = [s["key"] for s in snap["steps"]]
+            assert keys == ["memory", "model", "stt", "tts", "wake", "telegram"]
+            for _ in range(50):
+                if snap.get("ready"):
+                    break
+                ev = ws.receive_json()
+                if ev["type"] == "startup":
+                    snap = ev
+            assert snap["ready"]
+            states = {s["key"]: s["state"] for s in snap["steps"]}
+            assert states["model"] == "ok" and states["memory"] == "ok"
+            assert states["stt"] == "off" and states["telegram"] == "off"  # Stimme aus, Telegram nicht eingerichtet
+        assert client.get("/api/startup").json()["ready"]
+
+
+def test_model_preload_explains_missing_model():
+    import httpx
+
+    from orbwise.config import LLMConfig
+    from orbwise.llm import LLMError, OllamaLLM
+
+    def handler(request):
+        return httpx.Response(404, json={"error": "model 'qwen3:14b' not found"})
+
+    llm = OllamaLLM(LLMConfig(), transport=httpx.MockTransport(handler))
+    try:
+        run(llm.preload())
+    except LLMError as e:
+        assert "ollama pull qwen3:14b" in str(e)
+    else:
+        raise AssertionError("kein Fehler")
