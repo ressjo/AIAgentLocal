@@ -602,6 +602,7 @@
         $("thought-text").textContent = "";
         $("stage").classList.add("zoomed");
         if (!isCompact()) orb.setZoom(true);  // Satelliten kreisen dann um den Gedankenkasten
+        else requestAnimationFrame(scrollChat);  // Chat rückt über die Gedanken-Karte
       }
       this.text += text;
       if (!this.queued) {
@@ -1008,8 +1009,8 @@
     S.think = !S.think;
     store.set("think", S.think);
     send({ type: "think", enabled: S.think });
-    toast(S.think ? L("Denkmodus an – Antworten dauern länger, der Gedankengang erscheint im Orb.",
-                      "Thinking mode on – answers take longer, the reasoning appears in the orb.")
+    toast(S.think ? L("Denkmodus an – Antworten dauern länger, der Gedankengang erscheint beim Orb.",
+                      "Thinking mode on – answers take longer, the reasoning appears next to the orb.")
                   : L("Denkmodus aus – schnelle Antworten.", "Thinking mode off – fast answers."));
     refresh();
   };

@@ -706,7 +706,7 @@
       q.reset();
       ctx.clearRect(0, 0, w, h);
       const cx = w / 2, cy = h / 2 - h * 0.03;
-      const R = Math.min(w, h) * (this.k < 0.6 ? 0.24 : 0.3);  // kompakter Streifen: Ringe nicht abschneiden
+      const R = Math.min(w, h) * (w > 1.8 * h ? 0.24 : 0.3);  // flacher Streifen: Ringe nicht abschneiden
       const lvl = this.level;
       const pulse = 1 + 0.04 * Math.sin(this.t * 2.2) * this.energy + lvl * 0.12;
 
@@ -926,7 +926,7 @@
       const boxW = Math.min(this.w * 0.58, 540), boxH = Math.min((this.h + 92) * 0.48, 380);
       return {
         // im flachen, breiten Streifen (kompakter Orb) weichen die Satelliten zur Seite aus
-        rx: lerp(Math.max(R * 1.36, Math.min(this.w * 0.32, R * 3.2) * (this.k < 0.6 ? 1 : 0)), boxW / 2 + 34, z),
+        rx: lerp(Math.max(R * 1.36, Math.min(this.w * 0.32, R * 3.2) * (this.w > 1.8 * this.h ? 1 : 0)), boxW / 2 + 34, z),
         ry: lerp(Math.min(R * 1.36, this.h / 2 - 12), boxH / 2 + 30, z),
         ix: lerp(R * 0.3, boxW / 2 - 6, z), iy: lerp(R * 0.3, boxH / 2 - 6, z),
       };
