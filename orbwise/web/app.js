@@ -776,12 +776,24 @@
     while (activity.children.length > 60) activity.lastChild.remove();
 
     const a = !ev.routine && S.currentMsg && assistants[S.currentMsg];
-    if (a) {
+    if (a) {  // über der Nachricht nur der aktuelle Aufruf – die früheren stehen in der Aktivität
+      const tools = a.el.querySelector(".tools");
+      a.toolCount = (a.toolCount || 0) + 1;
+      tools.replaceChildren();
       const chip = document.createElement("span");
       chip.className = "tool-chip running";
       chip.id = "chip-" + ev.id;
       chip.textContent = "⚙ " + ev.name;
-      a.el.querySelector(".tools").appendChild(chip);
+      tools.appendChild(chip);
+      if (a.toolCount > 1) {
+        const more = document.createElement("button");
+        more.type = "button";
+        more.className = "tool-more";
+        more.textContent = L(`+${a.toolCount - 1} vorher`, `+${a.toolCount - 1} earlier`);
+        more.title = L("Alle Werkzeug-Aufrufe in der Aktivität zeigen", "Show all tool calls in the activity panel");
+        more.onclick = () => setDrawer(true, true);
+        tools.appendChild(more);
+      }
     }
   }
 

@@ -318,6 +318,11 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .tool-chip.running { color: var(--warn); border-color: rgba(245,177,76,.35); }
 .tool-chip.denied, .tool-chip.blocked, .tool-chip.error { color: var(--danger); border-color: rgba(255,95,109,.35); }
 .tool-chip.planned { color: var(--warn); border-style: dashed; }
+.tool-more {
+  height: 24px; padding: 0 8px; margin: 0 0 8px; font: inherit; font-size: 11.5px; color: var(--muted);
+  background: none; border: 0; border-radius: 999px; cursor: pointer;
+}
+.tool-more:hover { color: var(--text); background: var(--surface); }
 .thought-log { margin: 0 0 8px; font-size: 12.5px; color: var(--muted); }
 .thought-log summary { cursor: pointer; width: fit-content; user-select: none; color: #a9b3ff; font-size: 12px; font-weight: 550; }
 .thought-log summary::marker { color: var(--faint); }

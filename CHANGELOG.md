@@ -30,6 +30,8 @@ All notable changes to this project are documented here. The format follows
   orb, `orbwise doctor` checks the model and the screenshot program.
 
 ### Fixed
+- A message with many tool calls showed a wall of `run_shell` chips; now only the current call is shown, with a
+  "+N earlier" link that opens the activity panel.
 - Installer, `bootstrap.sh` and all links point to the renamed repository `ressjo/orbwise-linux-agent` (they pointed to
   a non-existent `ressjo/orbwise`, so fresh installs failed at `git clone`).
 
