@@ -366,7 +366,8 @@ def create_app(cfg: Config) -> FastAPI:
             log.warning("Askpass-Helfer konnte nicht angelegt werden: %s", e)
     broker = askpass.AskpassBroker(cfg.port, notify=hub.broadcast, helper=helper,
                                    has_ui=lambda: bool(hub.clients), say=hub.speaker.say,
-                                   say_text=prompts.spoken(cfg, "password"))
+                                   say_text=prompts.spoken(cfg, "password"),
+                                   remember_seconds=cfg.tools.sudo_remember_minutes * 60)
     askpass.BROKER = broker
     hub.askpass = broker
     background: list[asyncio.Task] = []
@@ -527,6 +528,7 @@ def create_app(cfg: Config) -> FastAPI:
 
         async def run_telegram(text: str, emit, confirm, plan: bool = False, approved_plan: str = "") -> str:
             """Anfrage vom Handy: eigener Chat „📱 Telegram“ – der offene Chat im Dashboard bleibt unberührt."""
+            askpass.REMOTE.set(True)  # gemerktes sudo-Passwort gilt nicht für Aufträge vom Handy
             try:
                 chat_id = json.loads(tg_state.read_text(encoding="utf-8")).get("chat_id", "")
             except (OSError, ValueError):
@@ -624,6 +626,7 @@ def create_app(cfg: Config) -> FastAPI:
         text = prompts.text(cfg, "routine_prompt").format(name=r.name, when=when, task=r.task)
         status, answer, chat_id = "ok", "", r.chat_id
         try:
+            askpass.REMOTE.set(True)  # Routinen laufen unbeaufsichtigt – kein gemerktes sudo-Passwort
             answer, chat_id = await agent.run_in_chat(r.chat_id, f"⟳ {r.name}", text, emit, confirm)
             status = "denied" if denied else "ok"
         except asyncio.CancelledError:
@@ -1172,6 +1175,7 @@ def create_app(cfg: Config) -> FastAPI:
         await client.send({"type": "hello", "busy": agent.lock.locked(),
                            "pending": [cid for cid in hub.pending], "context": agent.last_context})
         await client.send(startup.snapshot())
+        await client.send({"type": "sudo_cached", "until": broker.cached_until()})
         if hub.undelivered:
             events, hub.undelivered = hub.undelivered, []
             for event in events:
@@ -1200,13 +1204,17 @@ def create_app(cfg: Config) -> FastAPI:
                     client.tts = bool(data.get("enabled"))
                 elif t == "password":
                     # Passwort nur an den wartenden sudo weiterreichen – nie loggen oder speichern
-                    broker.answer(str(data.get("id", "")), data.get("password") or None)
+                    broker.answer(str(data.get("id", "")), data.get("password") or None,
+                                  remember=bool(data.get("remember", True)))
+                elif t == "password_forget":
+                    broker.forget()
                 elif t == "password_cancel":
                     broker.answer(str(data.get("id", "")), None)
                 elif t == "think":
                     hub.think = bool(data.get("enabled"))
-                elif t == "auto_read":
-                    hub.agent.auto_read = bool(data.get("enabled", True))
+                elif t == "auto_mode":
+                    mode = str(data.get("mode", "read"))
+                    hub.agent.auto_mode = mode if mode in ("off", "read", "files") else "read"
                 elif t == "plan_mode":
                     hub.plan_mode = bool(data.get("enabled"))
                 elif t in ("plan_accept", "plan_revise", "plan_discard"):

@@ -369,6 +369,29 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .chip-toggle .i { width: 15px; height: 15px; }
 .chip-toggle:hover { color: var(--text); background: var(--surface-3); }
 .chip-toggle.on { color: var(--accent); background: var(--accent-soft); border-color: rgba(76,194,255,.35); }
+.chip-split { position: relative; }
+.chip-toggle .caret { width: 12px; height: 12px; opacity: .7; margin-left: -2px; }
+#btn-auto.files { color: var(--warn); background: var(--warn-soft); border-color: rgba(245,177,76,.4); }
+.chip-menu {
+  position: absolute; bottom: calc(100% + 10px); right: -40px; width: 300px; padding: 6px; z-index: 40;
+  background: var(--surface-2, #171b24); border: 1px solid var(--border-strong); border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0,0,0,.45); display: flex; flex-direction: column; gap: 2px;
+}
+.chip-menu button {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 9px 11px;
+  border: 0; border-radius: 10px; background: none; color: var(--text); font: inherit; cursor: pointer;
+}
+.chip-menu button:hover { background: var(--surface-3); }
+.chip-menu button.on { background: var(--accent-soft); }
+.chip-menu button.on b::after { content: " ✓"; color: var(--accent); }
+.chip-menu b { font-size: 13.5px; font-weight: 600; }
+.chip-menu small { font-size: 12px; color: var(--muted); line-height: 1.35; }
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 10px; overflow: hidden; flex: none; }
+.seg button { border: 0; background: none; color: var(--muted); font: inherit; font-size: 12.5px; padding: 7px 10px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { color: var(--accent); background: var(--accent-soft); }
+.btn-link { margin-left: auto; border: 0; background: none; color: var(--accent); font: inherit; font-size: 12.5px; cursor: pointer; }
+.pw-remember { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; font-size: 13px; color: var(--text-2); cursor: pointer; }
 #btn-plan.on { color: var(--warn); background: var(--warn-soft); border-color: rgba(245,177,76,.4); }
 .send {
   width: 40px; height: 40px; flex: none; border-radius: 12px; border: none; background: var(--accent); color: #04121c;

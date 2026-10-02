@@ -48,10 +48,16 @@ HTML_EN = [
      'href="#i-sparkles"/></svg><span>Denken<',
      'title="Thinking mode: Jarvis reasons before answering – slower but more thorough."><svg class="i"><use '
      'href="#i-sparkles"/></svg><span>Think<'),
-    ('title="Auto: erkannte lesende Befehle (ls, df, docker ps, git status …) laufen ohne Rückfrage. Aus = jeder '
-     'Shell-Befehl fragt vorher."',
-     'title="Auto: recognised read-only commands (ls, df, docker ps, git status …) run without asking. Off = every '
-     'shell command asks first."'),
+    ('title="Auto-Modus: was ohne Rückfrage laufen darf"', 'title="Auto mode: what may run without asking"'),
+    ('<span id="auto-label">Lesen<', '<span id="auto-label">Read<'),
+    ('<b>Aus</b><small>Jeder Shell-Befehl fragt vorher.</small>',
+     '<b>Off</b><small>Every shell command asks first.</small>'),
+    ('<b>Nur lesen</b><small>Erkannte lesende Befehle (ls, df, docker ps, git status …) laufen ohne Rückfrage.</small>',
+     '<b>Read only</b><small>Recognised read-only commands (ls, df, docker ps, git status …) run without asking.</small>'),
+    ('<b>Lesen + Dateien bearbeiten</b><small>Zusätzlich Dateien im eigenen Home anlegen, schreiben, kopieren, '
+     'verschieben – ohne Root. Löschen und versteckte Dateien fragen weiter.</small>',
+     '<b>Read + edit files</b><small>Also create, write, copy and move files in your own home – without root. '
+     'Deleting and hidden files still ask.</small>'),
     ('title="Senden" aria-label="Senden"', 'title="Send" aria-label="Send"'),
     ('title="Aktuelle Aufgabe abbrechen (Esc)" aria-label="Abbrechen"', 'title="Cancel the current task (Esc)" aria-label="Cancel"'),
     ('>Leertaste halten zum Sprechen · Esc bricht ab · Änderungen am System fragt Jarvis vorher<',
@@ -117,8 +123,16 @@ HTML_EN = [
      '<b>Wake word</b><small>“Hey Jarvis” starts voice input.</small>'),
     ('<b>Planmodus</b><small>Erst einen Plan vorlegen, ausführen nach Freigabe.</small>',
      '<b>Plan mode</b><small>Present a plan first, carry it out once approved.</small>'),
-    ('<b>Lesendes automatisch</b><small>Erkannte lesende Befehle ohne Rückfrage ausführen.</small>',
-     '<b>Read-only automatically</b><small>Run recognised read-only commands without asking.</small>'),
+    ('<b>Auto-Modus</b><small>Was ohne Rückfrage laufen darf.</small>',
+     '<b>Auto mode</b><small>What may run without asking.</small>'),
+    ('data-auto="off">Aus</button><button type="button" data-auto="read">Nur lesen</button><button type="button" '
+     'data-auto="files">+ Dateien<',
+     'data-auto="off">Off</button><button type="button" data-auto="read">Read only</button><button type="button" '
+     'data-auto="files">+ Files<'),
+    ('<b>Root-Passwort</b><em>nicht gemerkt</em><button type="button" class="btn-link hidden" '
+     'id="btn-sudo-forget">Vergessen<',
+     '<b>Root password</b><em>not remembered</em><button type="button" class="btn-link hidden" '
+     'id="btn-sudo-forget">Forget<'),
     ('<b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small>',
      '<b>Thinking mode</b><small>More thorough, but slower.</small>'),
     ('data-mirror="btn-tts">Aus<', 'data-mirror="btn-tts">Off<'),
@@ -141,8 +155,9 @@ HTML_EN = [
     ('Root-Rechte benötigt', 'Root privileges required'),
     ('>Root-Passwort (sudo)<', '>Root password (sudo)<'),
     ('placeholder="Passwort" aria-label="Passwort"', 'placeholder="Password" aria-label="Password"'),
-    ('>Geht direkt an sudo – wird weder gespeichert noch an das Sprachmodell gegeben.<',
-     '>Goes straight to sudo – never stored and never passed to the language model.<'),
+    ('>Geht direkt an sudo – nie auf die Platte und nie an das Sprachmodell.<',
+     '>Goes straight to sudo – never written to disk and never passed to the language model.<'),
+    ('<span id="pw-remember-text">15 Minuten merken<', '<span id="pw-remember-text">Remember for 15 minutes<'),
     ('id="day-close">Schließen<', 'id="day-close">Close<'),
     ('id="reminder-kind">Erinnerung<', 'id="reminder-kind">Reminder<'),
 ]

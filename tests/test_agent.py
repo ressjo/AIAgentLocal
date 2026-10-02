@@ -189,7 +189,7 @@ def test_cached_prompt_counts_are_not_taken_as_prompt_size():
 
 def test_auto_read_off_asks_even_for_read_only_shell(cfg, llm, memory):
     agent = Agent(cfg, llm, memory)
-    agent.auto_read = False
+    agent.auto_mode = "off"
     asked, events = [], []
 
     async def emit(ev):
@@ -202,6 +202,6 @@ def test_auto_read_off_asks_even_for_read_only_shell(cfg, llm, memory):
     run(agent.run('/tool run_shell {"command": "ls"}', emit, confirm))
     run(agent.run("/tool system_info {}", emit, confirm))
     assert len(asked) == 1 and "Auto" in asked[0][3]  # nur der Shell-Befehl fragt
-    agent.auto_read = True
+    agent.auto_mode = "read"
     run(agent.run('/tool run_shell {"command": "ls"}', emit, confirm))
     assert len(asked) == 1

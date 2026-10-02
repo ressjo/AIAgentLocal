@@ -78,6 +78,7 @@ tools:
     - "~"                  # in YAML a bare ~ must be quoted
   nas_paths: []            # e.g. [/mnt/nas, /mnt/nas-media]
   privilege_cmd: dashboard  # dashboard = password field in the dashboard · pkexec = polkit dialog · sudo = NOPASSWD rule only
+  # sudo_remember_minutes: 15  # remember the dashboard password this long (RAM only, never for Telegram/routines); 0 = always ask
   package_manager: auto    # auto | pacman (Arch, Manjaro, EndeavourOS) | apt (Debian, Ubuntu, Mint)
   aur_helper: auto         # auto | yay | paru | none (Arch only)
   shell_timeout: 120

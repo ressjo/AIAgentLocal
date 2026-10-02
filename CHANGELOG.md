@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Auto mode as a drop-down** next to *Think*: *Off*, *Read only* (default) and new **Read + edit files** – also
+  creates, writes, copies and moves files in your own home without asking (no root, no deleting, no hidden files,
+  launchers or credentials; plan mode and untrusted content still ask). Also selectable in Settings → General.
+- **Remember the sudo password** for 15 minutes (`tools.sudo_remember_minutes`, checkbox in the password dialog):
+  in memory only, only after sudo accepted it, only for requests at the computer – never for Telegram or routines.
+  Settings → Status shows how long it is kept and has a *Forget* button.
 - **Activity shows what the model is doing between tools:** one live "Model" row per step with a running timer –
   reading the prompt (how many new tokens, how much is cached, estimated time or real progress with llama-server),
   thinking, writing a tool call (e.g. `write_file` with its size), answering, reloading after image analysis,

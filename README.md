@@ -54,7 +54,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation), upload local files or files sent from the phone |
 | **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, list folders, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional **writing and replying** (SMTP) – To, Cc, subject and text are editable in a dialog before anything is sent |
 | **Plan mode** | **Plan** button: Jarvis thinks it through, only looks things up (read-only) and presents a step-by-step plan – **RUN**, **CHANGE** (say what should be different) or **DISCARD**; also by voice ("yes") and via Telegram (`/plan …`) |
-| **Auto (read-only)** | **Auto** button next to *Think* (on by default): recognised read-only shell commands – `ls`, `df`, `docker ps`, `git status`, `nmcli device status`, `apt list --installed`, `journalctl` … – run without asking; anything that changes something still asks. Off = every shell command asks first. The rules live in code, so they cost no prompt context |
+| **Auto mode** | Drop-down button next to *Think*: **Off** – every shell command asks · **Read only** (default) – recognised read-only commands (`ls`, `df`, `docker ps`, `git status`, `nmcli device status`, `apt list --installed`, `journalctl` …) run without asking · **Read + edit files** – also create, write, copy and move files in your own home (`write_file`, `mkdir`, `touch`, `cp`, `mv`, `tee`, `>`), never with root, never deleting, never hidden files (shell start files, autostart, `~/.ssh`, `~/.config` …), launchers (`.desktop`, `~/bin`) or credentials. Plan mode and untrusted content (mail, screen) still ask. The rules live in code, so they cost no prompt context |
 | **Screen & images** | "What's that error message?", "What does this window say?", "Help me with this dialog" – Orbwise takes a screenshot and asks a **local vision model** (e.g. Qwen2.5-VL); also for image files and photos sent from the phone. Nothing leaves your PC |
 | **Telegram** | Chat with Orbwise from your phone (text or voice messages, own chat in the sidebar), reminders also arrive on the phone, confirmations via ✅/❌ buttons, **files in both directions** (PDFs/photos → PC or Paperless, local files and Paperless documents → phone), `/stop` cancels what is running |
 | **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
@@ -594,7 +594,9 @@ Orbwise can run commands on your system, so:
   shell commands that print them, environment variables or Wi-Fi passwords need confirmation.
 - **Root privileges** (`privilege_cmd: dashboard`, default): after your confirmation a **password field** appears
   in the dashboard. It works through `sudo -A` with a small helper that uses a one-time token for exactly that
-  command; the password goes straight to sudo and is never stored, logged or shown to the model. Alternatives:
+  command; the password goes straight to sudo and is never written to disk, logged or shown to the model. With
+  "remember" ticked it is kept in memory for 15 minutes (`tools.sudo_remember_minutes`) for requests at the
+  computer – not for Telegram or routines; Settings → Status shows it and can forget it. Alternatives:
   `pkexec` (desktop polkit dialog) or `sudo` with a NOPASSWD rule.
 - **Shutdown, reboot, suspend, lock** go through systemd/logind and need no password for the active session.
 
@@ -629,6 +631,7 @@ See [SECURITY.md](SECURITY.md) for details and how to report vulnerabilities.
 | `voice.wakeword_threshold` | Wake word sensitivity (lower = more sensitive) |
 | `tools.nas_paths` | Mounted NAS folders |
 | `tools.privilege_cmd` | `dashboard` (password field, default), `pkexec` or `sudo` (NOPASSWD) |
+| `tools.sudo_remember_minutes` | How long the dashboard password is remembered (default 15, RAM only, never for Telegram/routines; 0 = always ask) |
 | `tools.package_manager` | `auto`, `pacman` or `apt` |
 | `tools.max_steps` | Max. tool rounds per request (default 25), then Orbwise summarises and offers to continue |
 | `tools.disabled` | Tools or groups to switch off, e.g. `[sysadmin, open_ports]` |

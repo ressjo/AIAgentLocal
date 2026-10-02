@@ -126,7 +126,9 @@ class Agent:
         self._prefill_tps: dict[str, float] = {}  # gelernte Einlese-Geschwindigkeit je Modell (Token/s)
         self._last_prompt: dict[str, int] = {}  # Prompt-Größe des letzten Schritts (für „neu einzulesen“)
         self._approved_plan = ""  # beim Ausführen: der freigegebene Plan (hängt an der aktuellen Nachricht)
-        self.auto_read = True  # Auto-Knopf: erkannte lesende Shell-Befehle ohne Rückfrage ausführen
+        # Auto-Knopf: "off" = jeder Shell-Befehl fragt, "read" = erkannte lesende Befehle laufen ohne Rückfrage,
+        # "files" = zusätzlich Dateien im eigenen Home anlegen/schreiben/kopieren/verschieben (ohne Root, ohne Löschen)
+        self.auto_mode = "read"
         self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
         self.tools = load_all_tools()
         schemas = tool_schemas(cfg)
@@ -389,6 +391,17 @@ class Agent:
                         "seconds": round(time.monotonic() - started, 1)})
         return answer
 
+    @staticmethod
+    def _file_edit_ok(name: str, args: dict) -> bool:
+        """Auto „Dateien“: Dateiänderung im eigenen Home ohne Root/Löschen (siehe tools/filepolicy.py)."""
+        from .tools.filepolicy import editable_path
+        from .tools.safety import file_edit_ok
+        if name == "write_file":
+            return editable_path(str(args.get("path") or ""))
+        if name == "run_shell":
+            return file_edit_ok(str(args.get("command") or ""))
+        return False
+
     async def _fold(self, emit: Emit, msg_id: str, **kw) -> None:
         conv = self.memory.conversation
         before = conv.turn_tokens()
@@ -561,9 +574,11 @@ class Agent:
             return name, f"Fehlende Parameter: {', '.join(missing)}", f"{name}: Parameter fehlen"
         ctx = ToolContext(cfg=self.cfg, memory=self.memory, emit=emit, call_id=call_id, services=self.services)
         risk, reason = spec.assess(ctx, args)
+        if risk == CONFIRM and self.auto_mode == "files" and not self._plan and self._file_edit_ok(name, args):
+            risk, reason = SAFE, prompts.text(self.cfg, "auto_files")
         if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED:
             risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
-        if risk == SAFE and name == "run_shell" and not self.auto_read:
+        if risk == SAFE and name == "run_shell" and self.auto_mode == "off":
             risk, reason = CONFIRM, prompts.text(self.cfg, "auto_read_off")
         args_str = json.dumps(args, ensure_ascii=False)
         await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": reason,

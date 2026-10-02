@@ -407,6 +407,56 @@ def classify_command(command: str) -> tuple[str, str]:
     return SAFE, T("nur lesender Befehl", "read-only command")
 
 
+def file_edit_ok(command: str) -> bool:
+    """Auto-Modus „Dateien bearbeiten“: besteht der Befehl nur aus lesenden Teilen und Dateiänderungen im eigenen
+    Home (anlegen, schreiben, kopieren, verschieben) – ohne Root, Löschen, Zugangsdaten oder Befehlsersetzung?"""
+    from .filepolicy import shell_edits_ok
+
+    cmd = command.strip()
+    if not cmd or "$(" in cmd or "`" in cmd or SECRET_VARS.search(cmd) or re.search(r"\benviron\b", cmd):
+        return False
+    if any(p.search(cmd) for p, _ in BLOCK_PATTERNS) or any(p.search(cmd) for p, _ in WARN_PATTERNS):
+        return False
+    try:
+        tokens = _tokens(cmd)
+    except ValueError:
+        return False
+    cwd = os.path.expanduser("~")
+    edits: list[tuple[str, list[str], str]] = []
+    redirects: list[tuple[str, str]] = []
+    for seg in _segments(tokens):
+        core, root = _strip_wrappers(seg)
+        if root:
+            return False
+        for i, t in enumerate(seg[:-1]):
+            if t == "<" and _reads_secret([seg[i + 1]], cwd, recursive=False):
+                return False
+        if not core:
+            if any(os.path.basename(t) == "env" for t in seg):
+                return False
+            continue
+        args, skip = [], False
+        for i, t in enumerate(core[1:], 1):
+            if skip:
+                skip = False
+                continue
+            if t in REDIRECTS:
+                redirects.append((core[i + 1] if i + 1 < len(core) else "", cwd))
+                skip = True
+                continue
+            args.append(t)
+        name = os.path.basename(core[0])
+        if name in ("cd", "pushd"):
+            target = next((a for a in args if not a.startswith("-")), "~")
+            cwd = os.path.join(cwd, os.path.expanduser(os.path.expandvars(target)))
+            continue
+        if _prints_secrets(name, args, cwd):
+            return False
+        if not _segment_is_safe(name, args):
+            edits.append((name, args, cwd))
+    return bool(edits or redirects) and shell_edits_ok(edits, redirects)
+
+
 _SUDO_RE = re.compile(r"(^|[;&|(]\s*|\s)sudo((?:\s+(?:-[ugpCrtUDRTh]\s+[^\s-]\S*|-[A-Za-z]+))*)\s+")
 # Optionen mit Wert (z. B. -u root) bleiben erhalten; -n/-S/-A werden durch den gewählten Modus ersetzt
 _SUDO_OWN_FLAGS = re.compile(r"\s+-[nSA]+\b")

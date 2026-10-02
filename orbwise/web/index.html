@@ -107,7 +107,14 @@
           <button type="button" class="mic" id="btn-mic" title="Halten zum Sprechen (Leertaste) · kurz tippen = zuhören bis Stille" aria-label="Mikrofon"><svg class="i"><use href="#i-mic"/></svg></button>
           <input id="input" type="text" autocomplete="off" placeholder="Frag Jarvis oder sag „Hey Jarvis“ …">
           <button type="button" class="chip-toggle" id="btn-plan" title="Planmodus: Jarvis schaut nur lesend nach und legt erst einen Plan vor – ausgeführt wird nach deiner Freigabe."><svg class="i"><use href="#i-plan"/></svg><span>Plan</span></button>
-          <button type="button" class="chip-toggle" id="btn-auto" title="Auto: erkannte lesende Befehle (ls, df, docker ps, git status …) laufen ohne Rückfrage. Aus = jeder Shell-Befehl fragt vorher."><svg class="i"><use href="#i-bolt"/></svg><span>Auto</span></button>
+          <div class="chip-split" id="auto-wrap">
+            <button type="button" class="chip-toggle" id="btn-auto" aria-haspopup="menu" aria-expanded="false" title="Auto-Modus: was ohne Rückfrage laufen darf"><svg class="i"><use href="#i-bolt"/></svg><span id="auto-label">Lesen</span><svg class="i caret"><use href="#i-chevron"/></svg></button>
+            <div class="chip-menu hidden" id="auto-menu" role="menu">
+              <button type="button" role="menuitemradio" data-auto="off"><b>Aus</b><small>Jeder Shell-Befehl fragt vorher.</small></button>
+              <button type="button" role="menuitemradio" data-auto="read"><b>Nur lesen</b><small>Erkannte lesende Befehle (ls, df, docker ps, git status …) laufen ohne Rückfrage.</small></button>
+              <button type="button" role="menuitemradio" data-auto="files"><b>Lesen + Dateien bearbeiten</b><small>Zusätzlich Dateien im eigenen Home anlegen, schreiben, kopieren, verschieben – ohne Root. Löschen und versteckte Dateien fragen weiter.</small></button>
+            </div>
+          </div>
           <button type="button" class="chip-toggle" id="btn-think" title="Denkmodus: Jarvis denkt vor der Antwort nach – langsamer, dafür gründlicher."><svg class="i"><use href="#i-sparkles"/></svg><span>Denken</span></button>
           <button type="submit" class="send" id="btn-send" title="Senden" aria-label="Senden"><svg class="i"><use href="#i-send"/></svg></button>
           <button type="button" class="send stop hidden" id="btn-stop" title="Aktuelle Aufgabe abbrechen (Esc)" aria-label="Abbrechen"><svg class="i"><use href="#i-stop"/></svg></button>
@@ -279,8 +286,8 @@
             <button class="switch" data-mirror="btn-wake">Aus</button></div>
           <div class="set-row"><div><b>Planmodus</b><small>Erst einen Plan vorlegen, ausführen nach Freigabe.</small></div>
             <button class="switch" data-mirror="btn-plan">Aus</button></div>
-          <div class="set-row"><div><b>Lesendes automatisch</b><small>Erkannte lesende Befehle ohne Rückfrage ausführen.</small></div>
-            <button class="switch" data-mirror="btn-auto">Aus</button></div>
+          <div class="set-row"><div><b>Auto-Modus</b><small>Was ohne Rückfrage laufen darf.</small></div>
+            <div class="seg" id="set-auto"><button type="button" data-auto="off">Aus</button><button type="button" data-auto="read">Nur lesen</button><button type="button" data-auto="files">+ Dateien</button></div></div>
           <div class="set-row"><div><b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small></div>
             <button class="switch" data-mirror="btn-think">Aus</button></div>
           <p class="set-hint">Weitere Einstellungen (Integrationen, Telegram, Mail …) stehen in <code>~/.config/orbwise/config.yaml</code> – <code>orbwise doctor</code> prüft sie.</p>
@@ -290,6 +297,7 @@
             <div class="status-row" id="pill-voice"><i></i><b>Stimme</b><em>–</em></div>
             <div class="status-row" id="pill-mem"><i></i><b>Gedächtnis</b><em>–</em></div>
             <div class="status-row" id="pill-tg"><i></i><b>Telegram</b><em>–</em></div>
+            <div class="status-row" id="pill-sudo"><i></i><b>Root-Passwort</b><em>nicht gemerkt</em><button type="button" class="btn-link hidden" id="btn-sudo-forget">Vergessen</button></div>
           </div>
         </div>
       </div>
@@ -331,7 +339,8 @@
       <pre class="confirm-cmd" id="pw-cmd"></pre>
       <input class="pw-input" id="pw-input" type="password" autocomplete="off" spellcheck="false"
              placeholder="Passwort" aria-label="Passwort">
-      <p class="confirm-reason">Geht direkt an sudo – wird weder gespeichert noch an das Sprachmodell gegeben.</p>
+      <label class="pw-remember hidden" id="pw-remember-row"><input type="checkbox" id="pw-remember" checked> <span id="pw-remember-text">15 Minuten merken</span></label>
+      <p class="confirm-reason">Geht direkt an sudo – nie auf die Platte und nie an das Sprachmodell.</p>
       <div class="modal-actions">
         <button class="btn deny" type="button" id="pw-cancel">Abbrechen <kbd>Esc</kbd></button>
         <button class="btn approve" type="submit">OK <kbd>Enter</kbd></button>

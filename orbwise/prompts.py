@@ -161,6 +161,7 @@ TEXTS = {
         "routine_confirm": "Routine „{name}“: {reason}",
         "context_note": "[Kontext – nicht vom Nutzer geschrieben: Uhrzeit {time}]",
         "auto_read_off": "nur lesend – Auto ist aus, darum frage ich trotzdem",
+        "auto_files": "ändert nur Dateien in deinem Home (Auto: Dateien bearbeiten)",
         "tainted_confirm": "Nach dem Lesen einer E-Mail oder eines Bildschirm-/Bildinhalts – Schutz vor versteckten "
                            "Anweisungen. Nur erlauben, wenn du diese Aktion selbst verlangt hast.",
         "plan_mode": "PLANMODUS: Führe noch nichts aus, was etwas verändert. Du darfst mit lesenden Werkzeugen "
@@ -190,6 +191,7 @@ TEXTS = {
         "routine_confirm": "Routine “{name}”: {reason}",
         "context_note": "[Context – not written by the user: time {time}]",
         "auto_read_off": "read-only – Auto is off, so I ask anyway",
+        "auto_files": "only changes files in your home folder (Auto: edit files)",
         "tainted_confirm": "After reading an e-mail or screen/image content – protection against hidden "
                            "instructions. Only allow it if you asked for this action yourself.",
         "plan_mode": "PLAN MODE: Do not run anything that changes something yet. You may look things up with "

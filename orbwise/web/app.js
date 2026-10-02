@@ -25,10 +25,11 @@
     set(k, v) { try { localStorage.setItem("orbwise." + k, JSON.stringify(v)); } catch { /* egal */ } },
   };
 
+  const AUTO_LABEL = { off: L("Auto aus", "Auto off"), read: L("Lesen", "Read"), files: L("Dateien", "Files") };
   const S = {
     ws: null, connected: false, retry: 0,
     serverState: "idle", substate: "",
-    tts: store.get("tts", true), wake: store.get("wake", false), think: store.get("think", false), auto: store.get("auto", true), plan: store.get("plan", false),
+    tts: store.get("tts", true), wake: store.get("wake", false), think: store.get("think", false), autoMode: store.get("autoMode", store.get("auto", true) === false ? "off" : "read"), plan: store.get("plan", false),
     voiceName: store.get("voice", ""), fxOn: store.get("fx", true), fxAmount: store.get("fxAmount", 0.6),
     recording: false, transcribing: false, streamMic: false,
     playing: false, confirm: null, confirmListenSent: false,
@@ -214,7 +215,10 @@
     $("btn-wake").classList.toggle("on", S.wake);
     $("btn-tts").classList.toggle("on", S.tts);
     $("btn-think").classList.toggle("on", S.think);
-    $("btn-auto").classList.toggle("on", S.auto);
+    $("btn-auto").classList.toggle("on", S.autoMode !== "off");
+    $("btn-auto").classList.toggle("files", S.autoMode === "files");
+    $("auto-label").textContent = AUTO_LABEL[S.autoMode];
+    document.querySelectorAll("[data-auto]").forEach((b) => b.classList.toggle("on", b.dataset.auto === S.autoMode));
     $("btn-plan").classList.toggle("on", S.plan);
     // Senden wird während einer Anfrage zum Stopp-Knopf
     const busy = S.connected && (["thinking", "executing", "confirm", "speaking"].includes(s) || S.playing);
@@ -239,7 +243,7 @@
       S.retry = 0;
       send({ type: "tts", enabled: S.tts });
       send({ type: "think", enabled: S.think });
-      send({ type: "auto_read", enabled: S.auto });
+      send({ type: "auto_mode", mode: S.autoMode });
       send({ type: "plan_mode", enabled: S.plan });
       sendVoiceSettings();
       if (S.wake && A.micReady) send({ type: "wake", enabled: true });
@@ -361,6 +365,9 @@
         break;
       case "confirm_done":
         closeConfirm(ev.id);
+        break;
+      case "sudo_cached":
+        sudoCached(ev);
         break;
       case "password_request":
         openPassword(ev);
@@ -1068,6 +1075,9 @@
     $("pw-prompt").textContent = ev.retry ? L("Falsches Passwort – bitte erneut eingeben", "Wrong password – please try again")
                                        : L("Root-Passwort (sudo)", "Root password (sudo)");
     $("pw-cmd").textContent = ev.command || "";
+    $("pw-remember-row").classList.toggle("hidden", !ev.remember);
+    $("pw-remember-text").textContent = L(`${ev.remember} Minuten merken (nur hier am Rechner)`,
+                                          `Remember for ${ev.remember} minutes (only on this computer)`);
     $("pw-input").value = "";
     $("pw-modal").classList.remove("hidden");
     setTimeout(() => $("pw-input").focus(), 30);
@@ -1084,7 +1094,8 @@
     if (!pwId) return;
     const password = $("pw-input").value;
     $("pw-input").value = "";  // nicht im DOM stehen lassen
-    send(password ? { type: "password", id: pwId, password } : { type: "password_cancel", id: pwId });
+    send(password ? { type: "password", id: pwId, password, remember: $("pw-remember").checked }
+                  : { type: "password_cancel", id: pwId });
     closePassword();
   });
   $("pw-cancel").onclick = () => {
@@ -1158,15 +1169,53 @@
     refresh();
   };
 
-  $("btn-auto").onclick = () => {
-    S.auto = !S.auto;
-    store.set("auto", S.auto);
-    send({ type: "auto_read", enabled: S.auto });
-    toast(S.auto ? L("Auto an – erkannte lesende Befehle laufen ohne Rückfrage, Veränderndes fragt weiter.",
-                     "Auto on – recognised read-only commands run without asking, changes still ask.")
-                 : L("Auto aus – jeder Shell-Befehl fragt vorher.", "Auto off – every shell command asks first."));
+  // Auto-Modus: aufklappbarer Knopf neben „Denken“ (und Auswahl in den Einstellungen)
+  const autoMenu = $("auto-menu");
+  function setAutoMenu(open) {
+    autoMenu.classList.toggle("hidden", !open);
+    $("btn-auto").setAttribute("aria-expanded", String(open));
+  }
+  function setAutoMode(mode) {
+    S.autoMode = mode;
+    store.set("autoMode", mode);
+    send({ type: "auto_mode", mode });
+    toast({ off: L("Auto aus – jeder Shell-Befehl fragt vorher.", "Auto off – every shell command asks first."),
+            read: L("Auto: nur lesen – erkannte lesende Befehle laufen ohne Rückfrage, Veränderndes fragt weiter.",
+                    "Auto: read only – recognised read-only commands run without asking, changes still ask."),
+            files: L("Auto: lesen + Dateien – Dateien in deinem Home werden ohne Rückfrage angelegt und geändert (ohne Root, Löschen fragt weiter).",
+                     "Auto: read + files – files in your home are created and changed without asking (no root, deleting still asks).") }[mode]);
     refresh();
-  };
+  }
+  $("btn-auto").onclick = (e) => { e.stopPropagation(); setAutoMenu(autoMenu.classList.contains("hidden")); };
+  document.querySelectorAll("[data-auto]").forEach((b) => {
+    b.onclick = (e) => { e.stopPropagation(); setAutoMenu(false); setAutoMode(b.dataset.auto); };
+  });
+  document.addEventListener("click", (e) => { if (!e.target.closest("#auto-wrap")) setAutoMenu(false); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !autoMenu.classList.contains("hidden")) setAutoMenu(false); });
+
+  // Gemerktes sudo-Passwort: Anzeige in den Einstellungen (Status) mit „Vergessen“
+  let sudoUntil = null, sudoTimer = null;
+  function showSudo() {
+    const row = $("pill-sudo");
+    const left = sudoUntil ? Math.ceil((sudoUntil * 1000 - Date.now()) / 60000) : 0;
+    const on = left > 0;
+    row.classList.toggle("warn", on);
+    row.querySelector("em").textContent = on
+      ? L(`gemerkt – noch ${left} min (bis ${new Date(sudoUntil * 1000).toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" })})`,
+          `remembered – ${left} min left (until ${new Date(sudoUntil * 1000).toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" })})`)
+      : L("nicht gemerkt", "not remembered");
+    $("btn-sudo-forget").classList.toggle("hidden", !on);
+    if (!on && sudoTimer) { clearInterval(sudoTimer); sudoTimer = null; }
+  }
+  function sudoCached(ev) {
+    const was = sudoUntil;
+    sudoUntil = ev.until || null;
+    if (sudoUntil && !sudoTimer) sudoTimer = setInterval(showSudo, 30000);
+    if (sudoUntil && !was) toast(L("Root-Passwort gemerkt – Einstellungen → Status zum Vergessen.",
+                                   "Root password remembered – Settings → Status to forget it."));
+    showSudo();
+  }
+  $("btn-sudo-forget").onclick = () => send({ type: "password_forget" });
 
   $("btn-tts").onclick = () => {
     S.tts = !S.tts;

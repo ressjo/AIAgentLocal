@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import subprocess
@@ -216,3 +217,90 @@ def test_power_fallback_to_password_and_delay(cfg, calls):
     assert run(pw.power(ctx(cfg), "lock")) == "Erledigt: den Bildschirm sperren."
     assert calls == [["loginctl", "lock-session"]]
     assert "Unbekannte Aktion" in run(pw.power(ctx(cfg), "explodieren"))
+
+
+# ---------------------------------------------------------------- Passwort eine Zeit lang merken
+
+def _broker(tmp_path, seconds=900):
+    helper = tmp_path / "askpass"
+    helper.write_text("#!/bin/sh\n")
+    asked: list[dict] = []
+
+    async def notify(ev):
+        if ev["type"] == "password_request":
+            asked.append(ev)
+
+    broker = askpass.AskpassBroker(8765, notify=notify, helper=helper, remember_seconds=seconds)
+    return broker, asked
+
+
+async def _sudo(broker, typed: list, accepted: str, remember=True, remote=False):
+    """Simuliert sudo -A: fragt so lange, bis das Passwort stimmt (max. 3×). Liefert die Zahl der Anfragen."""
+    token_var = askpass.REMOTE.set(remote)
+    try:
+        with broker.grant("sudo -A pacman -Syu") as env:
+            token = env["ORBWISE_ASKPASS_TOKEN"]
+            for _ in range(askpass.MAX_USES):
+                task = asyncio.create_task(broker.request(token))
+                await asyncio.sleep(0)
+                if broker.pending:
+                    broker.answer(next(iter(broker.pending)), typed.pop(0) if typed else None, remember)
+                pw = await task
+                if pw is None or pw == accepted:
+                    return pw
+            return None
+    finally:
+        askpass.REMOTE.reset(token_var)
+
+
+def test_password_is_remembered_after_sudo_accepted_it(tmp_path):
+    async def scenario():
+        broker, asked = _broker(tmp_path)
+        assert await _sudo(broker, ["falsch", "richtig"], "richtig") == "richtig"
+        assert len(asked) == 2 and asked[0]["remember"] == 15 and broker.cached_until()
+        # zweiter Root-Befehl: kein Dialog mehr
+        assert await _sudo(broker, [], "richtig") == "richtig" and len(asked) == 2
+        # Telegram/Routinen: gemerktes Passwort gilt nicht – dort wird gefragt
+        await _sudo(broker, ["richtig"], "richtig", remote=True)
+        assert len(asked) == 3 and asked[2]["remember"] == 0
+        broker.forget()
+        assert broker.cached_until() is None
+        await _sudo(broker, ["richtig"], "richtig")
+        assert len(asked) == 4
+
+    run_async(scenario())
+
+
+def test_changed_password_is_forgotten_and_asked_again(tmp_path):
+    async def scenario():
+        broker, asked = _broker(tmp_path)
+        await _sudo(broker, ["alt"], "alt")
+        assert broker.cached_until()
+        assert await _sudo(broker, ["neu"], "neu") == "neu"  # gemerktes „alt“ abgelehnt → Dialog
+        assert len(asked) == 2 and not asked[1]["retry"]  # kein „falsches Passwort“ – der Nutzer hat nichts falsch getippt
+        assert await _sudo(broker, [], "neu") == "neu" and len(asked) == 2  # jetzt ist „neu“ gemerkt
+
+    run_async(scenario())
+
+
+def test_not_remembered_when_unticked_disabled_or_expired(tmp_path):
+    async def scenario():
+        broker, _ = _broker(tmp_path)
+        await _sudo(broker, ["pw"], "pw", remember=False)
+        assert broker.cached_until() is None
+        off, asked = _broker(tmp_path, seconds=0)
+        await _sudo(off, ["pw"], "pw")
+        assert off.cached_until() is None and asked[0]["remember"] == 0
+        short, _ = _broker(tmp_path, seconds=1)
+        await _sudo(short, ["pw"], "pw")
+        assert short.cached_until()
+        short._cached = ("pw", 0)  # abgelaufen
+        assert short.cached_until() is None
+        three, _ = _broker(tmp_path)  # dreimal falsch: nichts merken
+        assert await _sudo(three, ["a", "b", "c"], "richtig") is None and three.cached_until() is None
+
+    run_async(scenario())
+
+
+def run_async(coro):
+    asyncio.run(coro)

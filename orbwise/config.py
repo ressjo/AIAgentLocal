@@ -123,6 +123,9 @@ class ToolsConfig(BaseModel):
     # "dashboard" (Passwortfeld in der Orbwise-Oberfläche, sudo -A), "pkexec" (Polkit-Dialog des Systems)
     # oder "sudo" (sudo -n, benötigt NOPASSWD-Regel)
     privilege_cmd: str = "dashboard"
+    # so lange merkt sich Orbwise das im Dashboard eingegebene Passwort (nur im Arbeitsspeicher, nur für Aufträge
+    # am Rechner – nie für Telegram/Routinen); 0 = jedes Mal fragen
+    sudo_remember_minutes: int = 15
     # "auto" (erkennen), "pacman" (Arch/Manjaro/EndeavourOS) oder "apt" (Debian/Ubuntu/Mint)
     package_manager: str = "auto"
     # "auto" (yay/paru suchen), "yay", "paru" oder "none"

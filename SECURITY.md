@@ -13,7 +13,14 @@ Orbwise can run commands on your computer, so its safety model matters.
   `chmod -R` on `/`) are never executed; risky ones such as piping a download into a shell or partitioning
   tools are flagged with an extra warning in the confirmation dialog.
 - **Root access** goes through `sudo -A` with a one-time token per command; the password is typed into the
-  dashboard, handed straight to sudo and never stored, logged or shown to the language model.
+  dashboard, handed straight to sudo and never written to disk, logged or shown to the language model. If you tick
+  "remember" (default), Orbwise keeps it **in memory only** for `tools.sudo_remember_minutes` (default 15, like
+  sudo itself) and answers sudo with it – only once sudo accepted it, only for requests given at the computer
+  (never for Telegram or routines), and every root command still needs your confirmation. "Forget" in
+  Settings → Status, a changed password or the timeout drops it. Python cannot wipe strings from memory, so a
+  process memory dump during that window could contain it – set `sudo_remember_minutes: 0` if that matters to you.
+- **Auto mode "read + edit files"** only lets file changes through that stay in your own home, need no root, delete
+  nothing and do not touch hidden files, launchers or credentials; everything else asks as before.
 - **Secrets stay put.** Files with keys and passwords (`~/.ssh`, `~/.gnupg`, password stores and keyrings,
   browser profiles, `.aws`/`.kube`/`.docker`, `*.pem`/`*.key`/`*.kdbx`, `.env`, Orbwise's own config, …) are
   never read by `read_file`, sent to the phone or uploaded – the resolved path is checked, so symlinks don't help.
