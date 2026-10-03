@@ -7,7 +7,7 @@ import re
 import threading
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 
@@ -31,8 +31,9 @@ class Reminder:
             day = "heute"
         elif when.date() == today + timedelta(days=1):
             day = "morgen"
-        else:
-            day = when.strftime("%d.%m.%Y")
+        else:  # mit Wochentag – so fällt ein falsch verstandenes Datum sofort auf
+            names = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
+            day = f"{names[when.weekday()]}, {when.strftime('%d.%m.%Y')}"
         kind = "Timer" if self.kind == "timer" else "Erinnerung"
         return f"{kind} {day} um {when.strftime('%H:%M')} Uhr: {self.text} (ID {self.id})"
 
@@ -127,4 +128,12 @@ def parse_when(in_minutes: float = 0, at: str = "", now: datetime | None = None)
     if m:
         due = datetime(now.year, int(m.group(2)), int(m.group(1)), int(m.group(3)), int(m.group(4)))
         return due if due > now else due.replace(year=now.year + 1)
-    raise ValueError(f"Zeitangabe '{at}' nicht verstanden (Format z. B. '2026-10-01 14:30' oder '14:30').")
+    from .dates import resolve  # „nächsten Dienstag 9:00“, „übermorgen abends“, „in 2 Wochen“ …
+    when = resolve(at, now.date())
+    if when is not None:
+        due = when.datetime(default=time(9, 0))
+        if when.at is None and when.day == now.date():
+            raise ValueError("Bitte eine Uhrzeit für heute angeben (z. B. '18:00').")
+        return due
+    raise ValueError(f"Zeitangabe '{at}' nicht verstanden (Format z. B. '2026-10-01 14:30', '14:30' oder "
+                     "'nächsten Dienstag 9:00').")

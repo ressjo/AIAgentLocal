@@ -23,7 +23,7 @@ async def set_reminder(
     ctx: ToolContext,
     text: Annotated[str, "Woran erinnert werden soll, z. B. 'Pizza aus dem Ofen holen'"],
     in_minutes: Annotated[float, "In wie vielen Minuten (z. B. 20; 0.5 = 30 Sekunden)"] = 0,
-    at: Annotated[str, "Oder fester Zeitpunkt: 'YYYY-MM-DD HH:MM' bzw. nur 'HH:MM' für heute/morgen"] = "",
+    at: Annotated[str, "Oder Zeitpunkt: 'YYYY-MM-DD HH:MM', 'HH:MM' oder wie gesagt, z. B. 'nächsten Dienstag 9:00'"] = "",
     timer: Annotated[bool, "true für einen Timer (Kurzzeitwecker) statt einer Erinnerung"] = False,
 ) -> str:
     try:

@@ -25,18 +25,22 @@ async def forget(ctx: ToolContext, query: Annotated[str, "Suchtext des zu lösch
 
 
 @tool("Durchsucht das Langzeitgedächtnis (frühere Gespräche, Tageszusammenfassungen, Fakten). Mit 'date' "
-      "(YYYY-MM-DD) wird das Protokoll bzw. die Zusammenfassung dieses Tages geladen – relative Angaben wie "
-      "'letzten Dienstag' vorher anhand des heutigen Datums umrechnen.")
+      "wird das Protokoll bzw. die Zusammenfassung dieses Tages geladen – relative Angaben wie 'letzten Dienstag' "
+      "direkt übergeben.")
 async def recall(
     ctx: ToolContext,
     query: Annotated[str, "Wonach gesucht wird"] = "",
-    date: Annotated[str, "Optional: Tag im Format YYYY-MM-DD"] = "",
+    date: Annotated[str, "Optional: Tag als YYYY-MM-DD oder wie gesagt, z. B. 'letzten Dienstag', 'vor 2 Wochen'"] = "",
 ) -> str:
     mem = ctx.memory
     parts = []
+    if date and not valid_day(date):
+        from ..dates import resolve
+        when = resolve(date, future=False)  # Rückblick: „Dienstag“ = der letzte Dienstag
+        if when is None:
+            return "Datum nicht verstanden – bitte YYYY-MM-DD oder z. B. 'letzten Dienstag'."
+        date = when.day.isoformat()
     if date:
-        if not valid_day(date):
-            return "Ungültiges Datum, bitte YYYY-MM-DD verwenden."
         summary = mem.summaries.read(date)
         journal = mem.journal.read(date)
         if summary:

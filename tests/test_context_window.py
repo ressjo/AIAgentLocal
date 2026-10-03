@@ -13,7 +13,7 @@ from conftest import run
 from fastapi.testclient import TestClient
 
 from orbwise import prompts, server
-from orbwise.agent import Agent
+from orbwise.agent import SUMMARY_MIN, Agent
 from orbwise.config import ProfileConfig
 from orbwise.memory.context import est_tokens, msg_tokens
 from orbwise.tools import proc
@@ -163,8 +163,8 @@ def test_long_task_compresses_rarely_and_continues(cfg, memory, tmp_path, stamps
     assert 1 <= len(compactions) <= 24 // 4
     sizes = [request_tokens(tools, msgs) for tools, msgs, _ in llm.requests]
     assert max(sizes) <= 16384  # nie übergelaufen
-    for tools, msgs, max_tokens in compactions:  # die Zusammenfassung passt mit hinein, mindestens summary_floor
-        assert max_tokens >= agent.summary_floor() and request_tokens(tools, msgs) + max_tokens <= 16384
+    for tools, msgs, max_tokens in compactions:  # die Zusammenfassung passt mit hinein (knapp: kürzer, ≥ 500)
+        assert max_tokens >= SUMMARY_MIN and request_tokens(tools, msgs) + max_tokens <= 16384
     # Zwischen den Komprimierungen nur hinten verlängert (Brüche nur direkt nach einer Komprimierung)
     reqs = [(t, m) for t, m, _ in llm.requests]
     breaks = [i for i in range(1, len(reqs)) if not extends(reqs[i - 1], reqs[i])]

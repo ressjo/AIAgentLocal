@@ -190,7 +190,11 @@ class RoutineStore:
             try:
                 once = date.fromisoformat(str(day).strip()).isoformat()
             except ValueError:
-                raise ValueError(f"Datum '{day}' bitte als YYYY-MM-DD angeben.") from None
+                from .dates import resolve
+                when = resolve(str(day))
+                if when is None:
+                    raise ValueError(f"Datum '{day}' nicht verstanden (YYYY-MM-DD oder z. B. 'nächsten Freitag').") from None
+                once = when.day.isoformat()
         return {"name": (name or task)[:60], "task": task, "time": parse_time(at),
                 "days": [] if once else parse_days(days), "date": once}
 

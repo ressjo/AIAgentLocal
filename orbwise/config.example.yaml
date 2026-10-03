@@ -10,6 +10,7 @@ port: 8765
 assistant_name: Jarvis
 user_name: ""            # how Jarvis should address you, e.g. "Alex"
 persona_extra: ""        # extra personality instructions, e.g. "Call me 'boss'."
+# holiday_region: BW      # German state for regional public holidays (date_info), empty = nationwide only
 
 llm:
   base_url: http://localhost:11434   # Ollama (always used for the memory embeddings, too)

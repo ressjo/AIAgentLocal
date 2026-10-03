@@ -83,7 +83,12 @@ def parse_day(text: str, today: date | None = None) -> date:
     if m:
         d = date(today.year, int(m.group(2)), int(m.group(1)))
         return d if d >= today else d.replace(year=today.year + 1)
-    raise CalendarError(f"Datum '{text}' nicht verstanden (z. B. 2026-10-03, 03.10.2026, heute, morgen).")
+    from ..dates import resolve  # „nächsten Dienstag“, „in 2 Wochen“, „14. März“ …
+    when = resolve(text, today)
+    if when is not None:
+        return when.day
+    raise CalendarError(f"Datum '{text}' nicht verstanden (z. B. 2026-10-03, 03.10.2026, heute, morgen, "
+                        "nächsten Dienstag).")
 
 
 def parse_start(text: str, today: date | None = None) -> tuple[datetime | date, bool]:
@@ -98,6 +103,10 @@ def parse_start(text: str, today: date | None = None) -> tuple[datetime | date, 
             raise CalendarError(f"Uhrzeit in '{text}' ungültig.")
         day = parse_day(m.group(1), today)
         return datetime.combine(day, datetime.min.time(), tzinfo=local_tz()).replace(hour=hour, minute=minute), False
+    from ..dates import resolve
+    when = resolve(t, today or date.today())
+    if when is not None and when.at is not None:  # „nächsten Dienstag um 9“
+        return datetime.combine(when.day, when.at, tzinfo=local_tz()), False
     return parse_day(t, today), True
 
 
@@ -403,7 +412,7 @@ async def calendar_free(
 async def calendar_add(
     ctx: ToolContext,
     title: Annotated[str, "Titel, z. B. 'Zahnarzt'"],
-    start: Annotated[str, "Beginn: 'YYYY-MM-DD HH:MM' (oder nur 'YYYY-MM-DD' für ganztägig)"],
+    start: Annotated[str, "Beginn: 'YYYY-MM-DD HH:MM' oder wie gesagt ('nächsten Dienstag 14:00'); nur ein Datum = ganztägig"],
     duration_minutes: Annotated[int, "Dauer in Minuten (Standard 60; bei ganztägig ignoriert)"] = 60,
     end: Annotated[str, "Optional: Ende 'YYYY-MM-DD HH:MM' statt Dauer; ganztägig: letzter Tag 'YYYY-MM-DD'"] = "",
     location: Annotated[str, "Optional: Ort"] = "",

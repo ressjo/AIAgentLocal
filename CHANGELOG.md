@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Dates worked out instead of guessed:** `date_info` answers weekday, "next Tuesday", "in 3 weeks", calendar week,
+  days between two dates and German public holidays (`holiday_region`, e.g. `BW`); reminders, calendar, `recall` and
+  routines understand phrases like "next Tuesday 9:00" or "last Friday" directly, and a reminder's confirmation
+  names the weekday.
 - **Paperless: sorting many documents package by package** – `paperless_review_next` hands out 3 documents of the
   inbox (or of the documents without correspondent/type) at a time, with progress saved in a file; after applying
   Jarvis stops and asks whether to continue, and only one package per message is possible, so it can no longer run

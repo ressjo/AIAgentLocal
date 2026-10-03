@@ -11,7 +11,7 @@ import re
 
 # Immer dabei (zusammen ca. 3k Token)
 CORE_GROUPS = {"files", "shell", "web", "apps", "memory_tools", "reminder_tools", "power", "weather", "briefing",
-               "system", "todo_tools", "tool_loader"}
+               "system", "todo_tools", "toolload"}
 
 # Kurzbeschreibung je nachladbarer Gruppe (für load_tools – das Modell weiß so, was es gibt)
 GROUP_LABELS = {

@@ -399,6 +399,8 @@ class Config(BaseModel):
     user_name: str = ""
     # Zusätzliche Persönlichkeits-/Verhaltensanweisungen für den System-Prompt
     persona_extra: str = ""
+    # Bundesland für regionale Feiertage (date_info), z. B. "BW"; leer = nur bundesweite
+    holiday_region: str = ""
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)

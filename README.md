@@ -48,7 +48,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Files** | Find files by name (plocate/fd) or content (ripgrep), list folders, read/write text files, open files and URLs – also on a mounted **NAS** |
 | **Apps & web** | Start installed applications, open websites (with your own shortcuts), web search (official **Brave Search API**, your own SearXNG, or scraping via ddgs), read web pages |
 | **Shell** | Any bash command – read-only ones run directly, changing ones only after confirmation, destructive ones never |
-| **Everyday** | Weather (Open-Meteo), reminders and timers, a **morning briefing** with the items you choose (incl. news and your Paperless inbox) |
+| **Everyday** | Weather (Open-Meteo), reminders and timers, **dates worked out instead of guessed** (weekdays, "next Tuesday", "in 3 weeks", calendar weeks, days between dates, German public holidays – `holiday_region` for your state; reminders, calendar, memory and routines understand such phrases directly), a **morning briefing** with the items you choose (incl. news and your Paperless inbox) |
 | **Routines** | Tasks Orbwise does on its own at set times – "every weekday at 8, search Linux news" – each with its own chat |
 | **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation), upload local files or files sent from the phone |

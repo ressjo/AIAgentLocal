@@ -80,6 +80,7 @@ CODING_GROUPS = {"files", "shell", "web", "memory_tools", "todo_tools"}
 # Denkstufen: Höchstlänge der Denkkette (0 = unbegrenzt). Modelle mit echten Stufen (gpt-oss) bekommen sie dazu.
 THINK_LEVELS = {"low": 512, "medium": 2048, "high": 0}
 CARRY_SHARE = 0.2  # so viel vom Fenster dürfen die wörtlich mitgenommenen letzten Schritte belegen
+SUMMARY_MIN = 500  # kürzeste Zusammenfassung, wenn der Platz knapp ist
 INSTRUCTION_RESERVE = 400  # Platz für die Komprimierungs-Anweisung (~350 Token)
 # Werkzeug-Aufruf als Text: llama-server gibt ihn bei tool_choice "none" als Inhalt zurück
 RAW_TOOL_CALL = re.compile(r'\s*(<tool_call>|<function=|\[TOOL_CALLS\]|\{\s*"name"\s*:)')
@@ -676,8 +677,12 @@ class Agent:
         if open_question:
             messages = messages[:-1]
         # Zusammenfassung so lang, wie Platz ist (spät komprimiert = etwas kürzer), aber mindestens summary_floor
-        free = window - before - INSTRUCTION_RESERVE - 100
-        budget = max(self.summary_floor(), min(self.summary_budget(), free))
+        # (gemessen an genau dieser Anfrage: Nachrichten + Werkzeuge)
+        request_t = int((sum(msg_tokens(m) for m in messages) + self.schema_tokens) * ratio)
+        free = window - request_t - INSTRUCTION_RESERVE - 100
+        # knapp (z. B. die letzte Antwort schob den Prompt über die Grenze): lieber kürzer zusammenfassen als
+        # Nachrichten weglassen – das würde den Cache brechen
+        budget = max(SUMMARY_MIN, min(self.summary_budget(), free))
         instruction = prompts.compact_instruction(self.cfg, self.mode, int(budget * 0.6), focus)
         # Passt die Anfrage samt Zusammenfassung nicht (riesige neue Ergebnisse, Server kleiner als gedacht):
         # erst die neuesten Werkzeug-Ergebnisse kürzen (die kennt der Server noch nicht), notfalls Älteres weglassen

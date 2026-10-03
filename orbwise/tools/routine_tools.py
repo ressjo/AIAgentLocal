@@ -79,7 +79,7 @@ async def routine_create(
     time: Annotated[str, "Uhrzeit HH:MM, z. B. 08:00"],
     name: Annotated[str, "Kurzer Name, z. B. 'Linux-News'"] = "",
     days: Annotated[str, "Wochentage: leer = täglich, 'werktags', 'Wochenende' oder z. B. 'Mo, Mi, Fr'"] = "",
-    date: Annotated[str, "Nur für einmalige Routinen: Datum YYYY-MM-DD"] = "",
+    date: Annotated[str, "Nur für einmalige Routinen: Datum YYYY-MM-DD oder z. B. 'nächsten Freitag'"] = "",
 ) -> str:
     try:
         r = store_for(ctx).add(name, task, time, days, date)
