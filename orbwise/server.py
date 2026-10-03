@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import time
@@ -120,8 +121,17 @@ class Hub:
     async def broadcast_tts(self, event: dict) -> None:
         await asyncio.gather(*(c.send(event) for c in list(self.clients) if c.tts))
 
+    def coding(self) -> bool:
+        """Im Coding-Modus spricht Jarvis nicht (keine Sprachausgabe, keine Spracheingabe)."""
+        return self.agent.memory.active.meta.get("mode") == "coding"
+
     async def emit(self, event: dict) -> None:
         t = event.get("type")
+        if self.coding() and t in ("token", "segment_end", "assistant_end", "error", "plan"):
+            if t == "plan":
+                self.plan_pending, self.plan_text = event["id"], event.get("text") or ""
+            await self.broadcast(event)
+            return
         if t == "assistant_start" and event.get("plan"):
             self._plan_msgs = {event["id"]}
         elif t == "token":
@@ -192,8 +202,8 @@ class Hub:
                      approved_plan: str = "") -> None:
         """plan: None = wie der PLAN-Knopf steht; True/False erzwingt (Ausführen/Überarbeiten eines Plans)."""
         text = text.strip()
-        if not text:
-            return
+        if not text or (source == "voice" and self.coding()):
+            return  # im Coding-Modus gibt es keine Spracheingabe
         if self.plan_pending and plan is None and not self.pending:
             # Kurzes „ja/ausführen“ bzw. „nein“ entscheidet über den offenen Plan; alles andere ersetzt ihn
             decision = parse_yes_no(text) if len(text.split()) <= 4 else None
@@ -897,6 +907,7 @@ def create_app(cfg: Config) -> FastAPI:
             llm.switching = None
             await idle_if_free()
         await hub.broadcast({"type": "model_active", "name": name})
+        remember_mode_model(mode_info()["mode"], name)  # gilt ab jetzt für diesen Modus
         return {"ok": True, "active": llm.active}
 
     @app.get("/api/reminders")
@@ -944,16 +955,77 @@ def create_app(cfg: Config) -> FastAPI:
         if agent.lock.locked():
             raise HTTPException(409, "Jarvis arbeitet gerade – bitte kurz warten oder STOP drücken")
 
+    def mode_info() -> dict:
+        conv = memory.active
+        return {"mode": conv.meta.get("mode") or "tools", "project": conv.meta.get("project") or "",
+                "chat_id": conv.chat_id}
+
     async def chat_switched() -> None:
         conv = memory.active
-        await hub.broadcast({"type": "chat_switched", "id": conv.chat_id, "title": conv.meta.get("title", "")})
+        await hub.broadcast({"type": "chat_switched", "id": conv.chat_id, "title": conv.meta.get("title", ""),
+                             **mode_info()})
 
     @app.get("/api/chats")
-    async def chats(q: str = ""):
+    async def chats(q: str = "", mode: str = ""):
         memory.active.save()
         if memory.conversation is not memory.active:
             memory.conversation.save()
-        return memory.chats.list(q)
+        return memory.chats.list(q, mode=mode or mode_info()["mode"])
+
+    # ---------- Modi: Tools (Assistent) und Coding ----------
+    mode_models_file = memory.chats.dir / "mode-models.json"
+
+    def mode_models() -> dict:
+        try:
+            return json.loads(mode_models_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def remember_mode_model(mode: str, name: str) -> None:
+        data = mode_models()
+        data[mode] = name
+        mode_models_file.write_text(json.dumps(data), encoding="utf-8")
+
+    @app.post("/api/mode")
+    async def set_mode(request: Request):
+        mode = str((await request.json()).get("mode", ""))
+        if mode not in ("tools", "coding"):
+            raise HTTPException(400, "Unbekannter Modus")
+        not_busy()
+        old = mode_info()["mode"]
+        if isinstance(llm, LLMRouter) and old != mode and old not in mode_models():
+            remember_mode_model(old, llm.active)  # damit der Rückweg wieder das bisherige Modell nimmt
+        memory.switch_mode(mode)
+        await chat_switched()
+        await hub.broadcast({"type": "chats_changed"})
+        # Eigenes Modell für diesen Modus gewählt? Dann im Hintergrund umschalten
+        target = mode_models().get(mode)
+        if isinstance(llm, LLMRouter) and target and target != llm.active and target in llm.profiles:
+            background.append(asyncio.create_task(switch_model_quietly(target)))
+        return mode_info()
+
+    async def switch_model_quietly(name: str) -> None:
+        with contextlib.suppress(HTTPException):
+            await activate_model(name)
+
+    @app.post("/api/chats/{chat_id}/project")
+    async def chat_project(chat_id: str, request: Request):
+        chat_or_404(chat_id)
+        raw = str((await request.json()).get("path", "")).strip()
+        path = Path(os.path.expanduser(raw)) if raw else None
+        if path is not None and not path.is_dir():
+            raise HTTPException(400, f"Ordner nicht gefunden: {raw}")
+        value = str(path) if path else ""
+        conv = memory._loaded(chat_id)
+        if conv is not None:
+            conv.meta["project"] = value
+            conv.save()
+        else:
+            memory.chats._update_meta(chat_id, project=value)
+        if chat_id == memory.active.chat_id:
+            await chat_switched()
+        await hub.broadcast({"type": "chats_changed"})
+        return {"project": value}
 
     @app.post("/api/chats")
     async def chat_new():
@@ -1173,7 +1245,8 @@ def create_app(cfg: Config) -> FastAPI:
         client.audio = AudioSession(cfg.voice, stt, wake, client.send, lambda t: hub.submit(t, "voice"))
         hub.clients.add(client)
         await client.send({"type": "hello", "busy": agent.lock.locked(),
-                           "pending": [cid for cid in hub.pending], "context": agent.last_context})
+                           "pending": [cid for cid in hub.pending], "context": agent.last_context,
+                           **mode_info()})
         await client.send(startup.snapshot())
         await client.send({"type": "sudo_cached", "until": broker.cached_until()})
         if hub.undelivered:

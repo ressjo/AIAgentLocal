@@ -7,6 +7,7 @@ import asyncio
 import getpass
 import json
 import logging
+import os
 import platform
 import re
 import time
@@ -65,6 +66,8 @@ def prompt_size(stats: dict, estimated: int) -> int:
 
 ANSWER_RESERVE = 1500  # Token, die im Kontextfenster für die Antwort frei bleiben
 THINK_RESERVE = 3000  # mit Denkmodus: die Denkkette belegt dasselbe Fenster
+# Coding-Modus: nur was man zum Programmieren braucht – mehr Kontext bleibt für den Code frei
+CODING_GROUPS = {"files", "shell", "web", "memory_tools"}
 COMPRESS_AT = 0.9  # ab diesem Anteil des Kontextfensters wird eine laufende Aufgabe pausiert und komprimiert
 Emit = Callable[[dict], Awaitable[None]]
 Confirm = Callable[[str, str, dict, str], Awaitable[bool]]
@@ -131,6 +134,7 @@ class Agent:
         self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
         self.tools = load_all_tools()
         self.all_schemas = tool_schemas(cfg)
+        self._coding_schemas: tuple[list[dict], int] | None = None
         self.groups_of = {name: spec.group for name, spec in self.tools.items()}
         self.schemas = self.all_schemas
         self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
@@ -139,10 +143,38 @@ class Agent:
         self.services: dict = {}
 
     # ---------- Prompt ----------
+    @property
+    def mode(self) -> str:
+        return self.memory.mode
+
+    def project_dir(self) -> str | None:
+        """Projektordner des Coding-Chats (falls gesetzt und vorhanden)."""
+        if self.mode != "coding":
+            return None
+        project = self.memory.conversation.meta.get("project") or ""
+        path = Path(os.path.expanduser(project)) if project else None
+        return str(path) if path and path.is_dir() else None
+
+    def tool_allowed(self, name: str) -> bool:
+        return self.mode != "coding" or self.groups_of.get(name, "") in CODING_GROUPS
+
+    def _mode_schemas(self) -> tuple[list[dict], int]:
+        if self.mode != "coding":
+            return self.all_schemas, self.all_schema_tokens
+        if self._coding_schemas is None:
+            schemas = [s for s in self.all_schemas if self.tool_allowed(s["function"]["name"])]
+            self._coding_schemas = (schemas, est_tokens(json.dumps(schemas, ensure_ascii=False)))
+        return self._coding_schemas
+
     def system_prompt(self) -> str:
         now = datetime.now()
         c = self.cfg
         date, time_ = prompts.format_date(c, now)
+        if self.mode == "coding":
+            return (prompts.coding_prompt(
+                c, name=c.assistant_name, date=date, os=_os_name(), host=platform.node(),
+                user=c.user_name or getpass.getuser(), home=Path.home(),
+                project=self.project_dir() or prompts.text(c, "no_project")) + c.persona_extra).strip()
         base = prompts.base_prompt(
             c, name=c.assistant_name, date=date, time=time_, os=_os_name(), host=platform.node(),
             user=c.user_name or getpass.getuser(), home=Path.home(),
@@ -227,11 +259,12 @@ class Agent:
 
     def choose_tools(self, used_groups: set[str] | None = None) -> None:
         """Bei kleinem Kontextfenster nur passende Tool-Gruppen mitschicken (siehe toolselect.py)."""
-        if self.all_schema_tokens <= 0.3 * self.context_budget():
-            self.schemas, self.schema_tokens = self.all_schemas, self.all_schema_tokens
+        base, base_tokens = self._mode_schemas()
+        if base_tokens <= 0.3 * self.context_budget():
+            self.schemas, self.schema_tokens = base, base_tokens
             return
         users = [m.get("content", "") for m in self.memory.conversation.history if m.get("role") == "user"][-2:]
-        self.schemas = toolselect.select(self.all_schemas, self.groups_of, users, used_groups or set())
+        self.schemas = toolselect.select(base, self.groups_of, users, used_groups or set())
         self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
 
     def history_budget(self) -> int:
@@ -383,31 +416,31 @@ class Agent:
         return answer
 
     @staticmethod
-    def _auto_ok(name: str, args: dict) -> tuple[bool, str]:
+    def _auto_ok(name: str, args: dict, cwd: str | None = None) -> tuple[bool, str]:
         """Auto „Auto“: alles ohne Root – außer Löschen, Ausschalten, Senden ins Netz, Startdateien/Zugangsdaten."""
         from .lang import T
         from .tools.filepolicy import protected_path, writable_path
         from .tools.safety import auto_shell_ok
         if name == "run_shell":
-            return auto_shell_ok(str(args.get("command") or ""))
+            return auto_shell_ok(str(args.get("command") or ""), cwd)
         path = str(args.get("path") or "")
-        if protected_path(path):
+        if protected_path(path, cwd):
             return False, T("ändert Startdateien, Autostart, Zugangsdaten oder Orbwise selbst – fragt auch im "
                             "Auto-Modus", "changes start-up files, autostart, credentials or Orbwise itself – Auto "
                             "still asks")
-        if not writable_path(path):
+        if not writable_path(path, cwd):
             return False, T("nur mit Root-Rechten beschreibbar", "only writable with root privileges")
         return True, ""
 
     @staticmethod
-    def _file_edit_ok(name: str, args: dict) -> bool:
+    def _file_edit_ok(name: str, args: dict, cwd: str | None = None) -> bool:
         """Auto „Dateien“: Dateiänderung im eigenen Home ohne Root/Löschen (siehe tools/filepolicy.py)."""
         from .tools.filepolicy import editable_path
         from .tools.safety import file_edit_ok
         if name == "write_file":
-            return editable_path(str(args.get("path") or ""))
+            return editable_path(str(args.get("path") or ""), cwd)
         if name == "run_shell":
-            return file_edit_ok(str(args.get("command") or ""))
+            return file_edit_ok(str(args.get("command") or ""), cwd)
         return False
 
     def _should_compress(self, hits) -> bool:
@@ -606,20 +639,22 @@ class Agent:
         name = fn.get("name", "")
         call_id = uuid.uuid4().hex[:8]
         spec = get_tool(name)
-        if spec and not spec.is_enabled(self.cfg):
+        if spec and (not spec.is_enabled(self.cfg) or not self.tool_allowed(name)):
             spec = None
         if not spec:
-            return name, f"Unbekanntes Tool '{name}'. Verfügbar: {', '.join(n for n, t in self.tools.items() if t.is_enabled(self.cfg))}", f"{name}: unbekannt"
+            return name, f"Unbekanntes Tool '{name}'. Verfügbar: {', '.join(n for n, t in self.tools.items() if t.is_enabled(self.cfg) and self.tool_allowed(n))}", f"{name}: unbekannt"
         args = coerce_args(spec, fn.get("arguments"))
         missing = missing_args(spec, args)
         if missing:
             return name, f"Fehlende Parameter: {', '.join(missing)}", f"{name}: Parameter fehlen"
-        ctx = ToolContext(cfg=self.cfg, memory=self.memory, emit=emit, call_id=call_id, services=self.services)
+        cwd = self.project_dir()
+        ctx = ToolContext(cfg=self.cfg, memory=self.memory, emit=emit, call_id=call_id, services=self.services,
+                          cwd=cwd)
         risk, reason = spec.assess(ctx, args)
-        if risk == CONFIRM and self.auto_mode == "files" and not self._plan and self._file_edit_ok(name, args):
+        if risk == CONFIRM and self.auto_mode == "files" and not self._plan and self._file_edit_ok(name, args, cwd):
             risk, reason = SAFE, prompts.text(self.cfg, "auto_files")
         elif risk == CONFIRM and self.auto_mode == "auto" and not self._plan and name in ("run_shell", "write_file"):
-            ok, why = self._auto_ok(name, args)
+            ok, why = self._auto_ok(name, args, cwd)
             risk, reason = (SAFE, prompts.text(self.cfg, "auto_full")) if ok else (risk, why or reason)
         if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED:
             risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")

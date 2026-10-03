@@ -16,7 +16,7 @@ import time
 from datetime import datetime
 
 from ..config import MemoryConfig
-from .chats import ChatStore
+from .chats import ChatStore, chat_mode
 from .context import Conversation, est_tokens
 from .files import Facts, Journal, Summaries, day_str
 from .index import Hit, MemoryIndex, split_text
@@ -68,13 +68,30 @@ class Memory:
     def _loaded(self, chat_id: str) -> Conversation | None:
         return next((c for c in (self.conversation, *self._outer) if c.chat_id == chat_id), None)
 
+    @property
+    def mode(self) -> str:
+        """Modus des Chats, in dem gerade gearbeitet wird: "tools" oder "coding"."""
+        return chat_mode(self.conversation.meta)
+
     def new_chat(self) -> Conversation:
-        """Neuer Chat – ist der aktuelle noch leer, wird er weiterverwendet."""
+        """Neuer Chat im selben Modus – ist der aktuelle noch leer, wird er weiterverwendet."""
         if not self.conversation.history:
             return self.conversation
         self.conversation.save()
-        self.conversation = self.chats.create()
+        self.conversation = self.chats.create(mode=self.mode)
         return self.conversation
+
+    def switch_mode(self, mode: str) -> Conversation:
+        """Zwischen Tools- und Coding-Modus wechseln: öffnet den zuletzt benutzten Chat dieses Modus."""
+        if mode != self.mode:
+            self.conversation.save()
+            self.conversation = self.chats.open_active(mode)
+        self.chats.set_mode(mode)
+        return self.conversation
+
+    def set_project(self, path: str) -> None:
+        self.conversation.meta["project"] = path
+        self.conversation.save()
 
     @contextlib.contextmanager
     def in_chat(self, chat_id: str, title: str):
@@ -133,7 +150,7 @@ class Memory:
                 self.index.delete_source(f"summary:{day}")
         self.chats.delete(chat_id)
         if chat_id == self.conversation.chat_id:
-            self.conversation = self.chats.create()
+            self.conversation = self.chats.create(mode=self.mode)
         return days
 
     async def remember(self, fact: str) -> bool:

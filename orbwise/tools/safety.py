@@ -349,7 +349,7 @@ def _prints_secrets(name: str, args: list[str], cwd: str) -> bool:
     return _reads_secret(targets, cwd, recursive)
 
 
-def classify_command(command: str) -> tuple[str, str]:
+def classify_command(command: str, cwd: str | None = None) -> tuple[str, str]:
     cmd = command.strip()
     if not cmd:
         return BLOCKED, T("leerer Befehl", "empty command")
@@ -364,7 +364,7 @@ def classify_command(command: str) -> tuple[str, str]:
     segments = _segments(tokens)
     reasons: list[str] = []
     secrets = T("liest Zugangsdaten (Schlüssel/Passwörter)", "reads credentials (keys/passwords)")
-    cwd = os.path.expanduser("~")  # run_shell startet im Home
+    cwd = cwd or os.path.expanduser("~")  # run_shell startet im Home bzw. im Projektordner
     for seg in segments:
         core, root = _strip_wrappers(seg)
         for i, t in enumerate(seg[:-1]):  # Eingabeumleitung: cat < ~/.ssh/id_rsa
@@ -407,7 +407,7 @@ def classify_command(command: str) -> tuple[str, str]:
     return SAFE, T("nur lesender Befehl", "read-only command")
 
 
-def file_edit_ok(command: str) -> bool:
+def file_edit_ok(command: str, cwd: str | None = None) -> bool:
     """Auto-Modus „Dateien bearbeiten“: besteht der Befehl nur aus lesenden Teilen und Dateiänderungen im eigenen
     Home (anlegen, schreiben, kopieren, verschieben) – ohne Root, Löschen, Zugangsdaten oder Befehlsersetzung?"""
     from .filepolicy import shell_edits_ok
@@ -421,7 +421,7 @@ def file_edit_ok(command: str) -> bool:
         tokens = _tokens(cmd)
     except ValueError:
         return False
-    cwd = os.path.expanduser("~")
+    cwd = cwd or os.path.expanduser("~")
     edits: list[tuple[str, list[str], str]] = []
     redirects: list[tuple[str, str]] = []
     for seg in _segments(tokens):
@@ -497,7 +497,7 @@ def _write_targets(name: str, args: list[str]) -> list[str]:
     return []
 
 
-def auto_shell_ok(command: str, _depth: int = 0) -> tuple[bool, str]:
+def auto_shell_ok(command: str, cwd: str | None = None, _depth: int = 0) -> tuple[bool, str]:
     """Auto-Modus „Auto“: läuft dieser Befehl ohne Rückfrage? Alles ohne Root – außer Löschen, Ausschalten,
     Senden ins Netz, Startdateien/Autostart/Zugangsdaten. Liefert (ok, Grund fürs Nachfragen)."""
     from .filepolicy import protected_path
@@ -524,7 +524,7 @@ def auto_shell_ok(command: str, _depth: int = 0) -> tuple[bool, str]:
         tokens = _tokens(cmd)
     except ValueError:
         return False, T("Befehl konnte nicht sicher analysiert werden", "the command could not be analysed safely")
-    cwd = os.path.expanduser("~")
+    cwd = cwd or os.path.expanduser("~")
     for seg in _segments(tokens):
         core, is_root = _strip_wrappers(seg)
         if is_root:
@@ -557,11 +557,11 @@ def auto_shell_ok(command: str, _depth: int = 0) -> tuple[bool, str]:
             return False, secrets
         if name in SHELLS and "-c" in args:  # bash -c "…": den inneren Befehl genauso prüfen
             inner = args[args.index("-c") + 1] if args.index("-c") + 1 < len(args) else ""
-            ok, why = auto_shell_ok(inner, _depth + 1)
+            ok, why = auto_shell_ok(inner, cwd, _depth + 1)
             if not ok:
                 return ok, why
         if name == "eval":
-            ok, why = auto_shell_ok(" ".join(args), _depth + 1)
+            ok, why = auto_shell_ok(" ".join(args), cwd, _depth + 1)
             if not ok:
                 return ok, why
         if name == "xargs":  # xargs rm …

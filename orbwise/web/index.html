@@ -27,6 +27,9 @@
       <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
       <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8Z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8Z"/></symbol>
       <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7Z"/></symbol>
+      <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></symbol>
+      <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M13.5 4l-3 16"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
       <symbol id="i-plan" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
       <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
@@ -43,6 +46,10 @@
           <span class="brand-text"><span class="brand-name">Jarvis</span><span class="brand-sub">Orbwise · lokal</span></span>
         </div>
         <button class="icon-btn" id="btn-sidebar" title="Seitenleiste ein-/ausklappen" aria-label="Seitenleiste ein-/ausklappen"><svg class="i"><use href="#i-sidebar"/></svg></button>
+      </div>
+      <div class="mode-switch" role="tablist" aria-label="Modus">
+        <button type="button" role="tab" data-mode="tools" class="on" title="Tools: Fragen, Websuche, Paperless, Mail, System bedienen – mit Sprache"><svg class="i"><use href="#i-chat"/></svg><span>Tools</span></button>
+        <button type="button" role="tab" data-mode="coding" title="Coding: nur Dateien, Shell, Web und Gedächtnis – mehr Kontext für Code, ohne Sprache"><svg class="i"><use href="#i-code"/></svg><span>Coding</span></button>
       </div>
       <button class="new-chat" id="chat-new" title="Neuen Chat beginnen (Gedächtnis bleibt erhalten)"><svg class="i"><use href="#i-plus"/></svg><span>Neuer Chat</span></button>
       <div class="side-search">
@@ -65,6 +72,7 @@
       <header class="main-head">
         <button class="icon-btn mobile-only" id="btn-menu" title="Menü" aria-label="Menü"><svg class="i"><use href="#i-sidebar"/></svg></button>
         <div class="chat-title" id="chat-title"></div>
+        <button class="project-chip coding-only" id="project-chip" title="Projektordner für diesen Coding-Chat – Shell und relative Pfade starten dort"><svg class="i"><use href="#i-folder"/></svg><em id="project-label">Projektordner wählen</em></button>
         <div class="head-actions">
           <button class="model-chip" id="pill-llm" title="Sprachmodell wechseln"><i></i><svg class="i"><use href="#i-chip"/></svg><em>–</em><svg class="i caret"><use href="#i-chevron"/></svg></button>
           <button class="icon-btn" id="btn-tts" title="Sprachausgabe an/aus" aria-label="Sprachausgabe"><svg class="i"><use href="#i-volume"/></svg></button>
@@ -89,7 +97,13 @@
         </div>
         <div class="hero">
           <h1 class="greeting" id="greeting">Wie kann ich helfen?</h1>
-          <div class="suggestions" id="suggestions">
+          <div class="suggestions coding-only" id="suggestions-coding">
+            <button class="suggestion" data-text="Gib mir einen Überblick über dieses Projekt: Aufbau, Stack, wie man es baut und testet.">Projekt verstehen</button>
+            <button class="suggestion" data-text="Führe die Tests aus und behebe, was fehlschlägt.">Tests reparieren</button>
+            <button class="suggestion" data-text="Was hat sich seit dem letzten Commit geändert? Prüfe die Änderungen auf Fehler.">Änderungen prüfen</button>
+            <button class="suggestion" data-text="Schreib mir ein kleines Python-Skript, das ">Skript schreiben</button>
+          </div>
+          <div class="suggestions tools-only" id="suggestions">
             <button class="suggestion" data-text="Mach ein Systemupdate">Systemupdate</button>
             <button class="suggestion" data-text="Was ist das für eine Fehlermeldung auf meinem Bildschirm?">Bildschirm erklären</button>
             <button class="suggestion" data-text="Guten Morgen – was steht heute an?">Briefing</button>

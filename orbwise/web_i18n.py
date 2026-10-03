@@ -40,6 +40,24 @@ HTML_EN = [
     ('title="Halten zum Sprechen (Leertaste) · kurz tippen = zuhören bis Stille" aria-label="Mikrofon"',
      'title="Hold to talk (space bar) · tap = listen until silence" aria-label="Microphone"'),
     ('placeholder="Frag Jarvis oder sag „Hey Jarvis“ …"', 'placeholder="Ask Jarvis or say “Hey Jarvis” …"'),
+    ('aria-label="Modus"', 'aria-label="Mode"'),
+    ('title="Tools: Fragen, Websuche, Paperless, Mail, System bedienen – mit Sprache"',
+     'title="Tools: questions, web search, Paperless, mail, running the system – with voice"'),
+    ('title="Coding: nur Dateien, Shell, Web und Gedächtnis – mehr Kontext für Code, ohne Sprache"',
+     'title="Coding: only files, shell, web and memory – more context for code, no voice"'),
+    ('title="Projektordner für diesen Coding-Chat – Shell und relative Pfade starten dort"',
+     'title="Project folder for this coding chat – shell and relative paths start there"'),
+    ('<em id="project-label">Projektordner wählen<', '<em id="project-label">Choose project folder<'),
+    ('data-text="Gib mir einen Überblick über dieses Projekt: Aufbau, Stack, wie man es baut und testet.">Projekt '
+     'verstehen<',
+     'data-text="Give me an overview of this project: structure, stack, how to build and test it.">Understand the '
+     'project<'),
+    ('data-text="Führe die Tests aus und behebe, was fehlschlägt.">Tests reparieren<',
+     'data-text="Run the tests and fix what fails.">Fix the tests<'),
+    ('data-text="Was hat sich seit dem letzten Commit geändert? Prüfe die Änderungen auf Fehler.">Änderungen prüfen<',
+     'data-text="What changed since the last commit? Review the changes for bugs.">Review changes<'),
+    ('data-text="Schreib mir ein kleines Python-Skript, das ">Skript schreiben<',
+     'data-text="Write me a small Python script that ">Write a script<'),
     ('title="Planmodus: Jarvis schaut nur lesend nach und legt erst einen Plan vor – ausgeführt wird nach '
      'deiner Freigabe."><svg class="i"><use href="#i-plan"/></svg><span>Plan<',
      'title="Plan mode: Jarvis only looks things up and presents a plan first – it is carried out once you '

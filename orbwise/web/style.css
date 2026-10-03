@@ -154,6 +154,40 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .app.side-collapsed .nav-item { width: 40px; padding: 0; justify-content: center; }
 .app.side-collapsed .side-head { padding: 2px 0 6px; }
 
+/* ---------- Modus: Tools / Coding ---------- */
+.mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin: 2px 0 10px;
+  border-radius: 12px; background: var(--surface); border: 1px solid var(--border); }
+.mode-switch button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 32px;
+  border: 0; border-radius: 9px; background: none; color: var(--muted); font: inherit; font-size: 13px; font-weight: 550; cursor: pointer; }
+.mode-switch button .i { width: 16px; height: 16px; }
+.mode-switch button:hover { color: var(--text); }
+.mode-switch button.on { background: var(--surface-3); color: var(--text); box-shadow: 0 1px 0 rgba(255,255,255,.04) inset; }
+.mode-switch button[data-mode="coding"].on { color: #b9a8ff; }
+.app.side-collapsed .mode-switch { grid-template-columns: 1fr; width: 44px; }
+.app.side-collapsed .mode-switch span { display: none; }
+.coding-only { display: none !important; }
+.app.coding .coding-only { display: revert !important; }
+.app.coding .tools-only, .app.coding #btn-mic, .app.coding #btn-tts, .app.coding #btn-wake,
+.app.coding .orb-wrap, .app.coding .live-transcript { display: none !important; }
+.app.coding .suggestions.coding-only { display: flex !important; }
+.app.coding .project-chip.coding-only { display: inline-flex !important; }
+.app.coding .chat > * { max-width: 980px; }
+.app.coding .composer { max-width: 980px; }
+.app.coding .main.has-messages .stage { width: auto; bottom: 96px; right: 22px; }
+.app.coding .main.has-messages .chat { padding-right: 24px; }
+.app.coding .main.has-messages .stage-info { margin-top: 0; align-items: flex-end; padding: 4px 10px; border-radius: 10px;
+  background: rgba(24,28,37,.86); border: 1px solid var(--border); }
+.app.coding .main.has-messages .stage-info:has(.substate:empty) .state:is(:empty) { display: none; }
+.app.coding .msg .body { font-size: 14.5px; }
+.app.coding .brand-mark { background: radial-gradient(circle at 35% 35%, #d7ccff, #7c5cff 60%, #2b1f6b); }
+.project-chip { align-items: center; gap: 7px; height: 30px; padding: 0 11px; margin-left: 10px; max-width: 360px;
+  border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-2);
+  font: inherit; font-size: 12.5px; cursor: pointer; }
+.project-chip em { font-style: normal; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-chip.unset em { font-family: inherit; color: var(--muted); }
+.project-chip .i { width: 15px; height: 15px; flex: none; color: #b9a8ff; }
+.project-chip:hover { border-color: rgba(185,168,255,.5); color: var(--text); }
+
 /* ---------- Hauptbereich ---------- */
 .main {
   position: relative; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr);

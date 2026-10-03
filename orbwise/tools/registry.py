@@ -6,9 +6,11 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import os
 import typing
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Annotated, Any, get_args, get_origin
 
 log = logging.getLogger(__name__)
@@ -26,6 +28,12 @@ class ToolContext:
     call_id: str = ""
     # Gemeinsame Dienste des Servers (z. B. "reminders": ReminderStore)
     services: dict = field(default_factory=dict)
+    # Arbeitsordner (Coding-Modus: Projektordner des Chats) – Shell startet dort, relative Pfade beziehen sich darauf
+    cwd: str | None = None
+
+    def path(self, raw: str) -> Path:
+        p = Path(os.path.expandvars(str(raw or ""))).expanduser()
+        return p if p.is_absolute() or not self.cwd else Path(self.cwd) / p
 
     async def output(self, text: str) -> None:
         """Live-Ausgabe eines laufenden Tools an die Oberfläche."""

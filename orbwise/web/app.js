@@ -286,6 +286,7 @@
         S.serverState = ev.busy ? "thinking" : "idle";  // tatsächlichen Zustand übernehmen (auch nach Neuverbinden)
         S.transcribing = false;  // neue Verbindung = neue Audio-Sitzung, eine alte Transkription meldet sich nie mehr
         if (ev.context) showContext(ev.context);
+        applyMode(ev);
         break;
       case "context":
         showContext(ev);
@@ -441,6 +442,7 @@
       case "conversation_reset":
         break;  // Anzeige erledigt chat_switched
       case "chat_switched":
+        applyMode(ev);
         openChatView(ev);
         break;
       case "chats_changed":
@@ -1028,7 +1030,7 @@
   let pttActive = false;
 
   async function startPtt() {
-    if (pttActive) return;
+    if (pttActive || S.mode === "coding") return;  // Coding-Modus: keine Spracheingabe
     if (!(await initMic())) return;
     pttActive = true;
     pttStart = performance.now();
@@ -2161,6 +2163,60 @@
   });
   $("chat-new").onclick = () => newChat();
 
+  // ---------------------------------------------------------------- Modi: Tools (Assistent) / Coding
+  // Getrennte Chat-Verläufe; Coding lädt nur Dateien, Shell, Web und Gedächtnis und hat keine Sprache.
+  const MODE_TEXT = {
+    tools: { placeholder: L("Frag Jarvis oder sag „Hey Jarvis“ …", "Ask Jarvis or say “Hey Jarvis” …"),
+             hint: L("Leertaste halten zum Sprechen · Esc bricht ab · Änderungen am System fragt Jarvis vorher",
+                     "Hold the space bar to talk · Esc cancels · Jarvis asks before changing your system") },
+    coding: { placeholder: L("Beschreib die Aufgabe – Code, Fehler, Idee …", "Describe the task – code, bug, idea …"),
+              hint: L("Coding: Dateien, Shell, Web und Gedächtnis · Esc bricht ab · Auto-Modus regelt, was ohne Rückfrage läuft",
+                      "Coding: files, shell, web and memory · Esc cancels · the auto mode decides what runs without asking") },
+  };
+  function applyMode(ev) {
+    if (!ev || !ev.mode) return;
+    const was = S.mode;
+    S.mode = ev.mode;
+    S.chatId = ev.chat_id || ev.id || S.chatId;
+    S.project = ev.project || "";
+    app.classList.toggle("coding", S.mode === "coding");
+    document.querySelectorAll(".mode-switch [data-mode]").forEach((b) => {
+      b.classList.toggle("on", b.dataset.mode === S.mode);
+      b.setAttribute("aria-selected", String(b.dataset.mode === S.mode));
+    });
+    $("input").placeholder = MODE_TEXT[S.mode].placeholder;
+    document.querySelector(".composer-hint").textContent = MODE_TEXT[S.mode].hint;
+    const chip = $("project-chip");
+    chip.classList.toggle("unset", !S.project);
+    $("project-label").textContent = S.project ? S.project.replace(/^\/home\/[^/]+/, "~") : L("Projektordner wählen", "Choose project folder");
+    if (was !== S.mode) {
+      if (S.mode === "coding") {  // keine Sprache: Vorlesen stoppen, Wake-Word ruhen lassen
+        stopSpeech(true);
+        if (S.wake) send({ type: "wake", enabled: false });
+      } else if (was === "coding" && S.wake && A.micReady) send({ type: "wake", enabled: true });
+      greet();
+    }
+    refresh();
+  }
+  document.querySelectorAll(".mode-switch [data-mode]").forEach((b) => {
+    b.onclick = () => {
+      if (b.dataset.mode === S.mode) return;
+      api("POST", "/api/mode", { mode: b.dataset.mode })
+        .then(() => toast(b.dataset.mode === "coding"
+          ? L("Coding-Modus – nur Dateien, Shell, Web und Gedächtnis, ohne Sprache. Eigene Chats.", "Coding mode – only files, shell, web and memory, no voice. Separate chats.")
+          : L("Tools-Modus – alle Werkzeuge und Sprache.", "Tools mode – all tools and voice.")))
+        .catch(() => {});  // Fehler zeigt api() schon an
+    };
+  });
+  $("project-chip").onclick = () => {
+    const path = window.prompt(L("Projektordner für diesen Chat (leer = keiner):", "Project folder for this chat (empty = none):"),
+                               S.project || "~/");
+    if (path === null || !S.chatId) return;
+    api("POST", `/api/chats/${S.chatId}/project`, { path: path.trim() })
+      .then((r) => toast(r.project ? L(`Projektordner: ${r.project}`, `Project folder: ${r.project}`) : L("Kein Projektordner.", "No project folder.")))
+      .catch(() => {});  // Fehler zeigt api() schon an
+  };
+
   function newChat() {
     api("POST", "/api/chats").catch(() => {});
   }
@@ -2285,7 +2341,8 @@
     const part = h < 5 ? L("Gute Nacht", "Good night") : h < 11 ? L("Guten Morgen", "Good morning")
       : h < 18 ? L("Guten Tag", "Good afternoon") : L("Guten Abend", "Good evening");
     const user = S.status && S.status.user ? ", " + S.status.user : "";
-    $("greeting").textContent = `${part}${user} – ${L("wie kann ich helfen?", "how can I help?")}`;
+    $("greeting").textContent = S.mode === "coding" ? L("Woran arbeiten wir?", "What are we working on?")
+      : `${part}${user} – ${L("wie kann ich helfen?", "how can I help?")}`;
   }
   setInterval(greet, 60000);
   greet();

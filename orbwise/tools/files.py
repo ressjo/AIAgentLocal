@@ -95,7 +95,7 @@ async def find_files(
     extension: Annotated[str, "Optional: Dateiendung ohne Punkt, z. B. pdf"] = "",
     max_results: Annotated[int, "Maximale Anzahl Treffer (Standard 25)"] = 25,
 ) -> str:
-    roots = [Path(path).expanduser()] if path else ctx.cfg.tools.search_paths
+    roots = [ctx.path(path)] if path else ([Path(ctx.cwd)] if ctx.cwd else ctx.cfg.tools.search_paths)
     paths = await _find(ctx, query, roots, extension, use_locate=not path)
     if not paths:
         return f"Keine Dateien zu '{query}' gefunden."
@@ -149,13 +149,13 @@ async def search_file_contents(
     extension: Annotated[str, "Optional: Dateiendung ohne Punkt"] = "",
     max_results: Annotated[int, "Maximale Anzahl Treffer (Standard 25)"] = 25,
 ) -> str:
-    roots = [Path(path).expanduser()] if path else ctx.cfg.tools.search_paths
+    roots = [ctx.path(path)] if path else ([Path(ctx.cwd)] if ctx.cwd else ctx.cfg.tools.search_paths)
     return await _grep(ctx, query, roots, extension, max_results)
 
 
 @tool("Listet den Inhalt eines Verzeichnisses auf.")
 async def list_directory(ctx: ToolContext, path: Annotated[str, "Verzeichnis, z. B. ~/Downloads"]) -> str:
-    p = Path(path).expanduser()
+    p = ctx.path(path)
     if not p.is_dir():
         return f"{p} ist kein Verzeichnis."
     try:
@@ -166,14 +166,14 @@ async def list_directory(ctx: ToolContext, path: Annotated[str, "Verzeichnis, z.
 
 
 def _read_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
-    if is_secret_path(str(args.get("path") or "")):
+    if is_secret_path(str(ctx.path(args.get("path") or "")) if args.get("path") else ""):
         return BLOCKED, secret_reason()
     return SAFE, ""
 
 
 @tool("Liest eine Textdatei (z. B. Konfiguration, Log, Notiz) und gibt den Inhalt zurück.", risk=_read_risk)
 async def read_file(ctx: ToolContext, path: Annotated[str, "Pfad zur Datei"]) -> str:
-    p = Path(path).expanduser()
+    p = ctx.path(path)
     if not p.is_file():
         return f"Datei nicht gefunden: {p}"
     try:
@@ -187,7 +187,7 @@ async def read_file(ctx: ToolContext, path: Annotated[str, "Pfad zur Datei"]) ->
 
 async def _resolve_target(ctx: ToolContext, target: str) -> tuple[Path | None, str]:
     """Pfad direkt verwenden oder – bei bloßem Dateinamen – im Home/NAS danach suchen."""
-    p = Path(target).expanduser()
+    p = ctx.path(target)
     if p.is_absolute() and p.exists():
         return p, ""
     if not p.is_absolute() and (Path.home() / p).exists():
@@ -261,7 +261,7 @@ async def _mime_default(ctx: ToolContext, target: str) -> str:
 
 
 def _write_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
-    p = Path(args.get("path", "")).expanduser()
+    p = ctx.path(args.get("path", ""))
     return (CONFIRM, f"{'überschreibt' if p.exists() else 'erstellt'} {p}") if args.get("path") else (SAFE, "")
 
 
@@ -272,7 +272,7 @@ async def write_file(
     content: Annotated[str, "Inhalt der Datei"],
     append: Annotated[bool, "true = an bestehende Datei anhängen"] = False,
 ) -> str:
-    p = Path(path).expanduser()
+    p = ctx.path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a" if append else "w", encoding="utf-8") as f:
         f.write(content)

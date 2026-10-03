@@ -8,7 +8,7 @@ from .safety import apply_privilege, classify_command
 
 
 def _risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
-    return classify_command(args.get("command", ""))
+    return classify_command(args.get("command", ""), ctx.cwd)
 
 
 @tool(
@@ -24,5 +24,5 @@ async def run_shell(
 ) -> str:
     timeout = timeout_seconds if timeout_seconds > 0 else ctx.cfg.tools.shell_timeout
     command = apply_privilege(command, ctx.cfg.tools.privilege_cmd)
-    rc, out = await proc.run(ctx, command, timeout=min(timeout, ctx.cfg.tools.update_timeout))
+    rc, out = await proc.run(ctx, command, timeout=min(timeout, ctx.cfg.tools.update_timeout), cwd=ctx.cwd)
     return proc.format_result(rc, out, ctx.cfg.tools.max_output_chars)

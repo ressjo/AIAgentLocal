@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Tools and Coding mode** (switch top left): Coding loads only files, shell, web and memory tools (≈ 2k instead of
+  ≈ 10k tokens of tool descriptions), uses a developer prompt, has no voice (no read-aloud, push-to-talk or wake word)
+  and a wider chat. Separate chat histories per mode, a project folder per coding chat (working directory for shell
+  and relative paths), and optionally its own model per mode (remembered when you pick one in that mode).
 - **Auto mode as a drop-down** next to *Think*: *Off*, *Read only* (default), **Read + edit files** and **Auto**
   (everything without root – `python`, `make`, `git commit`, `pip --user` … – runs without asking; deleting, sudo,
   shutting down, sending over the network, start-up files and credentials still ask). *Read + edit files* – also
