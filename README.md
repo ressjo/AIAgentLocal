@@ -193,16 +193,17 @@ came from the cache.
 
 **What happens when the context is full?** Nothing is lost, and it happens rarely – like *auto-compact* in Claude Code:
 
-1. Before a request would come close to the model's window (16k: from ~14.2k tokens, 87 %; with thinking ~13.4k;
-   32k: ~29k), Orbwise pauses once and lets the model write a **structured summary**: the request, important facts and
+1. Only when a request would come close to the model's window (16k: from ~14.9k tokens, 91 %; with thinking
+   ~13.4k, because the reasoning needs room; 32k: ~30.4k) – the next step still needs room for its answer – Orbwise
+   pauses once and lets the model write a **structured summary**: the request, important facts and
    values, files and commands, errors and fixes, decisions, all your messages, what is still open, the current work
    and the next step. The request for it is the current prompt plus one instruction, so the model server reads almost
    nothing new. Orbwise itself appends your recent messages and the files that were touched, so they do not depend
    on the model.
 2. The chat goes on with a fresh context: instructions, current facts, the summary, your current question (with its
    note and the approved plan) and the last step word for word. In the middle of a task Orbwise simply carries on.
-3. If an answer is finished and the next question would no longer fit anyway, Orbwise compacts right away while you
-   read (`memory.compact_idle`, on by default) and warms the cache up again – the next question starts immediately.
+3. If an answer is finished and the prompt is so close to that point that even a short next question would cross it,
+   Orbwise compacts right away while you read (`memory.compact_idle`, on by default) and warms the cache up again – the next question starts immediately.
 4. Nothing is deleted: the chat keeps every message (a divider *Context summarised* with the summary to expand marks
    the spot), journal and search index keep everything, and the search brings details from the compacted part back
    when they are relevant.

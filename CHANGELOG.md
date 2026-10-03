@@ -11,7 +11,7 @@ All notable changes to this project are documented here. The format follows
     into the note in front of each question, facts and tool groups are a snapshot. llama-server and Ollama therefore
     only read what is new – no more re-reading the whole chat after an answer, `remember`, a new topic or a Telegram
     message. Later questions get fewer and only new memories; Coding mode adds none by itself (`recall` on demand).
-  - When the window is nearly full (16k: ~87 %, with thinking earlier), the model writes one structured summary
+  - Only when the window is nearly full (16k: ~91 %, with thinking earlier), the model writes one structured summary
     (request, facts, files and commands, errors and fixes, decisions, all user messages, open points, current work,
     next step) from the cached prompt; the chat continues with the summary, the current question and the last step,
     and a running task carries on by itself. Right after an answer this happens while you read

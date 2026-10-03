@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from orbwise import prompts, server
 from orbwise.agent import Agent
 from orbwise.config import ProfileConfig
-from orbwise.memory.context import msg_tokens
+from orbwise.memory.context import est_tokens, msg_tokens
 from orbwise.tools import proc
 from orbwise.tools.registry import ToolContext, get_tool, load_all_tools
 
@@ -35,6 +35,15 @@ def extends(prev: tuple, cur: tuple) -> bool:
 
 
 PLACEHOLDER = {"role": "user", "content": ""}  # Vorwärmen hängt sie an – an ihrer Stelle kommt die nächste Frage
+
+
+def request_tokens(tools, messages) -> int:
+    """Größe einer Anfrage, geschätzt wie im Agenten (Nachrichten + Werkzeugbeschreibungen)."""
+    return sum(msg_tokens(m) for m in messages) + est_tokens(json.dumps(tools or [], ensure_ascii=False))
+
+
+def is_compaction(messages) -> bool:
+    return "Kontextfenster ist fast voll" in (messages[-1].get("content") or "")
 
 
 def requests(llm, skip: set[int] = frozenset()) -> list[tuple]:
@@ -73,7 +82,7 @@ def test_compaction_reuses_the_cached_prompt_and_keeps_everything(cfg, llm, memo
     agent = Agent(cfg, llm, memory)
     for i in range(6):
         run(agent.run(f"Frage {i}: " + "x" * 2500, _noop, _noop))
-    k = next(i for i, o in enumerate(llm.opts) if o["max_tokens"] == agent.summary_budget())
+    k = next(i for i, c in enumerate(llm.calls) if is_compaction(c))
     req, prev = llm.calls[k], llm.calls[k - 1]
     # Anfrage = der Prompt, den der Server schon kennt (+ letzte Antwort) + eine Anweisung → kaum Neues einzulesen
     assert req[:len(prev)] == prev and "Kontextfenster ist fast voll" in req[-1]["content"]
@@ -148,27 +157,44 @@ def test_long_task_compresses_rarely_and_continues(cfg, memory, tmp_path, stamps
 
     answer = run(agent.run("Lies alle Logs", emit, _noop))
     assert answer == "Fertig: 24 Dateien gelesen." and not any(e["type"] == "error" for e in events)
-    compactions = [r for r in llm.requests if r[2] == agent.summary_budget()]
+    compactions = [r for r in llm.requests if is_compaction(r[1])]
     # 24 × ~1,6k Token Ausgabe passen nie in 16k: komprimiert wird, wenn das Fenster voll ist (~alle 5 Schritte) –
     # nicht bei jedem Schritt
     assert 1 <= len(compactions) <= 24 // 4
-    sizes = [sum(msg_tokens(m) for m in msgs) + len(json.dumps(tools or [])) // 3 for tools, msgs, _ in llm.requests]
+    sizes = [request_tokens(tools, msgs) for tools, msgs, _ in llm.requests]
     assert max(sizes) <= 16384  # nie übergelaufen
+    for tools, msgs, max_tokens in compactions:  # die Zusammenfassung passt mit hinein, mindestens summary_floor
+        assert max_tokens >= agent.summary_floor() and request_tokens(tools, msgs) + max_tokens <= 16384
     # Zwischen den Komprimierungen nur hinten verlängert (Brüche nur direkt nach einer Komprimierung)
     reqs = [(t, m) for t, m, _ in llm.requests]
     breaks = [i for i in range(1, len(reqs)) if not extends(reqs[i - 1], reqs[i])]
     assert len(breaks) == len(compactions)
     # nach einer Komprimierung mitten in der Aufgabe: Frage und letzter Schritt gehen wörtlich mit, und die Frage
     # sagt dem Modell, dass die Aufgabe weiterläuft
-    k = next(i for i, r in enumerate(llm.requests) if r[2] == agent.summary_budget())
+    k = next(i for i, r in enumerate(llm.requests) if is_compaction(r[1]))
     after = llm.requests[k + 1][1]
     assert [m["role"] for m in after[1:]] == ["user", "assistant", "tool"]
     assert "Die Aufgabe läuft noch" in after[1]["content"] and after[1]["content"].endswith("Lies alle Logs")
     assert "Nächster Schritt" in after[0]["content"]  # Zusammenfassung im System-Prompt
     # nach der fertigen Aufgabe (Komprimierung in Ruhe) steht der Hinweis nicht mehr da
-    if len(memory.conversation.epochs) > len(compactions):
+    if memory.conversation.epochs[-1].get("reason") == "idle":
         question = next(m for m in memory.conversation.epoch_messages() if m["role"] == "user")
         assert "Die Aufgabe läuft noch" not in question.get("note", "")
+
+
+def test_one_big_task_does_not_compact_at_half_the_window(cfg, memory, tmp_path, stamps):
+    """Gemeldet: bei „8k/16k“ wurde schon zusammengefasst – eine große Aufgabe als bisher einzige Runde galt als
+    „typische nächste Runde“. Jetzt erst kurz vor der Grenze."""
+    for n in range(4):
+        (tmp_path / f"log{n}.txt").write_text("\n".join(f"Log {n} Zeile {i}: " + "daten " * 12 for i in range(60)),
+                                              encoding="utf-8")
+    llm = Worker(tmp_path, steps=3)
+    agent = Agent(cfg, llm, memory)
+    run(agent.run("Lies die Logs", _noop, _noop))
+    agent.build_messages(display=False)
+    assert 7000 <= agent._full_prompt <= 0.75 * 16384  # gut die Hälfte belegt – die alte Logik komprimierte hier
+    assert not any(is_compaction(r[1]) for r in llm.requests) and len(memory.conversation.epochs) == 1
+    assert agent.compact_limit() == 14884  # 91 % – erst dort (oder kurz davor nach einer Antwort)
 
 
 def test_memories_first_turn_full_then_only_new_and_none_in_coding(cfg, llm, memory, stamps):
@@ -184,8 +210,8 @@ def test_memories_first_turn_full_then_only_new_and_none_in_coding(cfg, llm, mem
     assert "Erinnerungen" not in coding_note  # Coding: nur auf Anfrage (recall)
 
 
-@pytest.mark.parametrize("window,think,limit", [(8192, False, 8192 - 1700), (16384, False, 16384 - 2138),
-                                                 (16384, True, 16384 - 3000), (32768, False, 32768 - 3776)])
+@pytest.mark.parametrize("window,think,limit", [(8192, False, 6692), (16384, False, 14884),
+                                                 (16384, True, 13384), (32768, False, 30402)])
 def test_compaction_point_leaves_room_for_answer_and_summary(cfg, memory, window, think, limit):
     llm = type("W", (), {"context_size": window})()
     agent = Agent(cfg, llm, memory)
@@ -243,7 +269,7 @@ def test_compaction_retries_without_tools_when_the_model_calls_one(cfg, llm, mem
     fake_stream, seen = llm.chat_stream, []
 
     async def stream(messages, tools=None, think=None, max_tokens=None, tool_choice=None):
-        if max_tokens == agent.summary_budget():
+        if is_compaction(messages):
             seen.append(tool_choice)
             if tools:
                 call = '<tool_call>\n{"name": "recall", "arguments": {"query": "Frage"}}\n</tool_call>'

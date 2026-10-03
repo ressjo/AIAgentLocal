@@ -77,6 +77,7 @@ THINK_RESERVE = 3000  # mit Denkmodus: die Denkkette belegt dasselbe Fenster
 # Coding-Modus: nur was man zum Programmieren braucht – mehr Kontext bleibt für den Code frei
 CODING_GROUPS = {"files", "shell", "web", "memory_tools"}
 CARRY_SHARE = 0.2  # so viel vom Fenster dürfen die wörtlich mitgenommenen letzten Schritte belegen
+INSTRUCTION_RESERVE = 400  # Platz für die Komprimierungs-Anweisung (~350 Token)
 # Werkzeug-Aufruf als Text: llama-server gibt ihn bei tool_choice "none" als Inhalt zurück
 RAW_TOOL_CALL = re.compile(r'\s*(<tool_call>|<function=|\[TOOL_CALLS\]|\{\s*"name"\s*:)')
 Emit = Callable[[dict], Awaitable[None]]
@@ -297,13 +298,18 @@ class Agent:
         """Höchstlänge der Zusammenfassung bei einer Komprimierung (≈ 10 % des Fensters)."""
         return max(1200, min(4000, int(self.model_window() * 0.1)))
 
+    def summary_floor(self) -> int:
+        """Mindestlänge der Zusammenfassung (≈ 6 % des Fensters) – so viel muss beim Komprimieren noch frei sein."""
+        return max(900, min(2500, int(self.model_window() * 0.06)))
+
     def compact_limit(self) -> int:
-        """Ab dieser Prompt-Größe (echte Token) wird komprimiert – Antwort bzw. Denkkette und die Zusammenfassung
-        müssen danach noch ins Fenster passen. 16k: ≈ 14,2k (87 %), mit Denken ≈ 13,4k; 32k: ≈ 29k."""
+        """Ab dieser Prompt-Größe (echte Token) wird komprimiert – so spät wie möglich: der nächste Schritt braucht
+        Platz für Antwort bzw. Denkkette, die Zusammenfassung mindestens summary_floor (sie nimmt, was frei ist).
+        8k: ≈ 6,7k (82 %); 16k: ≈ 14,9k (91 %), mit Denken ≈ 13,4k; 32k: ≈ 30,4k (93 %)."""
         window = self.model_window()
         if self.cfg.memory.context_budget_tokens:  # optionale Obergrenze für den Prompt
             window = min(window, self.cfg.memory.context_budget_tokens + self.answer_reserve())
-        return window - max(self.answer_reserve(), self.summary_budget() + 500)
+        return window - max(self.answer_reserve(), self.summary_floor() + INSTRUCTION_RESERVE)
 
     def _profile_key(self) -> str:
         return str(getattr(self.llm, "active", "") or "default")
@@ -537,9 +543,13 @@ class Agent:
         self.build_messages(display=False)
         limit = self.compact_limit()
         if idle:
+            # nur wenn es wirklich fast voll ist: eine große Aufgabe als bisher einzige Runde ist kein Maßstab für
+            # die nächste Frage (sonst wurde schon bei 8k von 16k komprimiert) – große Aufgaben komprimieren
+            # unterwegs an der Grenze
             conv = self.memory.conversation
             turns = max(1, sum(1 for m in conv.epoch_messages() if m["role"] == "user"))
-            next_turn = max(500, int(conv.history_tokens() * self.token_ratio() / turns))
+            typical = max(500, int(conv.history_tokens() * self.token_ratio() / turns))
+            next_turn = min(typical, int(0.06 * self.model_window()))
             return self._full_prompt + next_turn >= limit
         return self._full_prompt >= limit
 
@@ -613,11 +623,13 @@ class Agent:
         before = self._full_prompt
         if open_question:
             messages = messages[:-1]
-        budget = self.summary_budget()
+        # Zusammenfassung so lang, wie Platz ist (spät komprimiert = etwas kürzer), aber mindestens summary_floor
+        free = window - before - INSTRUCTION_RESERVE - 100
+        budget = max(self.summary_floor(), min(self.summary_budget(), free))
         instruction = prompts.compact_instruction(self.cfg, self.mode, int(budget * 0.6), focus)
         # Passt die Anfrage samt Zusammenfassung nicht (riesige neue Ergebnisse, Server kleiner als gedacht):
         # erst die neuesten Werkzeug-Ergebnisse kürzen (die kennt der Server noch nicht), notfalls Älteres weglassen
-        room = int(window / ratio) - budget - est_tokens(instruction) - 100
+        room = int(window / ratio) - budget - est_tokens(instruction) - self.schema_tokens - 100  # + Werkzeuge
         excess = sum(msg_tokens(m) for m in messages) - room
         if excess > 0:
             shrink_tool_results([m for m in reversed(messages) if m["role"] == "tool"], excess)
