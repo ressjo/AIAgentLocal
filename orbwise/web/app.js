@@ -25,11 +25,15 @@
     set(k, v) { try { localStorage.setItem("orbwise." + k, JSON.stringify(v)); } catch { /* egal */ } },
   };
 
+  // Denkstufe: off | low | medium | high (früher gespeichert als true/false)
+  function thinkLevel(v) { return v === true ? "medium" : ["low", "medium", "high"].includes(v) ? v : "off"; }
+  const THINK_LABEL = { off: L("Denken", "Think"), low: L("Denken · kurz", "Think · brief"),
+                        medium: L("Denken · normal", "Think · normal"), high: L("Denken · gründlich", "Think · thorough") };
   const AUTO_LABEL = { off: L("Auto aus", "Auto off"), read: L("Lesen", "Read"), files: L("Dateien", "Files"), auto: "Auto" };
   const S = {
     ws: null, connected: false, retry: 0,
     serverState: "idle", substate: "",
-    tts: store.get("tts", true), wake: store.get("wake", false), think: store.get("think", false), autoMode: store.get("autoMode", store.get("auto", true) === false ? "off" : "read"), plan: store.get("plan", false),
+    tts: store.get("tts", true), wake: store.get("wake", false), think: thinkLevel(store.get("think", "off")), autoMode: store.get("autoMode", store.get("auto", true) === false ? "off" : "read"), plan: store.get("plan", false),
     voiceName: store.get("voice", ""), fxOn: store.get("fx", true), fxAmount: store.get("fxAmount", 0.6),
     recording: false, transcribing: false, streamMic: false,
     playing: false, confirm: null, confirmListenSent: false,
@@ -217,7 +221,9 @@
     $("btn-mic").classList.toggle("recording", S.recording);
     $("btn-wake").classList.toggle("on", S.wake);
     $("btn-tts").classList.toggle("on", S.tts);
-    $("btn-think").classList.toggle("on", S.think);
+    $("btn-think").classList.toggle("on", S.think !== "off");
+    $("think-label").textContent = THINK_LABEL[S.think];
+    document.querySelectorAll("[data-think]").forEach((b) => b.classList.toggle("on", b.dataset.think === S.think));
     $("btn-auto").classList.toggle("on", S.autoMode !== "off");
     $("btn-auto").classList.toggle("files", S.autoMode === "files");
     $("btn-auto").classList.toggle("full", S.autoMode === "auto");
@@ -246,7 +252,7 @@
       S.connected = true;
       S.retry = 0;
       send({ type: "tts", enabled: S.tts });
-      send({ type: "think", enabled: S.think });
+      send({ type: "think", enabled: S.think !== "off", level: S.think });
       send({ type: "auto_mode", mode: S.autoMode });
       send({ type: "plan_mode", enabled: S.plan });
       sendVoiceSettings();
@@ -743,7 +749,7 @@
         d.innerHTML = `<summary>${L("Gedankengang", "Thoughts")}</summary><pre></pre>`;
         d.querySelector("pre").textContent = text;
         a.el.insertBefore(d, a.el.querySelector(".body"));
-      } else if (!text && S.think && !this.warned) {
+      } else if (!text && S.think !== "off" && !this.warned) {
         this.warned = true;
         toast(L("Denkmodus an, aber das Modell hat keinen Gedankengang geliefert – bei Bonsai '--reasoning-budget 0' aus dem Startbefehl entfernen.",
               "Thinking mode is on, but the model returned no reasoning – for llama-server remove '--reasoning-budget 0' from the start command."));
@@ -856,6 +862,8 @@
                                            `context ${ev.percent} % – summarising now so the next question doesn't wait`);
         return L(`Kontext ${ev.percent} % voll – fasst den Chat zusammen, dann geht es weiter`,
                  `context ${ev.percent} % full – summarising the chat, then carrying on`);
+      case "think_cut": return L(`genug überlegt (${num(ev.tokens)} Token) – handelt jetzt`,
+                                 `enough thinking (${num(ev.tokens)} tokens) – acting now`);
       case "tools_added": return L(`Werkzeuge dazugeladen: ${groupNames(ev.groups)} – einmal neu einlesen`,
                                    `tools added: ${groupNames(ev.groups)} – one-off re-read`);
       case "prewarm": return L(`liest den Chat im Hintergrund vor · ${kTok(ev.tokens)} Token`,
@@ -1351,15 +1359,30 @@
     refresh();
   };
 
-  $("btn-think").onclick = () => {
-    S.think = !S.think;
+  // Denken: aufklappbar mit Stufen (Modelle ohne echte Stufen bekommen ein Denk-Budget)
+  const thinkMenu = $("think-menu");
+  function setThinkMenu(open) {
+    thinkMenu.classList.toggle("hidden", !open);
+    $("btn-think").setAttribute("aria-expanded", String(open));
+  }
+  function setThink(level) {
+    S.think = thinkLevel(level);
     store.set("think", S.think);
-    send({ type: "think", enabled: S.think });
-    toast(S.think ? L("Denkmodus an – Antworten dauern länger, der Gedankengang erscheint beim Orb.",
-                      "Thinking mode on – answers take longer, the reasoning appears next to the orb.")
-                  : L("Denkmodus aus – schnelle Antworten.", "Thinking mode off – fast answers."));
+    send({ type: "think", enabled: S.think !== "off", level: S.think });
+    toast({ off: L("Denkmodus aus – schnelle Antworten.", "Thinking mode off – fast answers."),
+            low: L("Denken: kurz – Jarvis überlegt knapp und legt dann los.", "Thinking: brief – Jarvis thinks briefly, then acts."),
+            medium: L("Denken: normal – zügig durchdacht, der Gedankengang erscheint beim Orb.",
+                      "Thinking: normal – thought through efficiently, the reasoning appears next to the orb."),
+            high: L("Denken: gründlich – so lange wie nötig, Antworten dauern länger.",
+                    "Thinking: thorough – as long as needed, answers take longer.") }[S.think]);
     refresh();
-  };
+  }
+  $("btn-think").onclick = (e) => { e.stopPropagation(); setThinkMenu(thinkMenu.classList.contains("hidden")); };
+  document.querySelectorAll("[data-think]").forEach((b) => {
+    b.onclick = (e) => { e.stopPropagation(); setThinkMenu(false); setThink(b.dataset.think); };
+  });
+  document.addEventListener("click", (e) => { if (!e.target.closest("#think-wrap")) setThinkMenu(false); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !thinkMenu.classList.contains("hidden")) setThinkMenu(false); });
 
   // Auto-Modus: aufklappbarer Knopf neben „Denken“ (und Auswahl in den Einstellungen)
   const autoMenu = $("auto-menu");

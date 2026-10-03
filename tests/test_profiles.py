@@ -372,7 +372,31 @@ def test_think_toggle_per_request(cfg, memory):
     agent = Agent(cfg, Spy(), memory)
     run(agent.run("a", emit, confirm))
     run(agent.run("b", emit, confirm, think=True))
-    assert seen == [{}, {"think": True}]
+    run(agent.run("c", emit, confirm, think="low"))
+    assert seen == [{}, {"think": True, "effort": "medium"}, {"think": True, "effort": "low"}]
+
+
+def test_think_effort_reaches_the_server(cfg):
+    bodies = []
+
+    def handler(req):
+        bodies.append(json.loads(req.content))
+        return httpx.Response(200, text=sse({"choices": [{"delta": {"content": "ok"}}]}))
+
+    llm = client_with(handler)
+
+    async def go(**kw):
+        return [e async for e in llm.chat_stream([{"role": "user", "content": "x"}], None, **kw)]
+
+    run(go(think=True, effort="low"))
+    run(go(think=False, effort="low"))
+    assert bodies[0]["chat_template_kwargs"] == {"enable_thinking": True, "reasoning_effort": "low"}
+    assert bodies[1]["chat_template_kwargs"] == {"enable_thinking": False}
+
+    from orbwise.llm import OllamaLLM
+    for model, expect in (("gpt-oss:20b", "low"), ("qwen3:8b", True)):
+        o = OllamaLLM(LLMConfig(model=model))
+        assert o._payload([], None, True, think=True, effort="low")["think"] == expect  # Stufen nur bei gpt-oss
 
 
 def test_inline_think_tags_become_reasoning(cfg, memory):

@@ -63,9 +63,17 @@ HTML_EN = [
      'title="Plan mode: Jarvis only looks things up and presents a plan first – it is carried out once you '
      'approve it."><svg class="i"><use href="#i-plan"/></svg><span>Plan<'),
     ('title="Denkmodus: Jarvis denkt vor der Antwort nach – langsamer, dafür gründlicher."><svg class="i"><use '
-     'href="#i-sparkles"/></svg><span>Denken<',
+     'href="#i-sparkles"/></svg><span id="think-label">Denken<',
      'title="Thinking mode: Jarvis reasons before answering – slower but more thorough."><svg class="i"><use '
-     'href="#i-sparkles"/></svg><span>Think<'),
+     'href="#i-sparkles"/></svg><span id="think-label">Think<'),
+    ('<b>Nicht denken</b><small>Direkte Antworten – am schnellsten.</small>',
+     '<b>No thinking</b><small>Direct answers – fastest.</small>'),
+    ('<b>Kurz</b><small>Kurz überlegen, dann handeln (Denkkette höchstens ~500 Token).</small>',
+     '<b>Brief</b><small>Think briefly, then act (reasoning up to ~500 tokens).</small>'),
+    ('<b>Normal</b><small>Zügig durchdenken (höchstens ~2.000 Token).</small>',
+     '<b>Normal</b><small>Think it through efficiently (up to ~2,000 tokens).</small>'),
+    ('<b>Gründlich</b><small>So lange wie nötig – am langsamsten.</small>',
+     '<b>Thorough</b><small>As long as needed – slowest.</small>'),
     ('title="Auto-Modus: was ohne Rückfrage laufen darf"', 'title="Auto mode: what may run without asking"'),
     ('<span id="auto-label">Lesen<', '<span id="auto-label">Read<'),
     ('<b>Aus</b><small>Jeder Shell-Befehl fragt vorher.</small>',
@@ -162,7 +170,10 @@ HTML_EN = [
     ('data-mirror="btn-tts">Aus<', 'data-mirror="btn-tts">Off<'),
     ('data-mirror="btn-wake">Aus<', 'data-mirror="btn-wake">Off<'),
     ('data-mirror="btn-plan">Aus<', 'data-mirror="btn-plan">Off<'),
-    ('data-mirror="btn-think">Aus<', 'data-mirror="btn-think">Off<'),
+    ('data-think="off">Aus</button><button type="button" data-think="low">Kurz</button><button type="button" '
+     'data-think="medium">Normal</button><button type="button" data-think="high">Gründlich<',
+     'data-think="off">Off</button><button type="button" data-think="low">Brief</button><button type="button" '
+     'data-think="medium">Normal</button><button type="button" data-think="high">Thorough<'),
     ('>Weitere Einstellungen (Integrationen, Telegram, Mail …) stehen in ',
      '>Further settings (integrations, Telegram, mail …) live in '),
     (' – <code>orbwise doctor</code> prüft sie.<', ' – <code>orbwise doctor</code> checks them.<'),

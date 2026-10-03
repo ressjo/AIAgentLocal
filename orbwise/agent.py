@@ -76,6 +76,8 @@ ANSWER_RESERVE = 1500  # Token, die im Kontextfenster für die Antwort frei blei
 THINK_RESERVE = 3000  # mit Denkmodus: die Denkkette belegt dasselbe Fenster
 # Coding-Modus: nur was man zum Programmieren braucht – mehr Kontext bleibt für den Code frei
 CODING_GROUPS = {"files", "shell", "web", "memory_tools"}
+# Denkstufen: Höchstlänge der Denkkette (0 = unbegrenzt). Modelle mit echten Stufen (gpt-oss) bekommen sie dazu.
+THINK_LEVELS = {"low": 512, "medium": 2048, "high": 0}
 CARRY_SHARE = 0.2  # so viel vom Fenster dürfen die wörtlich mitgenommenen letzten Schritte belegen
 INSTRUCTION_RESERVE = 400  # Platz für die Komprimierungs-Anweisung (~350 Token)
 # Werkzeug-Aufruf als Text: llama-server gibt ihn bei tool_choice "none" als Inhalt zurück
@@ -137,6 +139,7 @@ class Agent:
         self._turn_memories = ""  # zur aktuellen Anfrage gefundene Erinnerungen
         self._turn_open = False  # läuft gerade eine Anfrage (deren Notiz noch eingefroren werden darf)?
         self._think: bool | None = None
+        self._think_level: str | None = None  # low | medium | high, wenn gedacht wird
         self._plan = False  # Planmodus: nur lesen, am Ende einen Plan vorlegen
         self._prefill_tps: dict[str, float] = {}  # gelernte Einlese-Geschwindigkeit je Modell (Token/s)
         self._last_prompt: dict[str, int] = {}  # Prompt-Größe des letzten Schritts (für „neu einzulesen“)
@@ -230,9 +233,10 @@ class Agent:
         memories = self.memory.format_hits(hits) if hits is not None else self._turn_memories
         stamp = self._turn_stamp or prompts.note_stamp(self.cfg, datetime.now())
         msg = conv.history[users[-1]]
+        hint = prompts.text(self.cfg, f"think_{self._think_level}") if self.think_budget() else ""
         msg["note"] = prompts.context_note(self.cfg, stamp, memories, plan=self._plan,
-                                           approved_plan=self._approved_plan)
-        msg["note_meta"] = {"time": stamp, "plan": self._plan, "approved": self._approved_plan}
+                                           approved_plan=self._approved_plan, extra=hint)
+        msg["note_meta"] = {"time": stamp, "plan": self._plan, "approved": self._approved_plan, "hint": hint}
 
     @staticmethod
     def _prompt_message(m: dict) -> dict:
@@ -297,7 +301,23 @@ class Agent:
         think = self._think
         if think is None:
             think = bool(getattr(getattr(self.llm, "profile", None), "think", False))
-        return THINK_RESERVE if think else ANSWER_RESERVE
+        if not think:
+            return ANSWER_RESERVE
+        budget = THINK_LEVELS.get(self._think_level or "high", 0)
+        return min(THINK_RESERVE, ANSWER_RESERVE + budget) if budget else THINK_RESERVE
+
+    def think_budget(self) -> int:
+        """Höchstlänge der Denkkette in Token für diese Anfrage (0 = unbegrenzt bzw. kein Denken)."""
+        return THINK_LEVELS.get(self._think_level or "", 0) if self._think else 0
+
+    def _set_think(self, think) -> None:
+        """think: None (Profil), False, True (= normal) oder eine Stufe low/medium/high."""
+        if isinstance(think, str):
+            level = think if think in THINK_LEVELS else "medium"
+            self._think, self._think_level = (think != "off"), (level if think != "off" else None)
+        else:
+            self._think = think
+            self._think_level = "medium" if think else None
 
     def summary_budget(self) -> int:
         """Höchstlänge der Zusammenfassung bei einer Komprimierung (≈ 10 % des Fensters)."""
@@ -375,12 +395,13 @@ class Agent:
         plan: Planmodus – nur lesend nachsehen und einen Plan zur Freigabe vorlegen (gedacht wird nur, wenn der
         Denkmodus an ist). approved_plan: freigegebener Plan, der beim Ausführen angeheftet bleibt."""
         async with self.lock:
-            self._think, self._plan, self._approved_plan = think, plan, approved_plan
+            self._plan, self._approved_plan = plan, approved_plan
+            self._set_think(think)
             self._tainted = False
             try:
                 return await self._run(user_text, emit, confirm)
             finally:
-                self._think, self._plan, self._approved_plan = None, False, ""
+                self._think, self._think_level, self._plan, self._approved_plan = None, None, False, ""
 
     async def run_in_chat(self, chat_id: str, title: str, text: str, emit: Emit, confirm: Confirm,
                           plan: bool = False, think: bool | None = None,
@@ -388,14 +409,15 @@ class Agent:
         """Für Routinen und Telegram: Aufgabe in einem eigenen Chat erledigen – der aktive Chat des Nutzers bleibt
         unberührt. Liefert (Antwort, Chat-ID)."""
         async with self.lock:
-            self._think, self._plan, self._approved_plan = think, plan, approved_plan
+            self._plan, self._approved_plan = plan, approved_plan
+            self._set_think(think)
             self._tainted = False
             try:
                 with self.memory.in_chat(chat_id, title) as conv:
                     answer = await self._run(text, emit, confirm)
                     return answer, conv.chat_id
             finally:
-                self._think, self._plan, self._approved_plan = None, False, ""
+                self._think, self._think_level, self._plan, self._approved_plan = None, None, False, ""
 
     async def compact_now(self, emit: Emit, focus: str = "") -> bool:
         """„/compact [Fokus]“: den offenen Chat jetzt zusammenfassen (wie Claude Code)."""
@@ -675,7 +697,7 @@ class Agent:
             meta = hist[q]["note_meta"]
             hist[q]["note"] = prompts.context_note(
                 self.cfg, meta.get("time", ""), "", meta.get("plan", False), meta.get("approved", ""),
-                extra=prompts.compact_text(self.cfg, "continue") if in_turn else "")
+                extra=(meta.get("hint", "") + "\n" + (prompts.compact_text(self.cfg, "continue") if in_turn else "")))
         turn_groups = {self.groups_of.get(c.get("function", {}).get("name", ""), "")
                        for m in hist[q:] for c in m.get("tool_calls") or []} - {""}
         conv.start_epoch(carry, summary, reason=reason, before=before, carried=len(carry), mode=self.mode)
@@ -859,72 +881,96 @@ class Agent:
             await emit({"type": "llm_phase", "id": step_id, "msg": msg_id, "phase": kind, **data})
 
         await emit({"type": "state", "state": "thinking"})
-        try:
-            async for ev in self._stream_fitting(final=final):
-                if ev["type"] == "context":
-                    await emit(ev)
-                    current = ""
-                    info = self._prompt_phase()
-                    await phase(info.pop("phase"), **info)
-                elif ev["type"] == "retry":
-                    await phase("retry", n_prompt=ev.get("n_prompt"), n_ctx=ev.get("n_ctx"))
-                elif ev["type"] == "prompt_progress":
-                    todo = max(1, ev["total"] - ev["cache"])
-                    current = ""  # jede Fortschrittsmeldung zählt (gedrosselt)
-                    if time.monotonic() - last_sent >= 0.5 or ev["processed"] >= ev["total"]:
-                        await phase("prompt", tokens=ev["total"], new=todo,
-                                    progress=round(min(1.0, max(0, ev["processed"] - ev["cache"]) / todo), 3))
-                elif ev["type"] == "tool_delta":
-                    await phase("tool_args", throttle=True, name=ev.get("name", ""), chars=ev.get("chars", 0))
-                elif ev["type"] == "token":
-                    text = filt.feed(ev["text"])
-                    thought = filt.take_thought()
-                    if thought:
+        budget = 0 if final else self.think_budget()
+        thoughts: list[str] = []
+        cut: str | None = None  # Denk-Budget voll: Gedanken, mit denen der Schritt ohne Denken weitergeht
+
+        def over_budget() -> bool:
+            return bool(budget) and cut is None and est_tokens("".join(thoughts)) > budget
+
+        for _attempt in range(2):
+            try:
+                stream = self._stream_fitting(final=final, no_think=cut is not None, tail=cut)
+                async for ev in stream:
+                    if ev["type"] == "context":
+                        await emit(ev)
+                        current = ""
+                        info = self._prompt_phase()
+                        await phase(info.pop("phase"), **info)
+                    elif ev["type"] == "retry":
+                        await phase("retry", n_prompt=ev.get("n_prompt"), n_ctx=ev.get("n_ctx"))
+                    elif ev["type"] == "prompt_progress":
+                        todo = max(1, ev["total"] - ev["cache"])
+                        current = ""  # jede Fortschrittsmeldung zählt (gedrosselt)
+                        if time.monotonic() - last_sent >= 0.5 or ev["processed"] >= ev["total"]:
+                            await phase("prompt", tokens=ev["total"], new=todo,
+                                        progress=round(min(1.0, max(0, ev["processed"] - ev["cache"]) / todo), 3))
+                    elif ev["type"] == "tool_delta":
+                        await phase("tool_args", throttle=True, name=ev.get("name", ""), chars=ev.get("chars", 0))
+                    elif ev["type"] == "token":
+                        text = filt.feed(ev["text"])
+                        thought = filt.take_thought()
+                        if thought:
+                            thought_n += 1
+                            thoughts.append(thought)
+                            await phase("thinking", throttle=True, tokens=thought_n)
+                            await emit({"type": "reasoning", "id": msg_id, "text": thought})
+                            if over_budget():
+                                break
+                        if text:
+                            await phase("writing")
+                            await emit({"type": "token", "id": msg_id, "text": text})
+                    elif ev["type"] == "reasoning":
+                        # Denkkette: nicht Teil der Antwort, wird nur angezeigt (Orb-Zoom) und nicht vorgelesen
                         thought_n += 1
+                        thoughts.append(ev.get("text", ""))
                         await phase("thinking", throttle=True, tokens=thought_n)
-                        await emit({"type": "reasoning", "id": msg_id, "text": thought})
-                    if text:
-                        await phase("writing")
-                        await emit({"type": "token", "id": msg_id, "text": text})
-                elif ev["type"] == "reasoning":
-                    # Denkkette: nicht Teil der Antwort, wird nur angezeigt (Orb-Zoom) und nicht vorgelesen
-                    thought_n += 1
-                    await phase("thinking", throttle=True, tokens=thought_n)
-                    await emit({"type": "reasoning", "id": msg_id, "text": ev.get("text", "")})
-                elif ev["type"] == "done":
-                    result = ev["message"]
-                    stats = ev.get("stats") or {}
-                    self._learn_prefill(stats)
-                    self._cache_owner = self._cache_key()  # der Server hat jetzt diesen Chat im Cache
-                    current = ""
-                    await phase("done", seconds=round(time.monotonic() - started, 1),
-                                calls=[c.get("function", {}).get("name", "") for c in result.get("tool_calls") or []],
-                                **{k: stats.get(k) for k in ("tokens", "tps", "prompt_tokens", "prompt_total",
-                                                             "prompt_cached", "prompt_ms", "load_ms")
-                                   if stats.get(k) is not None})
-                    if stats.get("tps"):
-                        await emit({"type": "llm_stats", **stats})
-                    total = prompt_size(stats, (self.last_context or {}).get("used", 0))
-                    if self.last_context is not None and total:
-                        self.last_context["real"] = total
-                        if stats.get("prompt_cached") is not None:
-                            self.last_context["cached"] = stats["prompt_cached"]
-                        self.learn_tokens(self.last_context.get("used", 0), total)
-                        await emit({"type": "context", **self.last_context})
-        except LLMError:  # z. B. Kontext zu voll – die Zeile in der Aktivität nicht ewig „läuft“ lassen
+                        await emit({"type": "reasoning", "id": msg_id, "text": ev.get("text", "")})
+                        if over_budget():
+                            break
+                    elif ev["type"] == "done":
+                        result = ev["message"]
+                        stats = ev.get("stats") or {}
+                        self._learn_prefill(stats)
+                        self._cache_owner = self._cache_key()  # der Server hat jetzt diesen Chat im Cache
+                        current = ""
+                        await phase("done", seconds=round(time.monotonic() - started, 1),
+                                    calls=[c.get("function", {}).get("name", "") for c in result.get("tool_calls") or []],
+                                    **{k: stats.get(k) for k in ("tokens", "tps", "prompt_tokens", "prompt_total",
+                                                                 "prompt_cached", "prompt_ms", "load_ms")
+                                       if stats.get(k) is not None})
+                        if stats.get("tps"):
+                            await emit({"type": "llm_stats", **stats})
+                        total = prompt_size(stats, (self.last_context or {}).get("used", 0))
+                        if self.last_context is not None and total:
+                            self.last_context["real"] = total
+                            if stats.get("prompt_cached") is not None:
+                                self.last_context["cached"] = stats["prompt_cached"]
+                            self.learn_tokens(self.last_context.get("used", 0), total)
+                            await emit({"type": "context", **self.last_context})
+            except LLMError:  # z. B. Kontext zu voll – die Zeile in der Aktivität nicht ewig „läuft“ lassen
+                current = ""
+                await phase("done", error=True, seconds=round(time.monotonic() - started, 1))
+                raise
+            await stream.aclose()  # bricht die laufende Anfrage ab, falls das Denk-Budget voll ist
+            if cut is not None or not over_budget():
+                break
+            # genug überlegt: denselben Schritt ohne Denken fortsetzen – die Gedanken gehen als Notiz mit
+            cut = prompts.text(self.cfg, "think_cut").format(thoughts=clip("".join(thoughts).strip(), budget * 4))
+            filt = ThinkFilter()
             current = ""
-            await phase("done", error=True, seconds=round(time.monotonic() - started, 1))
-            raise
+            await phase("think_cut", tokens=est_tokens("".join(thoughts)), budget=budget)
         tail = filt.flush()
         if tail:
             await emit({"type": "token", "id": msg_id, "text": tail})
         content = strip_think(result.get("content", ""))
         return content, ([] if final else result.get("tool_calls") or [])
 
-    async def _stream_fitting(self, final: bool = False):
+    async def _stream_fitting(self, final: bool = False, no_think: bool = False, tail: str | None = None):
         """Stream eines Schritts. Meldet der Server „zu groß“, entscheidet der Aufrufer: Lässt sich komprimieren,
         geschieht das (stabiler Prompt-Anfang); sonst als Notbremse mit kleinerem Budget gekürzt neu versuchen.
-        final=True: ohne Tools, mit der Bitte um eine Zwischenbilanz."""
+        final=True: ohne Tools, mit der Bitte um eine Zwischenbilanz. no_think/tail: Denk-Budget war voll – ohne
+        Denken weiter, die bisherigen Gedanken als vorübergehende Notiz am Ende (nicht im Verlauf)."""
         self._budget_scale = 1.0
         for attempt in range(3):
             try:
@@ -932,8 +978,15 @@ class Agent:
                 yield {"type": "context", **(self.last_context or {})}
                 if final:
                     messages.append({"role": "user", "content": prompts.text(self.cfg, "final_nudge")})
-                kwargs = {} if self._think is None else {"think": self._think}
-                async for ev in self.llm.chat_stream(messages, None if final else self.schemas, **kwargs):
+                if tail:
+                    messages.append({"role": "user", "content": tail})
+                if no_think:
+                    kwargs = {"think": False}
+                else:
+                    kwargs = {} if self._think is None else {"think": self._think}
+                    if self._think and self._think_level:
+                        kwargs["effort"] = self._think_level
+                async for ev in self._call_llm(messages, None if final else self.schemas, **kwargs):
                     yield ev
                 return
             except ContextOverflow as e:

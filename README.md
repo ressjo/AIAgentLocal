@@ -322,6 +322,12 @@ request: the orb zooms in and shows the thoughts live, then zooms out when the a
 expanded under the answer and is never read aloud. It costs time (often 10–60 s per step on smaller GPUs). For
 llama-server, **don't** pass `--reasoning-budget 0`, which disables reasoning server-side.
 
+The button's menu has levels: **Brief** (reasoning up to ~500 tokens), **Normal** (~2,000) and **Thorough**
+(unlimited). Models with real levels (gpt-oss) get `low`/`medium`/`high` directly. For all others (Qwen 3, Bonsai …)
+the level is a budget: the request asks the model to keep it short, and if the reasoning gets longer anyway Orbwise
+stops it and lets the model continue the step without further thinking, with its thoughts so far (the prompt start
+stays cached). The activity shows "enough thinking – acting now".
+
 ## Voice & Jarvis effect
 
 Open **Settings → Voice** to select, preview (▶), delete (🗑) or add Piper voices. **+ ADD VOICE** lists

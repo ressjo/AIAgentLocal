@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Thinking levels** in the *Think* menu: off, brief (~500 tokens of reasoning), normal (~2,000) and thorough.
+  gpt-oss gets real `low`/`medium`/`high`; other models (Qwen 3, Bonsai …) get a reasoning budget – a short hint, and
+  if the model still thinks too long the step continues without thinking, with its thoughts so far.
 - **Context handling like Claude Code** – fast on slow graphics cards, without forgetting:
   - Between two compactions the prompt only grows at the end: date/time, memories and the approved plan are frozen
     into the note in front of each question, facts and tool groups are a snapshot. llama-server and Ollama therefore

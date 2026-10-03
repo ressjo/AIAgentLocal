@@ -100,7 +100,7 @@ class Hub:
         self.agent = agent
         self.askpass = None  # AskpassBroker (Passwortfeld für sudo -A)
         self.cancellers: list = []  # weitere Abbrecher für STOP (z. B. laufende Telegram-Anfrage) → int
-        self.think: bool | None = None  # Denkmodus-Knopf der Oberfläche (None = Profil-Einstellung)
+        self.think: bool | str | None = None  # Denken-Knopf: False/Stufe low|medium|high (None = Profil)
         self.plan_mode = False  # PLAN-Knopf: erst einen Plan vorlegen, ausführen nach Freigabe
         self.plan_pending: str | None = None  # ID des Plans, der auf Ausführen/Ändern/Verwerfen wartet
         self.plan_text = ""  # sein Text – wird beim Ausführen an die Anfrage geheftet
@@ -1343,7 +1343,9 @@ def create_app(cfg: Config) -> FastAPI:
                 elif t == "password_cancel":
                     broker.answer(str(data.get("id", "")), None)
                 elif t == "think":
-                    hub.think = bool(data.get("enabled"))
+                    level = str(data.get("level") or "")
+                    # Stufe (low/medium/high) oder nur an/aus von älteren Oberflächen
+                    hub.think = (level if level in ("low", "medium", "high") else True) if data.get("enabled") else False
                 elif t == "prewarm":  # die Oberfläche merkt: gleich kommt eine Frage (Tippen, Sprechen)
                     hub.prewarm_soon()
                 elif t == "compact":  # Knopf an der Kontext-Kachel

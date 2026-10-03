@@ -65,14 +65,17 @@ class OllamaLLM:
         await self._client.aclose()
 
     def _payload(self, messages: list[dict], tools: list[dict] | None, stream: bool,
-                 think: bool | None = None, max_tokens: int | None = None) -> dict:
+                 think: bool | None = None, max_tokens: int | None = None, effort: str | None = None) -> dict:
+        think = self.cfg.think if think is None else think
+        if think and effort and supports_effort(self.cfg.model):  # gpt-oss: echte Stufen low/medium/high
+            think = effort
         payload: dict[str, Any] = {
             "model": self.cfg.model,
             "messages": messages,
             "stream": stream,
             "keep_alive": self.cfg.keep_alive,
             "options": {"temperature": self.cfg.temperature, "num_ctx": self.cfg.num_ctx},
-            "think": self.cfg.think if think is None else think,
+            "think": think,
         }
         if max_tokens:
             payload["options"]["num_predict"] = max_tokens
@@ -82,14 +85,14 @@ class OllamaLLM:
 
     async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
                           think: bool | None = None, max_tokens: int | None = None,
-                          tool_choice: str | None = None) -> AsyncIterator[dict]:
+                          tool_choice: str | None = None, effort: str | None = None) -> AsyncIterator[dict]:
         """Liefert {"type": "token", "text": ...} und abschließend {"type": "done", "message": {...}}.
         think: Denkmodus für diese Anfrage (None = Einstellung aus der Config). max_tokens begrenzt die Antwort;
         tool_choice kennt Ollama nicht (die Werkzeuge bleiben trotzdem im Prompt, damit der Cache passt)."""
         content: list[str] = []
         tool_calls: list[dict] = []
         stats: dict[str, Any] = {}
-        payload = self._payload(messages, tools, True, think, max_tokens)
+        payload = self._payload(messages, tools, True, think, max_tokens, effort)
         try:
             async with self._client.stream("POST", "/api/chat", json=payload) as resp:
                 if resp.status_code != 200:
@@ -244,7 +247,8 @@ class OpenAICompatLLM:
         await self._client.aclose()
 
     def _payload(self, messages: list[dict], tools: list[dict] | None, stream: bool,
-                 think: bool | None = None, max_tokens: int | None = None, tool_choice: str | None = None) -> dict:
+                 think: bool | None = None, max_tokens: int | None = None, tool_choice: str | None = None,
+                 effort: str | None = None) -> dict:
         p = self.profile
         payload: dict[str, Any] = {
             "model": p.model,
@@ -254,7 +258,10 @@ class OpenAICompatLLM:
             "cache_prompt": True,
         }
         # Qwen-basierte Modelle (auch Bonsai): Denkmodus aus – deutlich schneller; per Anfrage einschaltbar
-        payload["chat_template_kwargs"] = {"enable_thinking": bool(p.think if think is None else think)}
+        thinking = bool(p.think if think is None else think)
+        payload["chat_template_kwargs"] = {"enable_thinking": thinking}
+        if thinking and effort:  # Vorlagen mit Stufen (gpt-oss) nutzen es, alle anderen ignorieren es
+            payload["chat_template_kwargs"]["reasoning_effort"] = effort
         if stream:
             payload["stream_options"] = {"include_usage": True}
             payload["return_progress"] = True  # neuere llama-server melden den Fortschritt beim Einlesen
@@ -281,14 +288,14 @@ class OpenAICompatLLM:
 
     async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
                           think: bool | None = None, max_tokens: int | None = None,
-                          tool_choice: str | None = None) -> AsyncIterator[dict]:
+                          tool_choice: str | None = None, effort: str | None = None) -> AsyncIterator[dict]:
         content: list[str] = []
         calls: dict[int, dict] = {}
         timings: dict = {}
         usage: dict = {}
         first_token = None
         started = time.monotonic()
-        payload = self._payload(messages, tools, True, think, max_tokens, tool_choice)
+        payload = self._payload(messages, tools, True, think, max_tokens, tool_choice, effort)
         try:
             async with self._client.stream("POST", "/chat/completions", json=payload) as resp:
                 if resp.status_code != 200:
@@ -417,6 +424,11 @@ def generation_stats(chunk: dict) -> dict:
     }
 
 
+def supports_effort(model: str) -> bool:
+    """Kennt das Modell echte Denkstufen (low/medium/high)? Bisher gpt-oss; andere können nur an/aus."""
+    return "gpt-oss" in (model or "").lower()
+
+
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.S)
 
 
@@ -443,6 +455,7 @@ class FakeLLM:
         self.delay = delay
         self.calls: list[list[dict]] = []
         self.opts: list[dict] = []  # Optionen je Aufruf (Werkzeuge, max_tokens, tool_choice) – für Tests
+        self.thought_repeat = 1  # Tests: wie lang die Denkkette wird (Denk-Budget)
 
     async def close(self) -> None:
         pass
@@ -502,9 +515,10 @@ class FakeLLM:
 
     async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
                           think: bool | None = None, max_tokens: int | None = None,
-                          tool_choice: str | None = None) -> AsyncIterator[dict]:
+                          tool_choice: str | None = None, effort: str | None = None) -> AsyncIterator[dict]:
         self.calls.append(messages)
-        self.opts.append({"tools": tools, "think": think, "max_tokens": max_tokens, "tool_choice": tool_choice})
+        self.opts.append({"tools": tools, "think": think, "max_tokens": max_tokens, "tool_choice": tool_choice,
+                          "effort": effort})
         last = messages[-1].get("content") or "" if messages else ""
         if max_tokens == 1:  # Vorwärmen: nur einlesen
             msg = {"role": "assistant", "content": "."}
@@ -515,8 +529,8 @@ class FakeLLM:
         for name in [c["function"]["name"] for c in msg.get("tool_calls") or []]:
             yield {"type": "tool_delta", "name": name, "chars": 24}
         if think:
-            for word in re.findall(r"\S+\s*", "Der Nutzer möchte etwas wissen. Ich überlege kurz, welche Werkzeuge "
-                                               "passen, und antworte dann knapp."):
+            thought = "Der Nutzer möchte etwas wissen. Ich überlege kurz, welche Werkzeuge passen, und antworte dann knapp. "
+            for word in re.findall(r"\S+\s*", thought * self.thought_repeat):
                 if self.delay:
                     await asyncio.sleep(self.delay)
                 yield {"type": "reasoning", "text": word}
