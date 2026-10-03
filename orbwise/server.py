@@ -965,9 +965,9 @@ def create_app(cfg: Config) -> FastAPI:
         gpu = (await asyncio.to_thread(metrics.collect)).get("gpu")
         if not isinstance(llm, LLMRouter):
             return {"available": False}
-        info = await llm.memory_info()
+        info, reason = await llm.memory_info()
         if not info:
-            return {"available": False, "profile": llm.active, "ctx": llm.context_size,
+            return {"available": False, "profile": llm.active, "ctx": llm.context_size, "reason": reason,
                     "managed": llm.profile.server is not None, "backend": llm.profile.backend}
         return {"available": True, "profile": llm.active, "backend": llm.profile.backend,
                 **llm_memory.summary(info), "recommend": llm_memory.recommend(info, gpu), "gpu": gpu}

@@ -1976,8 +1976,16 @@
   }
   function showMemory(m) {
     const box = $("tele-mem");
-    if (!m || !m.available) { box.hidden = true; return; }
+    if (!m || (!m.available && !m.reason)) { box.hidden = true; return; }  // Demo: nichts zu zeigen
     box.hidden = false;
+    if (!m.available) {  // echtes Modell, aber keine Angaben – den Grund nennen statt still zu verschwinden
+      $("tm-val").textContent = m.ctx ? ctxLabel(m.ctx) : "–";
+      box.querySelectorAll(".tm-bar i").forEach((i) => { i.style.width = "0"; });
+      $("tm-sub").textContent = L("keine Speicherangaben: ", "no memory data: ") + m.reason;
+      box.title = m.reason;
+      box.classList.remove("warn");
+      return;
+    }
     const share = m.kv_vram_share ?? 1;
     $("tm-val").textContent = `${ctxLabel(m.ctx)} · KV ${gbs(m.kv_bytes)}`;
     box.querySelector(".tm-bar .vram").style.width = `${share * 100}%`;
@@ -2006,8 +2014,11 @@
     const opts = (m && m.recommend && m.recommend.options) || [4096, 8192, 12288, 16384, 24576, 32768, 49152, 65536].map((c) => ({ ctx: c }));
     box.innerHTML = `<div class="mm-title"></div><div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p>`;
     box.querySelector(".mm-title").textContent = L(`KONTEXTFENSTER · ${p.label}`, `CONTEXT WINDOW · ${p.label}`);
+    const missing = lastMem && !lastMem.available && lastMem.reason ? lastMem.reason : "";
     box.querySelector(".ctx-now").textContent = L(`Aktuell ${num(p.num_ctx)} Token`, `Currently ${num(p.num_ctx)} tokens`)
-      + (m ? ` · KV-Cache ${gbs(m.kv_bytes)}, ${memText(m)}` + (recText(m) ? ` · ${recText(m)}` : "") : "");
+      + (m ? ` · KV-Cache ${gbs(m.kv_bytes)}, ${memText(m)}` + (recText(m) ? ` · ${recText(m)}` : "")
+        + (m.source === "estimate" ? L(" (geschätzt)", " (estimated)") : "")
+        : missing ? L(` · keine Speicherangaben: ${missing}`, ` · no memory data: ${missing}`) : "");
     for (const o of opts) {
       const b = document.createElement("button");
       b.type = "button";

@@ -103,3 +103,87 @@ def summary(info: dict[str, Any]) -> dict:
     return {**info, "kv_bytes": kv, "model_bytes": model,
             "kv_vram_share": round(info.get("kv_vram", 0) / kv, 3) if kv else None,
             "model_vram_share": round(info.get("model_vram", 0) / model, 3) if model else None}
+
+
+# ---------------------------------------------------------------- Schätzung aus der GGUF-Datei (llama-server)
+# Wenn das Startlog nichts hergibt (eigener Log des Startskripts, Server lief schon): Architektur aus dem Kopf der
+# Modelldatei lesen und den KV-Cache daraus berechnen – wie bei Ollama.
+_GGUF_SCALARS = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i", 6: "<f", 7: "<?", 10: "<Q", 11: "<q", 12: "<d"}
+CACHE_BYTES = {"f32": 4.0, "f16": 2.0, "bf16": 2.0, "q8_0": 34 / 32, "q5_1": 24 / 32, "q5_0": 22 / 32,
+               "q4_1": 20 / 32, "q4_0": 18 / 32, "iq4_nl": 18 / 32}
+
+
+def gguf_metadata(path: str, wanted: tuple[str, ...] = (".block_count", ".attention.head_count",
+                                                         ".attention.head_count_kv", ".attention.key_length",
+                                                         ".attention.value_length", ".embedding_length",
+                                                         ".context_length")) -> dict:
+    """Ausgewählte Zahlen-Metadaten aus dem Kopf einer GGUF-Datei (liest nur so weit wie nötig)."""
+    import struct
+
+    out: dict[str, int] = {}
+    with open(path, "rb") as f:
+        if f.read(4) != b"GGUF":
+            return {}
+        _version, _tensors, n_kv = struct.unpack("<IQQ", f.read(20))
+
+        def string() -> str:
+            (n,) = struct.unpack("<Q", f.read(8))
+            return f.read(n).decode("utf-8", "replace")
+
+        def skip(kind: int) -> None:
+            if kind == 8:
+                (n,) = struct.unpack("<Q", f.read(8))
+                f.seek(n, 1)
+            elif kind == 9:
+                elem, count = struct.unpack("<IQ", f.read(12))
+                if elem in _GGUF_SCALARS:
+                    f.seek(struct.calcsize(_GGUF_SCALARS[elem]) * count, 1)
+                else:
+                    for _ in range(count):
+                        skip(elem)
+            else:
+                f.seek(struct.calcsize(_GGUF_SCALARS[kind]), 1)
+
+        for _ in range(min(n_kv, 10_000)):
+            key = string()
+            (kind,) = struct.unpack("<I", f.read(4))
+            if kind in _GGUF_SCALARS and kind not in (6, 7, 12) and key.endswith(wanted):
+                (out[key],) = struct.unpack(_GGUF_SCALARS[kind], f.read(struct.calcsize(_GGUF_SCALARS[kind])))
+            else:
+                skip(kind)
+            if len(out) >= len(wanted):
+                break
+    return out
+
+
+def cache_bytes(command: str, env: dict) -> float:
+    """Bytes pro KV-Element aus dem Startbefehl (-ctk/-ctv bzw. --cache-type-k/v) – Bonsai: BONSAI_KV4=1 → q4_0."""
+    found = re.findall(r"(?:-ctk|-ctv|--cache-type-[kv])\s+(\S+)", command)
+    if not found and str(env.get("BONSAI_KV4", "")).strip() in ("1", "true", "yes"):
+        found = ["q4_0"]
+    sizes = [CACHE_BYTES.get(t.lower(), 2.0) for t in found] or [2.0]
+    return sum(sizes) / len(sizes)
+
+
+def estimate_from_gguf(path: str, ctx: int, command: str = "", env: dict | None = None) -> dict | None:
+    """KV-Cache und Modellgröße aus der GGUF-Datei; Ablage im VRAM, außer der Befehl hält den Cache im RAM."""
+    import os
+
+    try:
+        meta = gguf_metadata(path)
+        size = os.path.getsize(path)
+    except (OSError, ValueError, Exception):  # noqa: BLE001 – ungewöhnliche Datei: keine Schätzung
+        return None
+    per_token = kv_per_token_from_info(meta, cache_bytes(command, env or {}))
+    if not per_token or not ctx:
+        return None
+    kv = per_token * ctx
+    kv_in_ram = bool(re.search(r"(?:^|\s)(-nkvo|--no-kv-offload)\b", command))
+    ngl = re.findall(r"(?:-ngl|--n-gpu-layers|--gpu-layers)\s+(\d+)", command)
+    layers = next((v for k, v in meta.items() if k.endswith(".block_count")), 0)
+    share = 1.0 if not ngl or not layers else min(1.0, int(ngl[-1]) / layers)
+    train = next((v for k, v in meta.items() if k.endswith(".context_length")), None)
+    return {"ctx": ctx, "ctx_train": train, "kv_per_token": per_token, "source": "estimate",
+            "kv_vram": 0 if kv_in_ram else int(kv * share), "kv_ram": kv if kv_in_ram else int(kv * (1 - share)),
+            "model_vram": int(size * share), "model_ram": int(size * (1 - share)),
+            "model_ram_offload": int(size * (1 - share))}

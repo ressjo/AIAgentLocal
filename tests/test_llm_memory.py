@@ -94,3 +94,55 @@ def test_memory_api_in_demo_mode(cfg, monkeypatch):
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         assert client.get("/api/llm/memory").json() == {"available": False}
         assert client.post("/api/models/demo/context", json={"ctx": 8192}).status_code == 400
+
+
+def write_gguf(path, meta: dict, vocab: int = 50):
+    """Kleine GGUF-Datei: Zahlen-Metadaten plus ein Tokenizer-Array (wird beim Lesen übersprungen)."""
+    import struct
+
+    def s(text):
+        b = text.encode()
+        return struct.pack("<Q", len(b)) + b
+    kvs = [s("general.architecture") + struct.pack("<I", 8) + s("qwen3")]
+    kvs.append(s("tokenizer.ggml.tokens") + struct.pack("<IIQ", 9, 8, vocab) + b"".join(s(f"t{i}") for i in range(vocab)))
+    kvs += [s(k) + struct.pack("<II", 4, v) for k, v in meta.items()]
+    path.write_bytes(b"GGUF" + struct.pack("<IQQ", 3, 0, len(kvs)) + b"".join(kvs) + b"\0" * 1000)
+
+
+def test_estimate_from_gguf_with_compressed_cache(tmp_path):
+    from orbwise.llm_memory import cache_bytes, estimate_from_gguf, gguf_metadata
+    model = tmp_path / "bonsai.gguf"
+    write_gguf(model, {"qwen3.block_count": 48, "qwen3.attention.head_count": 40, "qwen3.attention.head_count_kv": 8,
+                       "qwen3.attention.key_length": 128, "qwen3.attention.value_length": 128,
+                       "qwen3.context_length": 32768})
+    assert gguf_metadata(str(model))["qwen3.block_count"] == 48
+    assert cache_bytes("x -ctk q8_0 -ctv q8_0", {}) == 34 / 32 and cache_bytes("x", {"BONSAI_KV4": "1"}) == 18 / 32
+    est = estimate_from_gguf(str(model), 16384, "start.sh -np 1", {"BONSAI_KV4": "1"})
+    assert est["kv_per_token"] == int(48 * 8 * 256 * 18 / 32) and est["kv_ram"] == 0 and est["ctx_train"] == 32768
+    assert estimate_from_gguf(str(model), 16384, "llama-server -nkvo")["kv_vram"] == 0  # Cache bewusst im RAM
+    assert estimate_from_gguf(str(tmp_path / "fehlt.gguf"), 16384) is None
+
+
+def test_llama_server_memory_falls_back_and_explains(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    model = tmp_path / "m.gguf"
+    write_gguf(model, {"llama.block_count": 32, "llama.attention.head_count": 32,
+                       "llama.attention.head_count_kv": 8, "llama.embedding_length": 4096})
+    cfg = LLMConfig(profiles={"bonsai": ProfileConfig(
+        backend="openai", base_url="http://127.0.0.1:8080/v1", model="bonsai", num_ctx=8192,
+        server=ServerConfig(command="start.sh", env={"BONSAI_CTX": "8192"}))}, active="bonsai")
+    router = LLMRouter(cfg)
+    # älterer Start mit Angaben, letzter Start ohne: nicht die alten Zahlen nehmen
+    (tmp_path / "orbwise-llm.log").write_text("===== Starte: alt\n" + LOG + "\n===== Starte: neu\nserver listening\n")
+    props = {}
+
+    async def server_props():
+        return props
+    monkeypatch.setattr(router.client, "server_props", server_props)
+    info, reason = run(router.memory_info())
+    assert info is None and "Modelldatei" in reason
+    props["model_path"] = str(model)
+    info, reason = run(router.memory_info())
+    assert info["source"] == "estimate" and info["ctx"] == 8192 and info["kv_per_token"] == 32 * 8 * 256 * 2
+    (tmp_path / "orbwise-llm.log").write_text("===== Starte: neu\n" + LOG)  # Log mit Angaben: genau
+    assert run(router.memory_info())[0]["source"] == "log"

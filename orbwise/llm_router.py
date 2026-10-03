@@ -385,18 +385,33 @@ class LLMRouter:
                     await old_client.close()
                 await self.detect_context()
 
-    async def memory_info(self) -> dict | None:
-        """Speicher des aktiven Modells samt Kontext (VRAM/RAM) – llama-server aus seinem Log, Ollama aus der API."""
-        from .llm_memory import parse_llama_log
+    async def memory_info(self) -> tuple[dict | None, str]:
+        """Speicher des aktiven Modells samt Kontext (VRAM/RAM) → (Werte, Grund falls keine).
+        llama-server: genau aus dem Startlog, sonst geschätzt aus der GGUF-Datei (Pfad laut /props); Ollama: API."""
+        from .llm_memory import estimate_from_gguf, parse_llama_log
         if isinstance(self.client, OllamaLLM):
-            return await self.client.memory_info()
-        if not self.profile.server:
-            return None  # fremder Server: Log nicht zugänglich
-        try:
-            text = _log_path().read_text(encoding="utf-8", errors="replace")[-500_000:]
-        except OSError:
-            return None
-        return parse_llama_log(text)
+            info = await self.client.memory_info()
+            return info, "" if info else "Modell ist gerade nicht in Ollama geladen"
+        p = self.profile
+        info = None
+        if p.server:
+            try:
+                text = _log_path().read_text(encoding="utf-8", errors="replace")[-500_000:]
+                # nur der letzte Start dieses Servers – ältere Einträge gehören zu einer anderen Größe
+                info = parse_llama_log(text[text.rfind("===== Starte:"):] if "===== Starte:" in text else text)
+            except OSError:
+                info = None
+        if info:
+            return info, ""
+        props = await self.client.server_props() if isinstance(self.client, OpenAICompatLLM) else {}
+        path = os.path.expanduser(str(props.get("model_path") or ""))
+        if not path or not os.path.isfile(path):
+            return None, ("Der Modell-Server nennt keine Modelldatei (/props) und sein Log enthält keine "
+                          "Speicherangaben" if p.server else "Fremder Modell-Server ohne Angabe der Modelldatei")
+        server = p.server
+        est = estimate_from_gguf(path, self.context_size, server.command if server else "",
+                                 dict(server.env) if server else {})
+        return est, "" if est else "Modelldatei ohne lesbare Architektur-Angaben"
 
     def describe(self) -> list[dict]:
         return [{"name": n, "label": p.label, "backend": p.backend, "model": p.model, "base_url": p.base_url,
