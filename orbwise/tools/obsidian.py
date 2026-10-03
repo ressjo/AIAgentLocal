@@ -216,7 +216,7 @@ async def obsidian_read(
         path = resolve_note(vault, note)
         text = _read(path)
         start = max(0, int(offset))
-        limit = ctx.cfg.obsidian.max_chars
+        limit = ctx.limit(ctx.cfg.obsidian.max_chars)
         part = text[start:start + limit]
         rest = len(text) - start - len(part)
         more = f"\n… noch {rest} Zeichen – weiter mit offset={start + len(part)}" if rest > 0 else ""
@@ -239,7 +239,7 @@ async def obsidian_ask(
         head = f"Notiz: {_rel(vault, path)} (geändert {_when(path)})"
         if not body:
             return f"{head}\n(Die Notiz ist leer.)"
-        budget = ctx.cfg.obsidian.max_chars
+        budget = ctx.limit(ctx.cfg.obsidian.max_chars)  # kleines Kontextfenster: weniger auf einmal
         if len(body) <= budget:
             return f"{head}\n--- vollständiger Text ---\n{body}"
         passages = split_passages(body)

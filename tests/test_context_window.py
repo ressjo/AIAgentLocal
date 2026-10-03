@@ -93,8 +93,14 @@ def test_compaction_reuses_the_cached_prompt_and_keeps_everything(cfg, llm, memo
     assert "Nutzernachrichten seit der letzten Zusammenfassung" in conv.running_summary  # vom Code ergänzt
     assert llm.opts[k + 1]["max_tokens"] == 1  # gleich danach vorgewärmt
     after = llm.calls[k + 1]
-    assert conv.running_summary in after[0]["content"]
-    assert "Frage 0" not in json.dumps(after[1:]) and any("Frage" in (m.get("content") or "") for m in after[1:])
+    # Systemprompt und Werkzeuge bleiben gleich (im Cache des Servers) – die Zusammenfassung steht vor der ersten
+    # Nachricht der neuen Epoche (wie bei Claude Code)
+    assert after[0] == prev[0] and llm.opts[k + 1]["tools"] == llm.opts[k]["tools"]
+    assert conv.running_summary not in after[0]["content"] and conv.running_summary in after[1]["content"]
+    assert after[1]["content"].startswith("[Kontext") and after[1]["content"].count("[/Kontext]") == 1
+    old = "Frage 0: " + "x" * 300  # nur noch gekürzt in der Liste der Nutzernachrichten
+    assert old not in json.dumps(after[1:], ensure_ascii=False) and any("Frage" in (m.get("content") or "")
+                                                                          for m in after[1:])
     # nichts gelöscht: der ganze Chat steht noch in der Datei (und in der Oberfläche)
     assert sum(1 for m in conv.history if m["role"] == "user") == 6
     # nach der Komprimierung wächst der Prompt wieder nur hinten
@@ -158,24 +164,25 @@ def test_long_task_compresses_rarely_and_continues(cfg, memory, tmp_path, stamps
     answer = run(agent.run("Lies alle Logs", emit, _noop))
     assert answer == "Fertig: 24 Dateien gelesen." and not any(e["type"] == "error" for e in events)
     compactions = [r for r in llm.requests if is_compaction(r[1])]
-    # 24 × ~1,6k Token Ausgabe passen nie in 16k: komprimiert wird, wenn das Fenster voll ist (~alle 5 Schritte) –
-    # nicht bei jedem Schritt
-    assert 1 <= len(compactions) <= 24 // 4
+    clears = [e for e in events if e.get("phase") == "done" and e.get("cleared")]
+    # 24 × ~1,6k Token Ausgabe passen nie in 16k: wird das Fenster voll, werden zuerst alte Ergebnisse ausgeblendet
+    # (kein Modellaufruf) – zusammengefasst wird erst, wenn das nicht mehr reicht
+    assert clears and 1 <= len(compactions) <= 2
     sizes = [request_tokens(tools, msgs) for tools, msgs, _ in llm.requests]
     assert max(sizes) <= 16384  # nie übergelaufen
     for tools, msgs, max_tokens in compactions:  # die Zusammenfassung passt mit hinein (knapp: kürzer, ≥ 500)
         assert max_tokens >= SUMMARY_MIN and request_tokens(tools, msgs) + max_tokens <= 16384
-    # Zwischen den Komprimierungen nur hinten verlängert (Brüche nur direkt nach einer Komprimierung)
+    # Dazwischen nur hinten verlängert (Brüche nur direkt nach dem Ausblenden bzw. einer Komprimierung)
     reqs = [(t, m) for t, m, _ in llm.requests]
     breaks = [i for i in range(1, len(reqs)) if not extends(reqs[i - 1], reqs[i])]
-    assert len(breaks) == len(compactions)
+    assert len(breaks) == len(compactions) + len(clears)
     # nach einer Komprimierung mitten in der Aufgabe: Frage und letzter Schritt gehen wörtlich mit, und die Frage
     # sagt dem Modell, dass die Aufgabe weiterläuft
     k = next(i for i, r in enumerate(llm.requests) if is_compaction(r[1]))
     after = llm.requests[k + 1][1]
     assert [m["role"] for m in after[1:]] == ["user", "assistant", "tool"]
     assert "Die Aufgabe läuft noch" in after[1]["content"] and after[1]["content"].endswith("Lies alle Logs")
-    assert "Nächster Schritt" in after[0]["content"]  # Zusammenfassung im System-Prompt
+    assert "Nächster Schritt" in after[1]["content"]  # Zusammenfassung vor der ersten Nachricht der Epoche
     # nach der fertigen Aufgabe (Komprimierung in Ruhe) steht der Hinweis nicht mehr da
     if memory.conversation.epochs[-1].get("reason") == "idle":
         question = next(m for m in memory.conversation.epoch_messages() if m["role"] == "user")
@@ -210,7 +217,7 @@ def test_memories_first_turn_full_then_only_new_and_none_in_coding(cfg, llm, mem
     assert "Erinnerungen" not in coding_note  # Coding: nur auf Anfrage (recall)
 
 
-@pytest.mark.parametrize("window,think,limit", [(8192, False, 6692), (16384, False, 14884),
+@pytest.mark.parametrize("window,think,limit", [(8192, False, 7168), (16384, False, 14884),
                                                  (16384, True, 13384), (32768, False, 30402)])
 def test_compaction_point_leaves_room_for_answer_and_summary(cfg, memory, window, think, limit):
     llm = type("W", (), {"context_size": window})()
@@ -236,8 +243,9 @@ def test_manual_compact_with_focus(cfg, llm, memory):
 
 
 def test_sticky_tool_groups_only_grow_within_an_epoch(cfg, memory):
+    """Ab 16k: einmal geladene Gruppen bleiben bis zur Komprimierung (unter 16k: siehe test_context_regimes.py)."""
     class Small:
-        context_size = 8192
+        context_size = 16384
         sent: list[set] = []
 
         async def chat_stream(self, messages, tools=None):

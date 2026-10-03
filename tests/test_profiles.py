@@ -485,7 +485,7 @@ def test_context_event_reports_usage_and_trimming(cfg, memory):
     run(agent.run("Hallo", emit, confirm))
     ctx_events = [e for e in events if e["type"] == "context"]
     first, last = ctx_events[0], ctx_events[-1]
-    assert first["window"] == 8192 and first["budget"] == 8192 - 1500
+    assert first["window"] == 8192 and first["budget"] == 8192 - 1024  # kleines Fenster: knappere Antwortreserve
     parts = first["parts"]
     assert parts["tools"] > 0 and parts["system"] > 0 and parts["history"] > 0
     assert first["used"] == sum(parts.values()) and not first["trimmed"]

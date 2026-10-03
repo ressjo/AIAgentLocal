@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Context in two stages – below 16k and from 16k** (`orbwise/context_plan.py`), as close to Claude Code as a local
+  model allows:
+  - **Lean mode below 16k** (e.g. Bonsai with 8k): only 9 core tools up front, everything else by keyword or
+    `load_tools` (which now lists exactly what is missing); big groups (Paperless, mail, calendar, system, notes,
+    packages) bring their changing part only when the request sounds like it; "yes, do it" loads what the model just
+    proposed. The selection only changes when something new is needed and is then repacked within ~35 % of the
+    budget. Tool results, memories, facts, the answer reserve, thinking and the summary scale with the window. A new
+    chat with every integration starts at ~2.3k instead of ~4.8k tokens.
+  - **Old tool results are hidden before anything is summarised** (both stages, like Claude Code's microcompact):
+    each becomes a short placeholder with its start and the file that holds it completely; long arguments of old calls
+    are shortened. No model call is needed. In a simulated task with 24 big files this cut the summaries from 23 to 4
+    (8k) and from 6 to 1 (16k).
+  - **The summary no longer sits in the instructions** but in the note of the first message after it, and from 16k the
+    tool selection is kept – instructions, facts and tools stay in the model server's cache across a compaction.
+    Lean mode writes a short summary (4 sections); Coding mode from 16k attaches the current content of the files
+    worked on last.
+  - Paperless, mail, Obsidian and Trilium respect the window too (section by section), and any result that is still
+    too long is cut with the full text saved in `~/.cache/orbwise/outputs/` (now the last 100).
+  - The CONTEXT tile shows the stage and how many results are hidden, the activity panel shows "made room" and which
+    tools were added or dropped, and Settings → Models marks windows below 16k as lean mode.
 - **Context in memory and context window in the UI:** a telemetry tile shows the KV cache size and how much of it
   is in VRAM or RAM (exact from the llama-server log, estimated for Ollama) with a recommendation to raise or lower
   the window; Settings → Models → Context window changes it per model (server restart or Ollama reload, remembered

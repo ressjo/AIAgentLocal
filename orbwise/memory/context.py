@@ -12,14 +12,18 @@ behalten alles, und Details aus komprimierten Teilen holt das Gedächtnis bei Be
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 PROMPT_KEYS = ("role", "content", "tool_calls", "tool_name")  # was davon an das Modell geht
+CLEAR_MIN_CHARS = 600  # kürzere Werkzeug-Ergebnisse lohnen das Ausblenden nicht
+CLEAR_ARG_CHARS = 800  # längere Aufruf-Argumente (z. B. der Inhalt von write_file) werden beim Ausblenden gekürzt
 
 
 def est_tokens(text: str) -> int:
@@ -171,6 +175,57 @@ class Conversation:
         self.epochs = [new_epoch()]
         self.save()
 
+    # ---------- Alte Werkzeug-Ergebnisse ausblenden (wie Claude Codes Microcompact) ----------
+    def tool_steps(self) -> list[tuple[int, list[int]]]:
+        """Werkzeug-Schritte der Epoche: (Index des Aufrufs, Indizes seiner Ergebnisse)."""
+        hist, steps = self.history, []
+        for i in self.epoch_indices():
+            m = hist[i]
+            if m["role"] == "assistant" and m.get("tool_calls"):
+                steps.append((i, []))
+            elif m["role"] == "tool" and steps:
+                steps[-1][1].append(i)
+        return steps
+
+    def clearable(self, keep_tokens: int) -> list[int]:
+        """Was beim Ausblenden kürzer wird: Ergebnisse älterer Werkzeug-Schritte (die neuesten bleiben, bis
+        keep_tokens erreicht sind – mindestens der letzte Schritt) und lange Argumente älterer Aufrufe."""
+        steps = self.tool_steps()
+        if len(steps) < 2:
+            return []
+        kept = sum(msg_tokens(self.history[i]) for i in steps[-1][1])
+        border = len(steps) - 1
+        while border > 0:
+            size = sum(msg_tokens(self.history[i]) for i in steps[border - 1][1])
+            if kept + size > keep_tokens:
+                break
+            kept += size
+            border -= 1
+        out = []
+        for call, results in steps[:border]:
+            if not self.history[call].get("cleared") and _long_args(self.history[call]):
+                out.append(call)
+            out += [i for i in results if not self.history[i].get("cleared")
+                    and len(self.history[i].get("content") or "") > CLEAR_MIN_CHARS]
+        return out
+
+    def clear_results(self, indices: list[int], stub: Callable[[dict], str]) -> int:
+        """Blendet aus: Ergebnisse werden zu einem Platzhalter (stub), lange Argumente gekürzt. Das Original bleibt in
+        full_content bzw. full_tool_calls (Chat-Datei). Liefert die Zahl der ausgeblendeten Ergebnisse."""
+        n = 0
+        for i in indices:
+            m = self.history[i]
+            if m["role"] == "tool":
+                m.setdefault("full_content", m.get("content") or "")
+                m["content"] = stub(m)
+                n += 1
+            else:
+                m.setdefault("full_tool_calls", copy.deepcopy(m["tool_calls"]))
+                m["tool_calls"] = [_short_call(c) for c in m["tool_calls"]]
+            m["cleared"] = True
+        self.epoch["cleared"] = self.epoch.get("cleared", 0) + n
+        return n
+
     # ---------- Budget ----------
     def history_tokens(self) -> int:
         return sum(msg_tokens(m) for m in self.epoch_messages())
@@ -207,6 +262,31 @@ class Conversation:
         while earlier and earlier[0]["role"] == "tool":
             earlier.pop(0)
         return [{k: v for k, v in m.items() if k in PROMPT_KEYS or k == "note"} for m in earlier + turn]
+
+
+def _long_args(msg: dict) -> bool:
+    return any(isinstance(v, str) and len(v) > CLEAR_ARG_CHARS
+               for c in msg.get("tool_calls") or [] for v in _args(c).values())
+
+
+def _args(call: dict) -> dict:
+    args = call.get("function", {}).get("arguments")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except json.JSONDecodeError:
+            return {}
+    return args if isinstance(args, dict) else {}
+
+
+def _short_call(call: dict) -> dict:
+    """Aufruf mit gekürzten langen Argumenten (bleibt gültiges JSON – Chat-Vorlagen lesen die Argumente)."""
+    args = _args(call)
+    if not any(isinstance(v, str) and len(v) > CLEAR_ARG_CHARS for v in args.values()):
+        return call
+    args = {k: (f"{v[:200]}… [{len(v)} Zeichen ausgeblendet]" if isinstance(v, str) and len(v) > CLEAR_ARG_CHARS
+                else v) for k, v in args.items()}
+    return {**call, "function": {**call.get("function", {}), "arguments": args}}
 
 
 TOOL_MIN_CHARS = 600

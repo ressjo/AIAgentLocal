@@ -225,8 +225,9 @@ class Memory:
                 taken.append(h.id)
         return "\n\n".join(out)
 
-    def facts_text(self) -> str:
-        return self.facts.as_text(self.cfg.facts_max_tokens * 3)
+    def facts_text(self, max_tokens: int | None = None) -> str:
+        """Fakten für den Systemprompt – höchstens max_tokens (Standard: facts_max_tokens; kleines Fenster weniger)."""
+        return self.facts.as_text((max_tokens or self.cfg.facts_max_tokens) * 3)
 
     # ---------- Tageszusammenfassungen ----------
     async def summarize_day(self, day: str) -> str | None:

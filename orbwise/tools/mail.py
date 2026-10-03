@@ -431,7 +431,7 @@ async def mail_read(
         _SEEN[(folder, int(uid))] = f"{_sender(str(msg.get('From', '')))} – {msg.get('Subject', '')}"
         text = body_text(msg)
         start = max(0, int(offset))
-        part = text[start:start + ctx.cfg.mail.max_chars]
+        part = text[start:start + ctx.limit(ctx.cfg.mail.max_chars)]
         rest = len(text) - start - len(part)
         more = f"\n… noch {rest} Zeichen – weiter mit offset={start + len(part)}" if rest > 0 else ""
         return f"{_header_block(msg, atts)}\n{START}\n{part or '(kein Text)'}\n{END}{more}"
@@ -454,7 +454,7 @@ async def mail_ask(
 
     async def run() -> str:
         head, text = await _run(ctx.cfg, work)
-        budget = ctx.cfg.mail.max_chars
+        budget = ctx.limit(ctx.cfg.mail.max_chars)  # kleines Kontextfenster: weniger auf einmal
         if len(text) <= budget:
             return f"{head}\n{START}\n{text or '(kein Text)'}\n{END}"
         passages = split_passages(text)

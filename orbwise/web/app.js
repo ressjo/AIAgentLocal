@@ -876,8 +876,9 @@
                  `context ${ev.percent} % full – summarising the chat, then carrying on`);
       case "think_cut": return L(`genug überlegt (${num(ev.tokens)} Token) – handelt jetzt`,
                                  `enough thinking (${num(ev.tokens)} tokens) – acting now`);
-      case "tools_added": return L(`Werkzeuge dazugeladen: ${groupNames(ev.groups)} – einmal neu einlesen`,
-                                   `tools added: ${groupNames(ev.groups)} – one-off re-read`);
+      case "tools_added": return toolsChanged(ev.groups, ev.dropped) + L(" – einmal neu einlesen", " – one-off re-read");
+      case "clear": return L(`blendet ${oldResults(ev.results)} aus – spart das Zusammenfassen`,
+                             `hiding ${oldResults(ev.results)} – no summary needed`);
       case "prewarm": return L(`liest den Chat im Hintergrund vor · ${kTok(ev.tokens)} Token`,
                                `pre-reading the chat in the background · ${kTok(ev.tokens)} tokens`);
       default: return "";
@@ -887,9 +888,20 @@
   const GROUP_NAMES = {
     paperless: "Paperless", mail: "Mail", homeassistant: "Smart Home", calendar_tools: L("Kalender", "Calendar"),
     sysadmin: "System", packages: L("Pakete", "Packages"), routine_tools: L("Routinen", "Routines"),
-    trilium: "Trilium", obsidian: "Obsidian", vision: L("Bildschirm", "Screen"),
+    trilium: "Trilium", obsidian: "Obsidian", vision: L("Bildschirm", "Screen"), telegram_tools: "Telegram",
+    weather: L("Wetter", "Weather"), power: L("Ausschalten", "Power"), apps: L("Programme", "Apps"),
+    briefing: L("Tagesüberblick", "Briefing"), reminder_tools: L("Erinnerungen", "Reminders"),
+    files: L("Dateien", "Files"), web: "Web", system: L("Systeminfo", "System info"),
+    todo_tools: L("Aufgabenliste", "Task list"), memory_tools: L("Gedächtnis", "Memory"),
   };
-  const groupNames = (groups) => (groups || []).map((g) => GROUP_NAMES[g] || g).join(", ");
+  const oldResults = (n) => n === 1 ? L("1 altes Werkzeug-Ergebnis", "1 old tool result")
+    : L(`${num(n)} alte Werkzeug-Ergebnisse`, `${num(n)} old tool results`);
+  // „paperless:write“ = der ändernde Teil einer Gruppe (kleines Kontextfenster)
+  const groupName = (g) => g.endsWith(":write") ? `${GROUP_NAMES[g.slice(0, -6)] || g.slice(0, -6)} ${L("(ändern)", "(changes)")}`
+    : GROUP_NAMES[g] || g;
+  const groupNames = (groups) => (groups || []).map(groupName).join(", ");
+  const toolsChanged = (added, dropped) => (added && added.length ? L("Werkzeuge dazugeladen: ", "tools added: ") + groupNames(added) : "")
+    + (dropped && dropped.length ? (added && added.length ? " · " : "") + L("weggelassen: ", "dropped: ") + groupNames(dropped) : "");
 
   function phaseSummary(ev) {
     if (ev.compress) return L(`Chat zusammengefasst · ${num(ev.before)} → ${num(ev.after)} Token · Zusammenfassung ${num(ev.tokens)} Token`,
@@ -897,7 +909,9 @@
     if (ev.prewarm) return ev.error ? L("Vorlesen übersprungen", "pre-read skipped")
       : L(`Chat vorgelesen · ${num(ev.tokens)} Token – die nächste Frage liest nur noch Neues`,
           `chat pre-read · ${num(ev.tokens)} tokens – the next question only reads what is new`);
-    if (ev.tools_added) return L(`Werkzeuge dazugeladen: ${groupNames(ev.tools_added)}`, `tools added: ${groupNames(ev.tools_added)}`);
+    if (ev.cleared) return L(`Platz geschaffen · ${oldResults(ev.cleared)} ausgeblendet · ${num(ev.before)} → ${num(ev.after)} Token – ohne Zusammenfassen`,
+                             `made room · ${oldResults(ev.cleared)} hidden · ${num(ev.before)} → ${num(ev.after)} tokens – no summary needed`);
+    if ((ev.tools_added && ev.tools_added.length) || (ev.tools_dropped && ev.tools_dropped.length)) return toolsChanged(ev.tools_added, ev.tools_dropped);
     if (ev.error) return L("abgebrochen – Fehler beim Modell", "stopped – model error");
     const parts = [];
     if (ev.load_ms >= 1000) parts.push(L(`Modell geladen in ${secs(ev.load_ms / 1000)}`, `model loaded in ${secs(ev.load_ms / 1000)}`));
@@ -1833,14 +1847,21 @@
     setTile("ctx", used / 1000, {
       pct,
       digits: 1,
-      sub: `${Math.round(pct)} %` + (c.trimmed ? L(" · gekürzt", " · trimmed") : c.summarized ? L(" · zusammengefasst", " · summarised") : ""),
+      sub: `${Math.round(pct)} %` + (c.trimmed ? L(" · gekürzt", " · trimmed") : c.summarized ? L(" · zusammengefasst", " · summarised")
+        : c.cleared ? L(" · ausgeblendet", " · hidden") : ""),
       title: [
         L(`Prompt ${c.real ? "" : "ca. "}${used} von ${c.window} Token (Kontextfenster des Modells)`,
           `Prompt ${c.real ? "" : "approx. "}${used} of ${c.window} tokens (the model's context window)`),
-        at ? L(`Zusammenfassen bei ~${kTok(at)} (${Math.round(100 * at / c.window)} %) – noch ~${kTok(Math.max(0, at - used))} Token. `
-               + `Bis dahin wird nur Neues eingelesen.`,
-               `Summarising at ~${kTok(at)} (${Math.round(100 * at / c.window)} %) – ~${kTok(Math.max(0, at - used))} tokens left. `
-               + `Until then only new parts are read.`) : "",
+        c.small == null ? "" : c.small
+          ? L("Kleines Fenster (unter 16k) – Sparmodus: wenige Werkzeuge vorab, der Rest kommt bei Bedarf; kürzere Ergebnisse.",
+              "Small window (below 16k) – lean mode: few tools up front, the rest on demand; shorter results.")
+          : L("Großes Fenster (ab 16k) – volle Grundausstattung an Werkzeugen.", "Large window (16k or more) – full set of core tools."),
+        at ? L(`Platz schaffen bei ~${kTok(at)} (${Math.round(100 * at / c.window)} %) – noch ~${kTok(Math.max(0, at - used))} Token. `
+               + `Bis dahin wird nur Neues eingelesen; dann werden erst alte Werkzeug-Ergebnisse ausgeblendet, zusammengefasst nur, wenn das nicht reicht.`,
+               `Making room at ~${kTok(at)} (${Math.round(100 * at / c.window)} %) – ~${kTok(Math.max(0, at - used))} tokens left. `
+               + `Until then only new parts are read; then old tool results are hidden first, a summary only if that isn't enough.`) : "",
+        c.cleared ? L(`Ausgeblendet: ${oldResults(c.cleared)} (vollständig in Dateien, das Modell kann sie nachlesen).`,
+                      `Hidden: ${oldResults(c.cleared)} (complete in files, the model can read them again).`) : "",
         c.reserve ? L(`${c.reserve} Token bleiben frei für Antwort${c.reserve > 2000 ? " und Denkkette" : ""}.`,
                       `${c.reserve} tokens are kept free for the answer${c.reserve > 2000 ? " and the reasoning" : ""}.`) : "",
         `System ${real(p.system)} · Tools ${real(p.tools)} · ${L("Gedächtnis", "Memory")} ${real(p.memory)} · `
@@ -2028,7 +2049,9 @@
       b.className = "ctx-opt" + (o.ctx === p.num_ctx ? " on" : "") + (o.fits === false ? " big" : "");
       b.innerHTML = "<span></span><small></small>";
       b.querySelector("span").textContent = ctxLabel(o.ctx);
-      b.querySelector("small").textContent = o.kv_bytes ? `KV ${gbs(o.kv_bytes)}` + (o.fits === false ? L(" · zu groß", " · too big") : "") : "";
+      const lean = o.ctx < 16384 ? L("Sparmodus", "lean mode") : "";
+      b.querySelector("small").textContent = (o.kv_bytes ? `KV ${gbs(o.kv_bytes)}` + (o.fits === false ? L(" · zu groß", " · too big") : "") : "")
+        + (lean && o.kv_bytes ? " · " : "") + lean;
       b.disabled = !!models.switching;
       b.onclick = async () => {
         if (o.ctx === p.num_ctx) return;
@@ -2049,8 +2072,10 @@
     box.querySelector(".set-hint").textContent = (p.managed
       ? L("Zum Ändern startet der Modell-Server neu (dauert etwas). ", "Changing it restarts the model server (takes a while). ")
       : L("Zum Ändern lädt Ollama das Modell neu. ", "Changing it makes Ollama reload the model. "))
-      + L("Größeres Fenster = längere Chats bis zum Zusammenfassen, braucht aber mehr Grafikspeicher. Liegt der KV-Cache im RAM, wird alles deutlich langsamer.",
-          "A bigger window means longer chats before summarising but needs more VRAM. If the KV cache lands in RAM, everything gets much slower.");
+      + L("Größeres Fenster = längere Chats bis zum Zusammenfassen, braucht aber mehr Grafikspeicher. Liegt der KV-Cache im RAM, wird alles deutlich langsamer. "
+          + "Unter 16k arbeitet Orbwise im Sparmodus: wenige Werkzeuge vorab (der Rest kommt bei Bedarf), kürzere Werkzeug-Ergebnisse, alte Ergebnisse werden früher ausgeblendet.",
+          "A bigger window means longer chats before summarising but needs more VRAM. If the KV cache lands in RAM, everything gets much slower. "
+          + "Below 16k Orbwise runs in lean mode: few tools up front (the rest on demand), shorter tool results, old results are hidden sooner.");
   }
 
   // ---------------------------------------------------------------- Modellauswahl

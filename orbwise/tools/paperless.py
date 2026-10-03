@@ -247,7 +247,7 @@ async def paperless_ask(
             content = (doc.get("content") or "").strip()
             if not content:
                 return f"{head}\n(Das Dokument enthält keinen erkannten Text – evtl. OCR in Paperless prüfen.)"
-            budget = pc.max_chars
+            budget = ctx.limit(pc.max_chars)  # kleines Kontextfenster: weniger Text auf einmal
             if len(content) <= budget:
                 return f"{head}\n--- vollständiger Text ---\n{content}"
             passages = split_passages(content)
@@ -279,7 +279,7 @@ async def paperless_read(
             head = await pc.describe(doc)
             content = (doc.get("content") or "").strip()
             start = max(0, int(offset))
-            part = content[start:start + pc.max_chars]
+            part = content[start:start + ctx.limit(pc.max_chars)]
             rest = len(content) - start - len(part)
             more = f"\n… noch {rest} Zeichen – weiter mit offset={start + len(part)}" if rest > 0 else ""
             return f"{head}\n---\n{part or '(kein Text)'}{more}"
@@ -483,10 +483,11 @@ def _apply_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     return CONFIRM, reason
 
 
-async def _suggest_material(pc: "PaperlessClient", ids: list[int]) -> str:
-    """Stand, Vorschläge von Paperless und Textauszug je Dokument plus die vorhandenen Namen."""
+async def _suggest_material(pc: "PaperlessClient", ids: list[int], limit: int | None = None) -> str:
+    """Stand, Vorschläge von Paperless und Textauszug je Dokument plus die vorhandenen Namen.
+    limit: Zeichen für alle Textauszüge zusammen (Standard paperless.max_chars, kleines Kontextfenster weniger)."""
     known = {kind: await pc.names(kind) for kind in ("correspondents", "document_types", "tags")}
-    budget = max(300, pc.max_chars // len(ids))
+    budget = max(300, (limit or pc.max_chars) // len(ids))
     blocks = []
     for doc_id in ids:
         try:
@@ -536,7 +537,7 @@ async def paperless_suggest_metadata(
         skipped = ids[MAX_SUGGEST:]
         ids = ids[:MAX_SUGGEST]
         async with PaperlessClient(ctx.cfg) as pc:
-            out = await _suggest_material(pc, ids)
+            out = await _suggest_material(pc, ids, ctx.limit(pc.max_chars))
         if skipped:
             out += f"\n(Nur die ersten {MAX_SUGGEST} Dokumente – danach mit {skipped[:MAX_SUGGEST]} weitermachen.)"
         return out + ("\nNächster Schritt: Vorschlag pro Dokument als kurze Liste zeigen (vorhandene Namen exakt so "
@@ -803,7 +804,7 @@ async def paperless_review_next(
                             "geht es dort weiter.")
                 return out
             batch = open_ids[:REVIEW_BATCH]
-            material = await _suggest_material(pc, batch)
+            material = await _suggest_material(pc, batch, ctx.limit(pc.max_chars))
         cur.update(batch=batch, batch_turn=turn)
         _store_save(ctx.cfg, data)
         head = f"Paket ({scope_}): Dok {', '.join(map(str, batch))} · Stand: {_progress(cur, open_ids)}"

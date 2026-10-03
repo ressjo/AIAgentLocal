@@ -137,8 +137,10 @@ def test_small_context_sends_only_relevant_tool_groups(cfg, memory):
     tools = llm.sent[-1]
     assert "ha_control" in tools and "run_shell" in tools and "remember" in tools
     assert "paperless_search" not in tools and "top_processes" not in tools
+    run(agent.run("Wie wird das Wetter?", noop, noop))
+    assert "weather" in llm.sent[-1] and "ha_control" in llm.sent[-1]  # vorherige Frage zählt mit, solange Platz ist
     run(agent.run("Warum ist mein Rechner so langsam?", noop, noop))
-    assert "top_processes" in llm.sent[-1] and "ha_control" in llm.sent[-1]  # vorherige Frage zählt mit
+    assert "top_processes" in llm.sent[-1] and "ha_control" not in llm.sent[-1]  # Grenze: Älteres fällt weg
     assert agent.schema_tokens < agent.all_schema_tokens
 
     big = Agent(cfg, type("Big", (Small,), {"context_size": 65536})(), memory)

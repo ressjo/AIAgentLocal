@@ -24,12 +24,12 @@ def test_agent_reports_idle_right_after_the_answer(cfg, memory, llm):
 
     compacting = []
 
-    async def compact(*a, **kw):  # Komprimieren läuft nach der Antwort – die Anzeige soll schon „bereit“ sein
+    async def make_room(*a, **kw):  # Platz schaffen läuft nach der Antwort – die Anzeige soll schon „bereit“ sein
         compacting.append([e.get("state") for e in events if e["type"] == "state"][-1])
         return True
 
-    agent._needs_compaction = lambda idle=False: idle  # nach der Antwort fast voll
-    agent.compact_epoch = compact
+    agent._over_limit = lambda idle=False: idle  # nach der Antwort fast voll
+    agent._make_room = make_room
     run(agent.run("Hallo", emit, confirm))
     types = [(e["type"], e.get("state")) for e in events]
     end = types.index(("assistant_end", None))

@@ -19,7 +19,7 @@ import httpx
 
 from ..lang import T
 from .netutil import client_kwargs, explain, normalize_url
-from .proc import clip
+from .proc import clip_saved
 from .registry import CONFIRM, ToolContext, tool
 
 # Für Tests austauschbar (httpx.MockTransport)
@@ -360,7 +360,7 @@ async def trilium_read(
             parents = await _parent_titles(tc, n)
             head = f"Notiz: {n['title']} (ID {n['noteId']}, geändert {_when(n)}"
             head += f", in: {parents})" if parents else ")"
-            return head + "\n\n" + (clip(text, tc.max_chars) if text.strip() else "(leer)")
+            return head + "\n\n" + (clip_saved(text, ctx.limit(tc.max_chars), "trilium") if text.strip() else "(leer)")
     return await _guard(run())
 
 

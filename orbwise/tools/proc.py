@@ -26,7 +26,8 @@ def clip(text: str, limit: int) -> str:
     return f"{text[:head]}\n… [{len(text) - limit} Zeichen ausgelassen] …\n{text[-tail:]}"
 
 
-OUTPUTS_KEEP = 40  # so viele gespeicherte große Ausgaben bleiben liegen (älteste zuerst weg)
+OUTPUTS_KEEP = 100  # so viele gespeicherte große Ausgaben bleiben liegen (älteste zuerst weg)
+SAVED_NOTE = re.compile(r"\[Vollständige Ausgabe \([^)]*\): (\S+) – ")  # Hinweis von clip_saved (Pfad)
 
 
 def outputs_dir() -> str:
@@ -36,12 +37,9 @@ def outputs_dir() -> str:
     return path
 
 
-def clip_saved(text: str, limit: int, label: str = "ausgabe") -> str:
-    """Wie clip – ist die Ausgabe zu lang, wird sie aber vollständig in einer Datei abgelegt und der Pfad genannt.
-    So geht nichts verloren und das Modell kann gezielt Teile nachlesen (read_file mit offset/limit), statt dass
-    die Mitte einfach fehlt (wie Claude Code mit großen Ausgaben umgeht)."""
-    if len(text) <= limit:
-        return text
+def save_output(text: str, label: str = "ausgabe") -> str | None:
+    """Ausgabe vollständig in ~/.cache/orbwise/outputs ablegen (nur für den Nutzer lesbar) – liefert den Pfad.
+    Die ältesten Dateien fallen weg, wenn es mehr als OUTPUTS_KEEP werden."""
     try:
         folder = outputs_dir()
         fd, path = tempfile.mkstemp(prefix=f"{re.sub(r'[^a-z0-9-]', '', label.lower())[:20] or 'ausgabe'}-",
@@ -53,6 +51,18 @@ def clip_saved(text: str, limit: int, label: str = "ausgabe") -> str:
             with contextlib.suppress(OSError):
                 os.remove(old)
     except OSError:
+        return None
+    return path
+
+
+def clip_saved(text: str, limit: int, label: str = "ausgabe") -> str:
+    """Wie clip – ist die Ausgabe zu lang, wird sie aber vollständig in einer Datei abgelegt und der Pfad genannt.
+    So geht nichts verloren und das Modell kann gezielt Teile nachlesen (read_file mit offset/limit), statt dass
+    die Mitte einfach fehlt (wie Claude Code mit großen Ausgaben umgeht)."""
+    if len(text) <= limit:
+        return text
+    path = save_output(text, label)
+    if not path:
         return clip(text, limit)
     lines = text.count("\n") + 1
     note = (f"\n[Vollständige Ausgabe ({len(text)} Zeichen, {lines} Zeilen): {path} – bei Bedarf Teile mit "

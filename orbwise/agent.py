@@ -26,11 +26,12 @@ from pathlib import Path
 
 from . import prompts, toolselect
 from .config import Config
+from .context_plan import SUMMARY_MIN, THINK_LEVELS, ContextPlan, plan_for
 from .llm import ContextOverflow, LLMError, strip_think
 from .memory import Memory, est_tokens
 from .memory.context import TRIM_NOTE, msg_tokens, render_transcript, shrink_tool_results
 from .memory.index import shared_words
-from .tools.proc import clip
+from .tools.proc import clip, clip_saved
 from .tools.registry import (
     BLOCKED,
     CONFIRM,
@@ -73,15 +74,9 @@ def prompt_size(stats: dict, estimated: int) -> int:
     return 0 if total and total < 0.6 * estimated else total
 
 
-ANSWER_RESERVE = 1500  # Token, die im Kontextfenster für die Antwort frei bleiben
-THINK_RESERVE = 3000  # mit Denkmodus: die Denkkette belegt dasselbe Fenster
 # Coding-Modus: nur was man zum Programmieren braucht – mehr Kontext bleibt für den Code frei
 CODING_GROUPS = {"files", "shell", "web", "memory_tools", "todo_tools"}
-# Denkstufen: Höchstlänge der Denkkette (0 = unbegrenzt). Modelle mit echten Stufen (gpt-oss) bekommen sie dazu.
-THINK_LEVELS = {"low": 512, "medium": 2048, "high": 0}
-CARRY_SHARE = 0.2  # so viel vom Fenster dürfen die wörtlich mitgenommenen letzten Schritte belegen
-SUMMARY_MIN = 500  # kürzeste Zusammenfassung, wenn der Platz knapp ist
-INSTRUCTION_RESERVE = 400  # Platz für die Komprimierungs-Anweisung (~350 Token)
+__all__ = ["Agent", "CODING_GROUPS", "SUMMARY_MIN", "THINK_LEVELS", "ThinkFilter", "is_taint_source", "prompt_size"]
 # Werkzeug-Aufruf als Text: llama-server gibt ihn bei tool_choice "none" als Inhalt zurück
 RAW_TOOL_CALL = re.compile(r'\s*(<tool_call>|<function=|\[TOOL_CALLS\]|\{\s*"name"\s*:)')
 Emit = Callable[[dict], Awaitable[None]]
@@ -163,6 +158,8 @@ class Agent:
         self.schemas = self.all_schemas
         self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
         self.all_schema_tokens = self.schema_tokens
+        self._tools_dropped: set[str] = set()  # beim letzten Wechsel weggefallene Werkzeug-Einheiten
+        self._turn_units: set[str] = set()  # Einheiten, die die laufende Runde braucht (für „zuletzt gebraucht“)
         self.lock = asyncio.Lock()
         self.services: dict = {}
 
@@ -190,9 +187,9 @@ class Agent:
             self._coding_schemas = (schemas, est_tokens(json.dumps(schemas, ensure_ascii=False)))
         return self._coding_schemas
 
-    def system_prompt(self, groups: set[str] | None = None) -> str:
+    def system_prompt(self, tools: set[str] | None = None) -> str:
         """Feste Anweisungen – ohne Datum/Uhrzeit (die stehen in der Kontext-Notiz), damit sich der Anfang des
-        Prompts nicht ändert. groups: geladene Werkzeuggruppen – Hinweise nur für diese (None = alle)."""
+        Prompts nicht ändert. tools: Namen der geladenen Werkzeuge – Hinweise nur für diese (None = alle)."""
         c = self.cfg
         if self.mode == "coding":
             return (prompts.coding_prompt(
@@ -203,25 +200,37 @@ class Agent:
             c, name=c.assistant_name, os=_os_name(), host=platform.node(),
             user=c.user_name or getpass.getuser(), home=Path.home(),
             nas=", ".join(map(str, c.tools.nas_paths)))
-        return (base + prompts.hints(c, groups) + c.persona_extra).strip()
+        names = self._all_tool_names() if tools is None else tools
+        names = {n for n in names if n in self.tools and self.tools[n].is_enabled(c)}  # Config kann sich ändern
+        return (base + prompts.hints(c, names) + c.persona_extra).strip()
+
+    def _all_tool_names(self) -> set[str]:
+        """Werkzeuge, wenn alle ins Fenster passen (ohne load_tools – es gibt nichts nachzuladen)."""
+        return {s["function"]["name"] for s in self._mode_schemas()[0]} - {"load_tools"}
 
     def epoch_system(self) -> str:
-        """System-Prompt der Epoche: Anweisungen + Fakten-Schnappschuss + Zusammenfassung des Früheren. Bleibt bis
-        zur nächsten Komprimierung gleich – ein neuer Fakt (remember) steht bis dahin im Werkzeug-Ergebnis."""
+        """System-Prompt der Epoche: Anweisungen + Fakten-Schnappschuss. Bleibt bis zur nächsten Komprimierung
+        gleich – ein neuer Fakt (remember) steht bis dahin im Werkzeug-Ergebnis. Die Zusammenfassung des Früheren
+        steht nicht hier, sondern vor der ersten Nachricht (siehe summary_block): So bleiben Systemprompt und
+        Werkzeuge über eine Komprimierung hinweg gleich und im Cache des Servers (wie bei Claude Code)."""
         ep = self.memory.conversation.epoch
         if ep.get("facts") is None:
-            ep["facts"] = self.memory.facts_text()
-        sections = [self.system_prompt(self._epoch_groups())]
+            ep["facts"] = self.memory.facts_text(min(self.cfg.memory.facts_max_tokens, self.plan().facts))
+        sections = [self.system_prompt(self._epoch_tools())]
         if ep["facts"]:
             sections.append(prompts.section(self.cfg, "facts") + "\n" + ep["facts"])
-        if ep.get("summary"):
-            sections.append(prompts.section(self.cfg, "summary") + "\n" + ep["summary"])
         return "\n\n".join(sections)
 
-    def _epoch_groups(self) -> set[str] | None:
-        """Werkzeuggruppen der Epoche (None = alle Werkzeuge gehen mit, großes Fenster)."""
-        groups = self.memory.conversation.epoch.get("groups")
-        return set(groups) if groups is not None else None
+    def summary_block(self) -> str:
+        """Zusammenfassung der früheren Epochen (und frisch angehängte Dateien) – steht im [Kontext]-Block der ersten
+        Nutzernachricht; innerhalb der Epoche unverändert (append-only)."""
+        ep = self.memory.conversation.epoch
+        return prompts.summary_section(self.cfg, ep.get("summary") or "", ep.get("files") or "")
+
+    def _epoch_tools(self) -> set[str] | None:
+        """Werkzeuge der Epoche (None = alle gehen mit, großes Fenster)."""
+        tools = self.memory.conversation.epoch.get("tools")
+        return set(tools) if tools is not None else None
 
     def _freeze_note(self, hits=None) -> None:
         """Kontext-Notiz (Datum/Uhrzeit, Erinnerungen, Planmodus) der aktuellen Nutzernachricht beim ersten Senden
@@ -235,7 +244,9 @@ class Agent:
         memories = self.memory.format_hits(hits) if hits is not None else self._turn_memories
         stamp = self._turn_stamp or prompts.note_stamp(self.cfg, datetime.now())
         msg = conv.history[users[-1]]
-        hint = prompts.text(self.cfg, f"think_{self._think_level}") if self.think_budget() else ""
+        # Hinweis „kurz/zügig denken“ nur für diese Stufen („gründlich“ wird im kleinen Fenster nur begrenzt)
+        hint = prompts.text(self.cfg, f"think_{self._think_level}") \
+            if self._think and self._think_level in ("low", "medium") else ""
         msg["note"] = prompts.context_note(self.cfg, stamp, memories, plan=self._plan,
                                            approved_plan=self._approved_plan, extra=hint)
         msg["note_meta"] = {"time": stamp, "plan": self._plan, "approved": self._approved_plan, "hint": hint}
@@ -253,35 +264,47 @@ class Agent:
         Komprimierungs-Anfrage muss genau dem Anfang entsprechen, den der Server im Cache hat)."""
         conv = self.memory.conversation
         system = self.epoch_system()
+        summary = self.summary_block()
         self._freeze_note(hits)
         total_budget = self.context_budget()
-        budget = total_budget - est_tokens(system) - self.schema_tokens
-        if trim:  # Notbremse – normalerweise kommt vorher die Komprimierung
+        summary_t = est_tokens(summary) if summary else 0
+        budget = total_budget - est_tokens(system) - self.schema_tokens - summary_t
+        if trim:  # Notbremse – normalerweise kommt vorher das Ausblenden bzw. die Komprimierung
             history = conv.trimmed_history(max(budget, 1000))
         else:
             history = [{k: v for k, v in m.items() if k in ("role", "content", "tool_calls", "tool_name", "note")}
                        for m in conv.epoch_messages()]
+        messages = [{"role": "system", "content": system}, *(self._prompt_message(m) for m in history)]
+        if summary:  # vor die erste Nutzernachricht – in deren [Kontext]-Block
+            first = next((i for i, m in enumerate(messages) if m["role"] == "user"), None)
+            if first is None:
+                messages.insert(1, {"role": "user", "content": prompts.with_summary(self.cfg, "", summary)})
+            else:
+                note = history[first - 1].get("note") or ""
+                body = (messages[first]["content"] or "")[len(note):]
+                messages[first]["content"] = prompts.with_summary(self.cfg, note, summary) + body
         # Für die Anzeige „Kontext“ (Schätzung; echte Server-Token kommen nach dem Schritt)
-        base_t, system_t = est_tokens(self.system_prompt(self._epoch_groups())), est_tokens(system)
-        history_t = sum(msg_tokens(m) for m in history)
-        notes_t = sum(est_tokens(m.get("note") or "") for m in history)
+        base_t, system_t = est_tokens(self.system_prompt(self._epoch_tools())), est_tokens(system)
+        history_t = sum(msg_tokens(m) for m in history) + summary_t
+        notes_t = sum(est_tokens(m.get("note") or "") for m in history) + summary_t
         ratio = self.token_ratio()
-        self._full_prompt = int((system_t + self.schema_tokens + conv.history_tokens()) * ratio)
+        self._full_prompt = int((system_t + self.schema_tokens + conv.history_tokens() + summary_t) * ratio)
         trimmed = len(history) < len(conv.epoch_indices()) or any(
             m["role"] == "tool" and (m.get("content") or "").endswith(TRIM_NOTE) for m in history)
         used = system_t + self.schema_tokens + history_t
         if not display:
-            return [{"role": "system", "content": system}, *(self._prompt_message(m) for m in history)]
+            return messages
+        plan = self.plan()
         self.last_context = {
             "window": self.model_window(), "budget": total_budget, "used": used,
             "parts": {"system": base_t, "tools": self.schema_tokens, "memory": system_t - base_t + notes_t,
                       "history": history_t - notes_t},
             "trimmed": trimmed, "summarized": bool(conv.running_summary),
-            # in echten Token: feste Grenze = Kontextfenster; ab compact_at wird einmal komprimiert
+            # in echten Token: feste Grenze = Kontextfenster; ab compact_at wird Platz geschaffen
             "tokens": int(used * ratio), "reserve": self.answer_reserve(), "compact_at": self.compact_limit(),
-            "epoch": len(conv.epochs),
+            "epoch": len(conv.epochs), "small": plan.small, "cleared": conv.epoch.get("cleared", 0),
         }
-        return [{"role": "system", "content": system}, *(self._prompt_message(m) for m in history)]
+        return messages
 
     def model_window(self) -> int:
         """Kontextfenster des aktiven Modells (vom Server gemeldet, sonst aus der Config)."""
@@ -291,6 +314,13 @@ class Agent:
             num_ctx = getattr(profile, "num_ctx", None) or self.cfg.llm.num_ctx
         return int(num_ctx)
 
+    def plan(self) -> ContextPlan:
+        """Kontext-Stufe (unter 16k sparsam, siehe context_plan.py) – nach dem Fenster, das der Prompt nutzen darf."""
+        window = self.model_window()
+        if self.cfg.memory.context_budget_tokens:  # optionale Obergrenze für den Prompt
+            window = min(window, self.cfg.memory.context_budget_tokens + 1500)
+        return plan_for(window)
+
     def context_budget(self) -> int:
         """Prompt-Budget: Kontextfenster des aktiven Modells (optional begrenzt durch context_budget_tokens)
         (abzüglich Platz für die Antwort) – z. B. Bonsai mit 8192 Token."""
@@ -299,18 +329,19 @@ class Agent:
             budget = min(budget, self.cfg.memory.context_budget_tokens)
         return max(2000, int(budget * self._budget_scale / self.token_ratio()))
 
-    def answer_reserve(self) -> int:
+    def _thinking(self) -> bool:
         think = self._think
         if think is None:
             think = bool(getattr(getattr(self.llm, "profile", None), "think", False))
-        if not think:
-            return ANSWER_RESERVE
-        budget = THINK_LEVELS.get(self._think_level or "high", 0)
-        return min(THINK_RESERVE, ANSWER_RESERVE + budget) if budget else THINK_RESERVE
+        return bool(think)
+
+    def answer_reserve(self) -> int:
+        """Platz für Antwort bzw. Denkkette – im kleinen Fenster knapper, Denken dort begrenzt."""
+        return self.plan().reserve(self._thinking(), self._think_level or "high")
 
     def think_budget(self) -> int:
         """Höchstlänge der Denkkette in Token für diese Anfrage (0 = unbegrenzt bzw. kein Denken)."""
-        return THINK_LEVELS.get(self._think_level or "", 0) if self._think else 0
+        return self.plan().think_budget(self._think_level) if self._think else 0
 
     def _set_think(self, think) -> None:
         """think: None (Profil), False, True (= normal) oder eine Stufe low/medium/high."""
@@ -322,21 +353,22 @@ class Agent:
             self._think_level = "medium" if think else None
 
     def summary_budget(self) -> int:
-        """Höchstlänge der Zusammenfassung bei einer Komprimierung (≈ 10 % des Fensters)."""
-        return max(1200, min(4000, int(self.model_window() * 0.1)))
+        """Höchstlänge der Zusammenfassung bei einer Komprimierung (klein ≈ 8 %, groß ≈ 10 % des Fensters)."""
+        return self.plan().summary_max
 
     def summary_floor(self) -> int:
-        """Mindestlänge der Zusammenfassung (≈ 6 % des Fensters) – so viel muss beim Komprimieren noch frei sein."""
-        return max(900, min(2500, int(self.model_window() * 0.06)))
+        """Mindestlänge der Zusammenfassung – so viel muss beim Komprimieren noch frei sein."""
+        return self.plan().summary_floor
 
     def compact_limit(self) -> int:
-        """Ab dieser Prompt-Größe (echte Token) wird komprimiert – so spät wie möglich: der nächste Schritt braucht
-        Platz für Antwort bzw. Denkkette, die Zusammenfassung mindestens summary_floor (sie nimmt, was frei ist).
-        8k: ≈ 6,7k (82 %); 16k: ≈ 14,9k (91 %), mit Denken ≈ 13,4k; 32k: ≈ 30,4k (93 %)."""
+        """Ab dieser Prompt-Größe (echte Token) wird Platz geschaffen – so spät wie möglich: der nächste Schritt
+        braucht Platz für Antwort bzw. Denkkette, die Zusammenfassung mindestens summary_floor (sie nimmt, was frei
+        ist). 8k: ≈ 7,2k (88 %); 16k: ≈ 14,9k (91 %), mit Denken ≈ 13,4k; 32k: ≈ 30,4k (93 %)."""
         window = self.model_window()
         if self.cfg.memory.context_budget_tokens:  # optionale Obergrenze für den Prompt
             window = min(window, self.cfg.memory.context_budget_tokens + self.answer_reserve())
-        return window - max(self.answer_reserve(), self.summary_floor() + INSTRUCTION_RESERVE)
+        plan = self.plan()
+        return window - max(self.answer_reserve(), plan.summary_floor + plan.instruction_reserve)
 
     def _profile_key(self) -> str:
         return str(getattr(self.llm, "active", "") or "default")
@@ -353,33 +385,132 @@ class Agent:
         old = self._token_ratio.get(key)
         self._token_ratio[key] = round(sample if old is None else 0.7 * old + 0.3 * sample, 3)
 
-    def choose_tools(self, used_groups: set[str] | None = None) -> set[str]:
-        """Werkzeuge für den nächsten Schritt. Passen alle gut ins Fenster, gehen immer alle mit. Sonst je Epoche
-        eine feste Auswahl, die nur wächst: Grundausstattung + passende + benutzte Gruppen (siehe toolselect.py).
-        Eine neue Gruppe ändert den Prompt-Anfang (einmal neu einlesen) – liefert die neu dazugekommenen Gruppen."""
+    def choose_tools(self, used: set[str] | None = None) -> set[str]:
+        """Werkzeuge für den nächsten Schritt (siehe toolselect.py). Passen alle gut ins Fenster, gehen immer alle mit.
+        Sonst je Epoche eine Auswahl: Pflicht (Grundausstattung, passend zur Frage, in dieser Runde benutzt, per
+        load_tools angeheftet, bei „ja“/„mach das“ der letzte Vorschlag) plus – solange es in die Werkzeug-Grenze
+        passt – was zuletzt gebraucht wurde. Reicht die Auswahl, bleibt sie gleich (der Prompt-Anfang bleibt im
+        Cache). Muss etwas dazu, ändert sich der Anfang ohnehin: im kleinen Fenster wird dann neu gepackt (Altes fällt
+        weg), im großen wächst die Auswahl. used: Namen der in dieser Runde aufgerufenen Werkzeuge.
+        Liefert die neu dazugekommenen Einheiten; die weggefallenen stehen in self._tools_dropped."""
         base, base_tokens = self._mode_schemas()
         conv = self.memory.conversation
         ep = conv.epoch
+        plan = self.plan()
+        self._tools_dropped = set()
         if base_tokens <= 0.3 * self.context_budget():
             # alles passt: alle Werkzeuge, ohne load_tools (es gibt nichts nachzuladen)
-            self.schemas = [s for s in base if s["function"]["name"] != "load_tools"]
-            self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
-            ep["groups"] = None  # alle Werkzeuge – und alle Hinweise
+            self._set_schemas([s for s in base if s["function"]["name"] != "load_tools"])
+            ep["groups"] = ep["tools"] = None  # alle Werkzeuge – und alle Hinweise
+            self._turn_units = set()
             return set()
+        small = plan.small and self.mode != "coding"  # Coding: feste, kleine Auswahl (CODING_GROUPS)
         question = conv.history[conv.turn_start()].get("content", "") if conv.history else ""
-        wanted = toolselect.CORE_GROUPS | toolselect.relevant_groups([question]) | (used_groups or set())
+        matched = toolselect.units_for([question], small)
+        suggested = toolselect.units_for([self._previous_answer()], small) - matched
+        pinned = set(ep.get("pinned") or [])
+        if not small:  # ab 16k zählt immer die ganze Gruppe
+            pinned = {u.split(":")[0] for u in pinned}
+        recent = [set(r) for r in ep.get("recent") or []]
+        must = matched | pinned | ({self._unit(n, small) for n in used or ()} - {""})
+        if toolselect.is_follow_up(question):
+            must |= suggested  # „ja“, „mach das“: gemeint ist der letzte Vorschlag des Modells
+        if small and toolselect.wants_change([question]):  # z. B. „weiter“ im Paperless-Durchgang
+            must |= toolselect.write_units({u for u in must.union(*recent) if ":" not in u})
+        self._turn_units = set(must)
+        if not small:
+            must |= toolselect.CORE_GROUPS
         have = set(ep.get("groups") or [])
-        if not have:  # erste Auswahl der Epoche: auch alles, was die mitgenommenen Schritte schon benutzt haben
-            have = wanted | {self.groups_of.get(c.get("function", {}).get("name", ""), "")
-                             for m in conv.epoch_messages() for c in m.get("tool_calls") or []} - {""}
-            added: set[str] = set()
+        if not have:  # erste Auswahl der Epoche: dazu, was die mitgenommenen Schritte benutzt haben (groß: und die
+            # Auswahl der vorigen Epoche – dann bleibt der Prompt-Anfang über die Komprimierung hinweg gleich)
+            carried = {self._unit(c.get("function", {}).get("name", ""), small)
+                       for m in conv.epoch_messages() for c in m.get("tool_calls") or []}
+            new = must | (carried - {""}) | set(ep.get("inherit") or [])
+        elif must <= have:
+            new = have  # nichts Neues nötig – der Prompt-Anfang bleibt im Cache
+        elif small:
+            new = must | (have & set().union(*recent, suggested))  # neu packen: nur, was zuletzt gebraucht wurde
         else:
-            added = (wanted - have) & set(toolselect.KEYWORDS)
-            have |= wanted
-        ep["groups"] = sorted(have)
-        self.schemas = toolselect.select(base, self.groups_of, [], have)
-        self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
+            new = must | have
+        if new != have:  # ändert sich der Anfang ohnehin: auf die Werkzeug-Grenze bringen
+            new = self._fit_tools(base, new, must, recent, suggested, small)
+        added = new - have if have else set()
+        self._tools_dropped = have - new if have else set()
+        ep["groups"] = sorted(new)
+        self._set_schemas(self._with_loader(toolselect.select(base, self.groups_of, new, small)))
+        ep["tools"] = sorted(s["function"]["name"] for s in self.schemas)
         return added
+
+    def _unit(self, name: str, small: bool) -> str:
+        """Auswahl-Einheit eines Werkzeugs – leer für die Grundausstattung des kleinen Fensters (immer geladen)."""
+        if not name or (small and name in toolselect.SMALL_CORE):
+            return ""
+        return toolselect.unit_of(name, self.groups_of.get(name, ""), small)
+
+    def _set_schemas(self, schemas: list[dict]) -> None:
+        self.schemas = schemas
+        self.schema_tokens = est_tokens(json.dumps(schemas, ensure_ascii=False))
+
+    def _previous_answer(self) -> str:
+        """Letzte Antwort des Modells vor der laufenden Frage (für „ja, mach das“)."""
+        hist = self.memory.conversation.history
+        for m in reversed(hist[:self.memory.conversation.turn_start()]):
+            if m["role"] == "user":
+                break
+            if m["role"] == "assistant" and m.get("content"):
+                return m["content"]
+        return ""
+
+    def _tool_cost(self, name: str) -> int:
+        if not hasattr(self, "_costs"):
+            self._costs = {s["function"]["name"]: est_tokens(json.dumps(s, ensure_ascii=False))
+                           for s in self.all_schemas}
+        return self._costs.get(name, 0)
+
+    def _fit_tools(self, base: list[dict], units: set[str], must: set[str], recent: list[set[str]],
+                   suggested: set[str], small: bool) -> set[str]:
+        """Weiche Grenze für die Werkzeugbeschreibungen (klein 35 %, groß 50 % des Budgets): optionale Einheiten
+        fallen weg – zuerst, was am längsten nicht gebraucht wurde. Pflicht-Einheiten bleiben immer."""
+        cap = self.plan().tool_share * self.context_budget()
+
+        def size(us: set[str]) -> int:
+            return sum(self._tool_cost(s["function"]["name"]) for s in toolselect.select(base, self.groups_of, us, small))
+
+        def keep_rank(u: str) -> int:
+            if u in suggested:
+                return 3
+            if recent and u in recent[-1]:
+                return 2
+            return 1 if any(u in r for r in recent) else 0
+
+        for u in sorted(units - must, key=keep_rank):
+            if size(units) <= cap:
+                break
+            units = units - {u}
+        return units
+
+    def _with_loader(self, schemas: list[dict]) -> list[dict]:
+        """load_tools nennt nur, was gerade fehlt – die Beschreibung ändert sich also nur mit der Auswahl."""
+        names = {s["function"]["name"] for s in schemas}
+        if "load_tools" not in names:
+            return schemas
+        from .tools import toolload
+        missing: dict[str, bool] = {}
+        for group in toolload.loadable_groups(self.cfg):
+            tools = [n for n, g in self.groups_of.items()
+                     if g == group and self.tools[n].is_enabled(self.cfg) and self.tool_allowed(n)]
+            absent = [n for n in tools if n not in names]
+            if absent:
+                missing[group] = len(absent) < len(tools)  # nur ein Teil fehlt (klein: der ändernde)
+        description = toolload.describe_missing(self.cfg, missing)
+        return [{**s, "function": {**s["function"], "description": description}}
+                if s["function"]["name"] == "load_tools" else s for s in schemas]
+
+    def _note_recent(self) -> None:
+        """Am Ende einer Runde: welche Einheiten sie gebraucht hat (die letzten zwei Runden bleiben beim Neupacken)."""
+        ep = self.memory.conversation.epoch
+        if ep.get("groups") is not None:
+            ep["recent"] = [*(ep.get("recent") or [])[-1:], sorted(getattr(self, "_turn_units", set()))]
 
     def _call_llm(self, messages: list[dict], tools: list[dict] | None, **opts):
         """chat_stream mit Zusatzoptionen (think, max_tokens, tool_choice) – nur die, die das LLM-Objekt kennt."""
@@ -446,7 +577,8 @@ class Agent:
                 if self._relevant(user_text, h)]
         ep = conv.epoch
         first = not any(conv.history[i]["role"] == "user" for i in conv.epoch_indices())
-        budget = self.cfg.memory.retrieval_max_tokens if first else self.cfg.memory.retrieval_max_tokens // 3
+        most = min(self.cfg.memory.retrieval_max_tokens, self.plan().memories)  # kleines Fenster: weniger
+        budget = most if first else most // 3
         shown = set(ep.get("shown") or [])
         taken: list[int] = []
         text = self.memory.format_hits([h for h in hits if h.id not in shown], budget, taken)
@@ -459,7 +591,8 @@ class Agent:
         self._turn_stamp = prompts.note_stamp(self.cfg, now)
         conv = self.memory.conversation
         # Steht noch Mail-Text im Prompt, kann er auch in späteren Anfragen wirken – dann bleibt der Schutz an
-        self._tainted = any(m.get("role") == "tool" and is_taint_source(m.get("tool_name", ""), m.get("content") or "")
+        self._tainted = any(m.get("role") == "tool" and is_taint_source(m.get("tool_name", ""), m.get("full_content")
+                                                                       or m.get("content") or "")
                             for m in conv.epoch_messages())
         start_len = len(conv.history)
         await emit({"type": "state", "state": "thinking"})
@@ -474,18 +607,18 @@ class Agent:
             seen: dict[str, int] = {}  # gleiche Tool-Aufrufe zählen (Schleifenerkennung)
             retried = False
             finished = False
-            used_groups: set[str] = set()
+            used_tools: set[str] = set()
             for _ in range(max(1, self.cfg.tools.max_steps)):
-                if self._needs_compaction():  # kurz vor dem Limit: einmal zusammenfassen, dann weiter
-                    await self.compact_epoch(emit, msg_id, in_turn=True)
-                added = self.choose_tools(used_groups)
-                if added:
-                    await self._tools_added(emit, msg_id, added)
+                added = self.choose_tools(used_tools)
+                if added or self._tools_dropped:
+                    await self._tools_added(emit, msg_id, added, self._tools_dropped)
+                if self._over_limit():  # kurz vor dem Limit: Platz schaffen (ausblenden oder zusammenfassen)
+                    await self._make_room(emit, msg_id)
                 try:
                     content, calls = await self._step(emit, msg_id)
-                except ContextOverflow:
-                    # Server meldet „zu groß“ (z. B. kleiner als eingestellt): komprimieren und weitermachen
-                    if retried or not await self.compact_epoch(emit, msg_id, in_turn=True, reason="overflow"):
+                except ContextOverflow as e:
+                    # Server meldet „zu groß“ (z. B. kleiner als eingestellt): Platz schaffen und weitermachen
+                    if retried or not await self._make_room(emit, msg_id, overflow=e):
                         raise
                     retried = True
                     continue
@@ -504,7 +637,7 @@ class Agent:
                 done: dict[int, tuple[str, str, str]] = {}
                 for i, call in enumerate(calls):
                     fn = call.get("function", {})
-                    used_groups.add(self.groups_of.get(fn.get("name", ""), ""))
+                    used_tools.add(fn.get("name", ""))
                     key = fn.get("name", "") + json.dumps(fn.get("arguments"), sort_keys=True, ensure_ascii=False)
                     seen[key] = seen.get(key, 0) + 1
                     if seen[key] >= 3:
@@ -559,6 +692,7 @@ class Agent:
             await emit({"type": "state", "state": "idle"})
             raise
         self._turn_open = False
+        self._note_recent()
 
         answer = "\n\n".join(spoken)
         await emit({"type": "assistant_end", "id": msg_id, "text": answer})
@@ -568,27 +702,117 @@ class Agent:
         await emit({"type": "state", "state": "idle"})
         conv.save()
         await self.memory.log_exchange(user_text, answer, tool_notes)
-        if self.cfg.memory.compact_idle and self._needs_compaction(idle=True):
-            # Fast voll: jetzt in Ruhe komprimieren (und vorwärmen), damit die nächste Frage nicht darauf wartet
+        if self.cfg.memory.compact_idle and self._over_limit(idle=True):
+            # Fast voll: jetzt in Ruhe Platz schaffen (und vorwärmen), damit die nächste Frage nicht darauf wartet
             try:
-                await self.compact_epoch(emit, msg_id, reason="idle")
+                await self._make_room(emit, msg_id, idle=True)
             except Exception as e:  # noqa: BLE001
-                log.warning("Komprimierung nach der Antwort fehlgeschlagen: %s", e)
+                log.warning("Platz schaffen nach der Antwort fehlgeschlagen: %s", e)
         return answer
 
-    async def _tools_added(self, emit: Emit, msg_id: str, groups: set[str]) -> None:
+    async def _tools_added(self, emit: Emit, msg_id: str, groups: set[str], dropped: set[str] = frozenset()) -> None:
         tid = uuid.uuid4().hex[:8]
-        await emit({"type": "llm_phase", "id": tid, "msg": msg_id, "phase": "tools_added", "groups": sorted(groups)})
+        await emit({"type": "llm_phase", "id": tid, "msg": msg_id, "phase": "tools_added", "groups": sorted(groups),
+                    "dropped": sorted(dropped)})
         await emit({"type": "llm_phase", "id": tid, "msg": msg_id, "phase": "done", "tools_added": sorted(groups),
-                    "seconds": 0})
+                    "tools_dropped": sorted(dropped), "seconds": 0})
 
-    # ---------- Komprimierung (wie Claude Codes Auto-Compact) ----------
-    def _needs_compaction(self, idle: bool = False) -> bool:
-        """Würde der nächste Prompt die Grenze erreichen? Nach einer Antwort (idle) schon dann, wenn eine typische
-        weitere Runde dieses Chats sie reißen würde – dann lieber jetzt in Ruhe als später, während jemand wartet.
-        Nur, wenn es seit dem Beginn der Epoche genug zu komprimieren gibt – sonst greift im Notfall das Kürzen."""
+    # ---------- Platz schaffen: erst ausblenden (Microcompact), dann zusammenfassen (Auto-Compact) ----------
+    async def _make_room(self, emit: Emit, msg_id: str, idle: bool = False, overflow: ContextOverflow | None = None,
+                         ) -> bool:
+        """Wie Claude Code: Zuerst alte Werkzeug-Ergebnisse ausblenden – das braucht keinen Modellaufruf, neu
+        eingelesen wird nur ab dem ersten ausgeblendeten Ergebnis. Nur wenn das nicht genug Luft schafft, fasst das
+        Modell den Chat zusammen. idle: nach der Antwort (danach gleich vorwärmen). overflow: der Server meldete
+        „zu groß“ – dann reicht Ausblenden, wenn es den Überhang abdeckt."""
+        if await self._clear_old_results(emit, msg_id, overflow=overflow):
+            if idle:
+                await self._prewarm_locked(emit)
+            return True
         if not self.can_compact():
+            # Überlauf, aber nichts zum Zusammenfassen: ausblenden, was geht – den Rest kürzt notfalls die Notbremse
+            return overflow is not None and await self._clear_old_results(emit, msg_id, force=True)
+        reason = "overflow" if overflow else "idle" if idle else "full"
+        return await self.compact_epoch(emit, msg_id, in_turn=not idle, reason=reason)
+
+    def _clear_candidates(self) -> tuple[list[int], int]:
+        """Was Ausblenden brächte: (Indizes, eingesparte echte Token) – ohne etwas zu ändern."""
+        conv = self.memory.conversation
+        plan = self.plan()
+        idx = conv.clearable(int(plan.keep_share * plan.window / self.token_ratio()))
+        freed = 0
+        for i in idx:
+            m = conv.history[i]
+            if m["role"] == "tool":
+                freed += msg_tokens(m) - msg_tokens({**m, "content": self._cleared_stub(m, dry=True)})
+            else:
+                from .memory.context import _short_call
+                freed += msg_tokens(m) - msg_tokens({**m, "tool_calls": [_short_call(c) for c in m["tool_calls"]]})
+        return idx, int(freed * self.token_ratio())
+
+    def _cleared_stub(self, m: dict, dry: bool = False) -> str:
+        """Platzhalter für ein ausgeblendetes Ergebnis: Anfang, Länge und wo das Ganze liegt (read_file)."""
+        from .tools import proc
+        content = m.get("full_content") or m.get("content") or ""
+        saved = proc.SAVED_NOTE.search(content)
+        if saved:
+            path = saved.group(1)
+        else:
+            path = "~/.cache/orbwise/outputs/xxxxxxxxxxxxxxxxxxxxxxxx.txt" if dry else \
+                proc.save_output(content, m.get("tool_name") or "ausgabe")
+        limit = self.plan().stub_chars
+        head = content[:limit]
+        if len(content) > limit and "\n" in head[limit // 2:]:
+            head = head[:head.rfind("\n")]  # an einem Zeilenende abschneiden
+        key = "cleared_saved" if path else "cleared_again"
+        return prompts.text(self.cfg, key).format(chars=len(content), head=head.strip(), path=path,
+                                                  tool=m.get("tool_name") or "")
+
+    def _typical_step(self) -> int:
+        """Typische Größe eines Werkzeug-Schritts dieses Chats (echte Token) – so viel braucht der nächste."""
+        conv = self.memory.conversation
+        sizes = [sum(msg_tokens(conv.history[i]) for i in [call, *results]) for call, results in conv.tool_steps()[-3:]]
+        return int(max(300, sum(sizes) / len(sizes) if sizes else 0) * self.token_ratio())
+
+    async def _clear_old_results(self, emit: Emit, msg_id: str, overflow: ContextOverflow | None = None,
+                                 force: bool = False) -> bool:
+        """Alte Werkzeug-Ergebnisse ausblenden – wenn es genug bringt: mindestens 10 % des Fensters, und danach muss
+        mindestens ein weiterer typischer Schritt Platz haben (sonst wäre gleich wieder Schluss und das Neueinlesen
+        umsonst). Ausblenden kostet nur das Neueinlesen ab dem ersten ausgeblendeten Ergebnis – Zusammenfassen
+        zusätzlich das Schreiben der Zusammenfassung (auf lokaler Hardware oft eine Minute). Bei Überlauf: wenn es
+        den Überhang abdeckt."""
+        idx, freed = self._clear_candidates()
+        if not idx:
             return False
+        window, limit = self.model_window(), self.compact_limit()
+        self.build_messages(display=False)
+        before = self._full_prompt
+        if force:
+            pass
+        elif overflow is not None:
+            if not (overflow.n_prompt and overflow.n_ctx):
+                return False
+            needed = overflow.n_prompt - (overflow.n_ctx - self.answer_reserve())
+            if freed < needed:
+                return False
+        elif freed < 0.1 * window or limit - (before - freed) < 1.2 * self._typical_step():
+            return False
+        conv = self.memory.conversation
+        n = conv.clear_results(idx, self._cleared_stub)
+        self._cache_owner = None  # der Server kennt diesen Anfang noch nicht – nach der Antwort vorwärmen
+        conv.save()
+        self.build_messages()
+        after = self._full_prompt
+        cid = uuid.uuid4().hex[:8]
+        await emit({"type": "llm_phase", "id": cid, "msg": msg_id, "phase": "clear", "results": n, "tokens": before})
+        await emit({"type": "llm_phase", "id": cid, "msg": msg_id, "phase": "done", "cleared": n, "before": before,
+                    "after": after, "seconds": 0})
+        await emit({"type": "context", **(self.last_context or {})})
+        log.info("Alte Werkzeug-Ergebnisse ausgeblendet: %s Ergebnisse, %s → %s Token", n, before, after)
+        return True
+
+    def _over_limit(self, idle: bool = False) -> bool:
+        """Würde der nächste Prompt die Grenze erreichen? Nach einer Antwort (idle) schon dann, wenn eine typische
+        weitere Runde dieses Chats sie reißen würde – dann lieber jetzt in Ruhe als später, während jemand wartet."""
         self.build_messages(display=False)
         limit = self.compact_limit()
         if idle:
@@ -621,9 +845,12 @@ class Agent:
         return [i for i in after if i >= calls[-1]] if calls else []
 
     def _compact_appendix(self, messages: list[dict]) -> str:
-        """Was nicht vom Modell abhängt: die letzten Nutzernachrichten (gekürzt) und berührte Dateien/Ordner."""
+        """Was nicht vom Modell abhängt: die letzten Nutzernachrichten (gekürzt) und berührte Dateien/Ordner – im
+        kleinen Fenster weniger und kürzer."""
+        plan = self.plan()
+        cut = plan.appendix_chars
         users = [" ".join((m.get("content") or "").split()) for m in messages if m["role"] == "user"]
-        users = [u if len(u) <= 160 else u[:157] + "…" for u in users if u][-8:]
+        users = [u if len(u) <= cut else u[:cut - 3] + "…" for u in users if u][-plan.appendix_users:]
         paths: list[str] = []
         for m in messages:
             for call in m.get("tool_calls") or []:
@@ -636,12 +863,48 @@ class Agent:
         if users:
             parts.append(prompts.compact_text(self.cfg, "user_list") + "\n" + "\n".join(f"- „{u}“" for u in users))
         if paths:
-            parts.append(prompts.compact_text(self.cfg, "files") + "\n" + "\n".join(f"- {p}" for p in paths[-12:]))
+            parts.append(prompts.compact_text(self.cfg, "files") + "\n" +
+                         "\n".join(f"- {p}" for p in paths[-plan.appendix_paths:]))
         todos = self.memory.conversation.meta.get("todos")
         if todos and any(t.get("state") != "done" for t in todos):  # offene Aufgabenliste geht mit
             from .tools.todo_tools import format_todos
             parts.append(prompts.compact_text(self.cfg, "todos") + "\n" + format_todos(todos))
         return "\n\n".join(parts)
+
+    def _recent_files(self, messages: list[dict], budget: int) -> str:
+        """Coding ab 16k (wie Claude Code): aktueller Inhalt der zuletzt bearbeiteten bzw. gelesenen Dateien, frisch
+        von der Platte – nach dem Zusammenfassen muss das Modell sie nicht erneut lesen. budget: Token für alle."""
+        from .memory.context import _args
+        paths: list[str] = []
+        for m in reversed(messages):
+            for call in reversed(m.get("full_tool_calls") or m.get("tool_calls") or []):
+                fn = call.get("function", {})
+                path = _args(call).get("path") if fn.get("name") in ("edit_file", "write_file", "read_file") else None
+                if isinstance(path, str) and path and path not in paths:
+                    paths.append(path)
+        found: list[tuple[str, str]] = []
+        for raw in paths:
+            if len(found) == 3:
+                break
+            path = Path(os.path.expanduser(raw))
+            if not path.is_absolute() and self.project_dir():
+                path = Path(self.project_dir()) / path
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+            except OSError:
+                continue
+            if text and "\x00" not in text[:4096]:
+                found.append((raw, text))
+        if not found:
+            return ""
+        share = budget * 3 // len(found)
+        blocks = []
+        for raw, text in found:
+            shown = text if len(text) <= share else text[:share].rsplit("\n", 1)[0]
+            more = "" if shown == text else "\n" + prompts.compact_text(self.cfg, "file_more").format(
+                offset=shown.count("\n") + 2)
+            blocks.append(f"### {raw}\n```\n{shown}\n```{more}")
+        return prompts.compact_text(self.cfg, "current_files") + "\n" + "\n\n".join(blocks)
 
     async def compact_epoch(self, emit: Emit, msg_id: str = "", in_turn: bool = False, reason: str = "full",
                             focus: str = "") -> bool:
@@ -672,6 +935,7 @@ class Agent:
 
         window = self.model_window()
         ratio = self.token_ratio()
+        plan = self.plan()
         messages = self.build_messages(display=False, trim=False)  # = was der Server schon kennt (+ neue Ergebnisse)
         before = self._full_prompt
         if open_question:
@@ -679,11 +943,11 @@ class Agent:
         # Zusammenfassung so lang, wie Platz ist (spät komprimiert = etwas kürzer), aber mindestens summary_floor
         # (gemessen an genau dieser Anfrage: Nachrichten + Werkzeuge)
         request_t = int((sum(msg_tokens(m) for m in messages) + self.schema_tokens) * ratio)
-        free = window - request_t - INSTRUCTION_RESERVE - 100
+        free = window - request_t - plan.instruction_reserve - 100
         # knapp (z. B. die letzte Antwort schob den Prompt über die Grenze): lieber kürzer zusammenfassen als
         # Nachrichten weglassen – das würde den Cache brechen
-        budget = max(SUMMARY_MIN, min(self.summary_budget(), free))
-        instruction = prompts.compact_instruction(self.cfg, self.mode, int(budget * 0.6), focus)
+        budget = max(plan.summary_min, min(plan.summary_max, free))
+        instruction = prompts.compact_instruction(self.cfg, self.mode, int(budget * 0.6), focus, small=plan.small)
         # Passt die Anfrage samt Zusammenfassung nicht (riesige neue Ergebnisse, Server kleiner als gedacht):
         # erst die neuesten Werkzeug-Ergebnisse kürzen (die kennt der Server noch nicht), notfalls Älteres weglassen
         room = int(window / ratio) - budget - est_tokens(instruction) - self.schema_tokens - 100  # + Werkzeuge
@@ -709,7 +973,7 @@ class Agent:
         summary = summary.strip()[: budget * 4] + (f"\n\n{appendix}" if appendix else "")
 
         # Mitgenommene Schritte begrenzen: lange Ergebnisse kürzen (das Original bleibt in der Chat-Datei)
-        carry_room = int(window * CARRY_SHARE / ratio)
+        carry_room = int(window * plan.carry_share / ratio)
         steps = [i for i in carry if hist[i]["role"] == "tool"]
         excess = sum(msg_tokens(hist[i]) for i in carry) - carry_room
         for i in steps:
@@ -727,12 +991,16 @@ class Agent:
             hist[q]["note"] = prompts.context_note(
                 self.cfg, meta.get("time", ""), "", meta.get("plan", False), meta.get("approved", ""),
                 extra=(meta.get("hint", "") + "\n" + (prompts.compact_text(self.cfg, "continue") if in_turn else "")))
-        turn_groups = {self.groups_of.get(c.get("function", {}).get("name", ""), "")
-                       for m in hist[q:] for c in m.get("tool_calls") or []} - {""}
-        conv.start_epoch(carry, summary, reason=reason, before=before, carried=len(carry), mode=self.mode)
+        turn_tools = {c.get("function", {}).get("name", "") for m in hist[q:] for c in m.get("tool_calls") or []} - {""}
+        # ab 16k: die Werkzeugauswahl bleibt (passt sie in die Grenze, bleiben Systemprompt und Werkzeuge im Cache)
+        inherit = conv.epoch.get("groups") if not plan.small else None
+        files = self._recent_files(summarized, int(plan.window * 0.08)) \
+            if self.mode == "coding" and not plan.small else ""
+        conv.start_epoch(carry, summary, reason=reason, before=before, carried=len(carry), mode=self.mode,
+                         inherit=inherit, files=files)
         # Werkzeuge (und ihre Hinweise) der neuen Epoche gleich festlegen – samt denen dieser Runde, damit der
         # nächste Schritt nichts „dazuladen“ muss und Anzeige wie Vorwärmen den echten Prompt sehen
-        self.choose_tools(turn_groups)
+        self.choose_tools(turn_tools)
         self._compacted_at = (conv.chat_id, len(conv.epochs), len(hist))
         self._cache_owner = None
         conv.save()
@@ -1019,7 +1287,7 @@ class Agent:
                     yield ev
                 return
             except ContextOverflow as e:
-                if attempt == 2 or (attempt == 0 and not final and self.can_compact()):
+                if attempt == 2 or (attempt == 0 and not final and (self.can_compact() or self._clear_candidates()[0])):
                     raise
                 yield {"type": "retry", "n_prompt": e.n_prompt, "n_ctx": e.n_ctx}
                 ratio = (e.n_ctx - self.answer_reserve()) / e.n_prompt if e.n_ctx and e.n_prompt else 0.7
@@ -1139,10 +1407,15 @@ class Agent:
                 json.dumps({k: args[k] for k in edited}, ensure_ascii=False)[:1500] + ")"
         await emit({"type": "tool_result", "id": call_id, "status": status, "text": clip(result, 3000)})
         first = result.strip().splitlines()[0] if result.strip() else ""
+        room = ctx.output_chars or 0
+        if room and len(result) > room * 1.5:
+            # Rückfallnetz: kein Ergebnis sprengt das Kontextfenster – das Original liegt vollständig in einer Datei.
+            # Großzügig, damit Werkzeuge, die selbst seitenweise liefern (read_file: bis ⅓ mehr), nie zerschnitten werden
+            result = clip_saved(result, room, name)
         return name, result, f"{name} {args_str} → {first[:160]}"
 
     def output_chars(self) -> int:
-        """Höchstlänge eines Werkzeug-Ergebnisses: config-Wert, aber höchstens ~15 % des Fensters – damit eine
-        Komprimierung immer Platz hat. Mehr steht dann in einer Datei (siehe tools/proc.py)."""
-        by_window = int(self.model_window() * 0.15 * 3)
-        return max(1500, min(self.cfg.tools.max_output_chars, by_window))
+        """Höchstlänge eines Werkzeug-Ergebnisses nach dem Fenster (klein ≈ 10 %, groß ≈ 15 %) – damit Ausblenden
+        und Komprimieren immer Platz haben. Die Werkzeuge nehmen davon höchstens ihren Config-Wert
+        (ToolContext.limit); mehr steht dann in einer Datei (siehe tools/proc.py)."""
+        return self.plan().output_chars()
