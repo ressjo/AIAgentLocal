@@ -113,6 +113,7 @@
               <button type="button" role="menuitemradio" data-auto="off"><b>Aus</b><small>Jeder Shell-Befehl fragt vorher.</small></button>
               <button type="button" role="menuitemradio" data-auto="read"><b>Nur lesen</b><small>Erkannte lesende Befehle (ls, df, docker ps, git status …) laufen ohne Rückfrage.</small></button>
               <button type="button" role="menuitemradio" data-auto="files"><b>Lesen + Dateien bearbeiten</b><small>Zusätzlich Dateien im eigenen Home anlegen, schreiben, kopieren, verschieben – ohne Root. Löschen und versteckte Dateien fragen weiter.</small></button>
+              <button type="button" role="menuitemradio" data-auto="auto"><b>Auto</b><small>Alles ohne Root: Shell-Befehle (python, git, make, pip --user …) und Dateien laufen ohne Rückfrage. Löschen, sudo, Ausschalten, Senden ins Netz (git push, ssh, Uploads), Autostart/Startdateien und Zugangsdaten fragen weiter.</small></button>
             </div>
           </div>
           <button type="button" class="chip-toggle" id="btn-think" title="Denkmodus: Jarvis denkt vor der Antwort nach – langsamer, dafür gründlicher."><svg class="i"><use href="#i-sparkles"/></svg><span>Denken</span></button>
@@ -287,7 +288,7 @@
           <div class="set-row"><div><b>Planmodus</b><small>Erst einen Plan vorlegen, ausführen nach Freigabe.</small></div>
             <button class="switch" data-mirror="btn-plan">Aus</button></div>
           <div class="set-row"><div><b>Auto-Modus</b><small>Was ohne Rückfrage laufen darf.</small></div>
-            <div class="seg" id="set-auto"><button type="button" data-auto="off">Aus</button><button type="button" data-auto="read">Nur lesen</button><button type="button" data-auto="files">+ Dateien</button></div></div>
+            <div class="seg" id="set-auto"><button type="button" data-auto="off">Aus</button><button type="button" data-auto="read">Nur lesen</button><button type="button" data-auto="files">+ Dateien</button><button type="button" data-auto="auto">Auto</button></div></div>
           <div class="set-row"><div><b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small></div>
             <button class="switch" data-mirror="btn-think">Aus</button></div>
           <p class="set-hint">Weitere Einstellungen (Integrationen, Telegram, Mail …) stehen in <code>~/.config/orbwise/config.yaml</code> – <code>orbwise doctor</code> prüft sie.</p>

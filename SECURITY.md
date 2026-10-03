@@ -19,6 +19,10 @@ Orbwise can run commands on your computer, so its safety model matters.
   (never for Telegram or routines), and every root command still needs your confirmation. "Forget" in
   Settings → Status, a changed password or the timeout drops it. Python cannot wipe strings from memory, so a
   process memory dump during that window could contain it – set `sudo_remember_minutes: 0` if that matters to you.
+- **Auto mode "Auto"** runs every shell command without root without asking, except deleting, sudo, shutting down,
+  sending over the network, start-up files/autostart/credentials and Orbwise's own config. These checks only see the
+  command itself: a script or `python -c …` can do anything your user account may do. Use it when you trust the
+  task; plan mode and untrusted content (mail, screen) still ask.
 - **Auto mode "read + edit files"** only lets file changes through that stay in your own home, need no root, delete
   nothing and do not touch hidden files, launchers or credentials; everything else asks as before.
 - **Secrets stay put.** Files with keys and passwords (`~/.ssh`, `~/.gnupg`, password stores and keyrings,

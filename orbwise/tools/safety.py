@@ -457,6 +457,160 @@ def file_edit_ok(command: str) -> bool:
     return bool(edits or redirects) and shell_edits_ok(edits, redirects)
 
 
+# ---------------------------------------------------------------- Auto-Modus „Auto“ (alles ohne Root)
+_ROOT_WORD = re.compile(r"(?<![\w./-])(sudo|su|pkexec|doas|run0)(?![\w.-])")
+DELETE_CMDS = {"rm", "rmdir", "unlink", "shred", "trash", "trash-put", "srm", "wipe"}
+POWER_CMDS = {"shutdown", "reboot", "poweroff", "halt"}
+SEND_CMDS = {"ssh", "scp", "sftp", "mail", "mailx", "sendmail", "mutt", "nc", "ncat", "telnet", "ftp"}
+SHELLS = {"bash", "sh", "zsh", "dash", "fish"}
+_SEND_FLAGS = re.compile(r"^(-d\S*|--data\S*|-F\S*|--form\S*|-T\S*|--upload-file|--post-data|--post-file|"
+                         r"--body-data|--body-file|--method)(=.*)?$", re.I)
+
+
+def _git_sub(args: list[str]) -> str:
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("-C", "-c", "--git-dir", "--work-tree"):
+            i += 2
+            continue
+        if not a.startswith("-"):
+            return a
+        i += 1
+    return ""
+
+
+def _write_targets(name: str, args: list[str]) -> list[str]:
+    """Ziele, in die ein Befehl schreibt (für den Schutz von Startdateien, Autostart, ~/.ssh …)."""
+    paths = [a for a in args if not a.startswith("-")]
+    if name == "tee":
+        return paths
+    if name in ("cp", "mv", "install", "ln", "rsync"):
+        for i, a in enumerate(args):
+            if a in ("-t", "--target-directory") and i + 1 < len(args):
+                return [args[i + 1]]
+            if a.startswith("--target-directory="):
+                return [a.split("=", 1)[1]]
+        return paths[-1:] if len(paths) >= 2 else []
+    if name in ("touch", "mkdir"):
+        return paths
+    return []
+
+
+def auto_shell_ok(command: str, _depth: int = 0) -> tuple[bool, str]:
+    """Auto-Modus „Auto“: läuft dieser Befehl ohne Rückfrage? Alles ohne Root – außer Löschen, Ausschalten,
+    Senden ins Netz, Startdateien/Autostart/Zugangsdaten. Liefert (ok, Grund fürs Nachfragen)."""
+    from .filepolicy import protected_path
+
+    still = T(" – fragt auch im Auto-Modus", " – Auto still asks")
+    root = T("benötigt Root-Rechte", "needs root privileges") + still
+    secrets = T("liest Zugangsdaten (Schlüssel/Passwörter)", "reads credentials (keys/passwords)") + still
+    delete = T("löscht Dateien", "deletes files") + still
+    power = T("schaltet aus, startet neu oder beendet die Sitzung", "shuts down, reboots or ends the session") + still
+    send = T("sendet etwas ins Netz", "sends something over the network") + still
+    persist = T("ändert Startdateien, Autostart, Zugangsdaten oder Orbwise selbst",
+                "changes start-up files, autostart, credentials or Orbwise itself") + still
+    cmd = command.strip()
+    if not cmd or _depth > 3:
+        return False, T("Befehl konnte nicht sicher analysiert werden", "the command could not be analysed safely")
+    for pattern, reason in BLOCK_PATTERNS + WARN_PATTERNS:
+        if pattern.search(cmd):
+            return False, reason() + still
+    if _ROOT_WORD.search(cmd):
+        return False, root
+    if SECRET_VARS.search(cmd) or re.search(r"\benviron\b", cmd):
+        return False, secrets
+    try:
+        tokens = _tokens(cmd)
+    except ValueError:
+        return False, T("Befehl konnte nicht sicher analysiert werden", "the command could not be analysed safely")
+    cwd = os.path.expanduser("~")
+    for seg in _segments(tokens):
+        core, is_root = _strip_wrappers(seg)
+        if is_root:
+            return False, root
+        for i, t in enumerate(seg[:-1]):
+            if t == "<" and _reads_secret([seg[i + 1]], cwd, recursive=False):
+                return False, secrets
+        if not core:
+            if any(os.path.basename(t) == "env" for t in seg):
+                return False, secrets
+            continue
+        args, skip = [], False
+        for i, t in enumerate(core[1:], 1):
+            if skip:
+                skip = False
+                continue
+            if t in REDIRECTS:
+                target = core[i + 1] if i + 1 < len(core) else ""
+                if target != "/dev/null" and not target.startswith("&") and protected_path(target, cwd):
+                    return False, persist
+                skip = True
+                continue
+            args.append(t)
+        name = os.path.basename(core[0])
+        if name in ("cd", "pushd"):
+            target = next((a for a in args if not a.startswith("-")), "~")
+            cwd = os.path.join(cwd, os.path.expanduser(os.path.expandvars(target)))
+            continue
+        if _prints_secrets(name, args, cwd):
+            return False, secrets
+        if name in SHELLS and "-c" in args:  # bash -c "…": den inneren Befehl genauso prüfen
+            inner = args[args.index("-c") + 1] if args.index("-c") + 1 < len(args) else ""
+            ok, why = auto_shell_ok(inner, _depth + 1)
+            if not ok:
+                return ok, why
+        if name == "eval":
+            ok, why = auto_shell_ok(" ".join(args), _depth + 1)
+            if not ok:
+                return ok, why
+        if name == "xargs":  # xargs rm …
+            sub = next((a for a in args if not a.startswith("-")), "")
+            if os.path.basename(sub) in DELETE_CMDS | POWER_CMDS | SEND_CMDS:
+                return False, delete if os.path.basename(sub) in DELETE_CMDS else send
+        if name in DELETE_CMDS or (name == "gio" and args[:1] in (["trash"], ["remove"])):
+            return False, delete
+        if name == "find" and ("-delete" in args or any(
+                a in ("-exec", "-execdir", "-ok", "-okdir") and i + 1 < len(args)
+                and os.path.basename(args[i + 1]) in DELETE_CMDS for i, a in enumerate(args))):
+            return False, delete
+        if name == "git":
+            sub = _git_sub(args)
+            if sub == "push":
+                return False, send
+            if sub == "clean":
+                return False, delete
+        if name in POWER_CMDS:
+            return False, power
+        if name == "systemctl":
+            verbs = [a for a in args if not a.startswith("-")]
+            if verbs[:1] and verbs[0] in ("poweroff", "reboot", "suspend", "hibernate", "halt", "hybrid-sleep",
+                                          "suspend-then-hibernate", "kexec", "soft-reboot"):
+                return False, power
+            if verbs[:1] and verbs[0] in ("enable", "link", "preset", "preset-all", "set-environment"):
+                return False, persist
+        if name == "loginctl" and any(a.startswith(("terminate", "kill", "poweroff", "reboot")) for a in args):
+            return False, power
+        if name == "crontab" and "-l" not in args:
+            return False, persist
+        if name in SEND_CMDS:
+            return False, send
+        if name == "rsync" and any(re.match(r"^[\w.@-]+:", a) and not a.startswith(("/", "~", "."))
+                                   for a in args if not a.startswith("-")):
+            return False, send
+        if name in ("curl", "wget"):
+            if any(_SEND_FLAGS.match(a) for a in args):
+                return False, send
+            for i, a in enumerate(args):
+                method = args[i + 1] if a in ("-X", "--request") and i + 1 < len(args) else (
+                    a[2:] if a.startswith("-X") and len(a) > 2 else "")
+                if method.upper() in ("POST", "PUT", "PATCH", "DELETE"):
+                    return False, send
+        if any(protected_path(t, cwd) for t in _write_targets(name, args)):
+            return False, persist
+    return True, ""
+
+
 _SUDO_RE = re.compile(r"(^|[;&|(]\s*|\s)sudo((?:\s+(?:-[ugpCrtUDRTh]\s+[^\s-]\S*|-[A-Za-z]+))*)\s+")
 # Optionen mit Wert (z. B. -u root) bleiben erhalten; -n/-S/-A werden durch den gewählten Modus ersetzt
 _SUDO_OWN_FLAGS = re.compile(r"\s+-[nSA]+\b")

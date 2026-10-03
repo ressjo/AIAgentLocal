@@ -25,7 +25,7 @@
     set(k, v) { try { localStorage.setItem("orbwise." + k, JSON.stringify(v)); } catch { /* egal */ } },
   };
 
-  const AUTO_LABEL = { off: L("Auto aus", "Auto off"), read: L("Lesen", "Read"), files: L("Dateien", "Files") };
+  const AUTO_LABEL = { off: L("Auto aus", "Auto off"), read: L("Lesen", "Read"), files: L("Dateien", "Files"), auto: "Auto" };
   const S = {
     ws: null, connected: false, retry: 0,
     serverState: "idle", substate: "",
@@ -217,6 +217,7 @@
     $("btn-think").classList.toggle("on", S.think);
     $("btn-auto").classList.toggle("on", S.autoMode !== "off");
     $("btn-auto").classList.toggle("files", S.autoMode === "files");
+    $("btn-auto").classList.toggle("full", S.autoMode === "auto");
     $("auto-label").textContent = AUTO_LABEL[S.autoMode];
     document.querySelectorAll("[data-auto]").forEach((b) => b.classList.toggle("on", b.dataset.auto === S.autoMode));
     $("btn-plan").classList.toggle("on", S.plan);
@@ -1184,7 +1185,9 @@
             read: L("Auto: nur lesen – erkannte lesende Befehle laufen ohne Rückfrage, Veränderndes fragt weiter.",
                     "Auto: read only – recognised read-only commands run without asking, changes still ask."),
             files: L("Auto: lesen + Dateien – Dateien in deinem Home werden ohne Rückfrage angelegt und geändert (ohne Root, Löschen fragt weiter).",
-                     "Auto: read + files – files in your home are created and changed without asking (no root, deleting still asks).") }[mode]);
+                     "Auto: read + files – files in your home are created and changed without asking (no root, deleting still asks)."),
+            auto: L("Auto – alles ohne Root läuft ohne Rückfrage. Löschen, sudo, Ausschalten, Senden ins Netz und Startdateien fragen weiter.",
+                    "Auto – everything without root runs without asking. Deleting, sudo, shutting down, sending over the network and start-up files still ask.") }[mode]);
     refresh();
   }
   $("btn-auto").onclick = (e) => { e.stopPropagation(); setAutoMenu(autoMenu.classList.contains("hidden")); };

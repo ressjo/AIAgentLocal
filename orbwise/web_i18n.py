@@ -58,6 +58,12 @@ HTML_EN = [
      'verschieben – ohne Root. Löschen und versteckte Dateien fragen weiter.</small>',
      '<b>Read + edit files</b><small>Also create, write, copy and move files in your own home – without root. '
      'Deleting and hidden files still ask.</small>'),
+    ('<b>Auto</b><small>Alles ohne Root: Shell-Befehle (python, git, make, pip --user …) und Dateien laufen ohne '
+     'Rückfrage. Löschen, sudo, Ausschalten, Senden ins Netz (git push, ssh, Uploads), Autostart/Startdateien und '
+     'Zugangsdaten fragen weiter.</small>',
+     '<b>Auto</b><small>Everything without root: shell commands (python, git, make, pip --user …) and files run '
+     'without asking. Deleting, sudo, shutting down, sending over the network (git push, ssh, uploads), '
+     'autostart/start-up files and credentials still ask.</small>'),
     ('title="Senden" aria-label="Senden"', 'title="Send" aria-label="Send"'),
     ('title="Aktuelle Aufgabe abbrechen (Esc)" aria-label="Abbrechen"', 'title="Cancel the current task (Esc)" aria-label="Cancel"'),
     ('>Leertaste halten zum Sprechen · Esc bricht ab · Änderungen am System fragt Jarvis vorher<',

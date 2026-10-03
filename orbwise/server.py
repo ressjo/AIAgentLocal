@@ -1214,7 +1214,7 @@ def create_app(cfg: Config) -> FastAPI:
                     hub.think = bool(data.get("enabled"))
                 elif t == "auto_mode":
                     mode = str(data.get("mode", "read"))
-                    hub.agent.auto_mode = mode if mode in ("off", "read", "files") else "read"
+                    hub.agent.auto_mode = mode if mode in ("off", "read", "files", "auto") else "read"
                 elif t == "plan_mode":
                     hub.plan_mode = bool(data.get("enabled"))
                 elif t in ("plan_accept", "plan_revise", "plan_discard"):

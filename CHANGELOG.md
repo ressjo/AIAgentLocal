@@ -6,7 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- **Auto mode as a drop-down** next to *Think*: *Off*, *Read only* (default) and new **Read + edit files** – also
+- **Auto mode as a drop-down** next to *Think*: *Off*, *Read only* (default), **Read + edit files** and **Auto**
+  (everything without root – `python`, `make`, `git commit`, `pip --user` … – runs without asking; deleting, sudo,
+  shutting down, sending over the network, start-up files and credentials still ask). *Read + edit files* – also
   creates, writes, copies and moves files in your own home without asking (no root, no deleting, no hidden files,
   launchers or credentials; plan mode and untrusted content still ask). Also selectable in Settings → General.
 - **Remember the sudo password** for 15 minutes (`tools.sudo_remember_minutes`, checkbox in the password dialog):

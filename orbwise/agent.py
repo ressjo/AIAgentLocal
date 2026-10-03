@@ -125,7 +125,8 @@ class Agent:
         self._last_prompt: dict[str, int] = {}  # Prompt-Größe des letzten Schritts (für „neu einzulesen“)
         self._approved_plan = ""  # beim Ausführen: der freigegebene Plan (hängt an der aktuellen Nachricht)
         # Auto-Knopf: "off" = jeder Shell-Befehl fragt, "read" = erkannte lesende Befehle laufen ohne Rückfrage,
-        # "files" = zusätzlich Dateien im eigenen Home anlegen/schreiben/kopieren/verschieben (ohne Root, ohne Löschen)
+        # "files" = zusätzlich Dateien im eigenen Home anlegen/schreiben/kopieren/verschieben (ohne Root, ohne Löschen),
+        # "auto" = Shell-Befehle und Dateien ohne Root (Löschen, Ausschalten, Senden ins Netz, Startdateien fragen)
         self.auto_mode = "read"
         self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
         self.tools = load_all_tools()
@@ -382,6 +383,23 @@ class Agent:
         return answer
 
     @staticmethod
+    def _auto_ok(name: str, args: dict) -> tuple[bool, str]:
+        """Auto „Auto“: alles ohne Root – außer Löschen, Ausschalten, Senden ins Netz, Startdateien/Zugangsdaten."""
+        from .lang import T
+        from .tools.filepolicy import protected_path, writable_path
+        from .tools.safety import auto_shell_ok
+        if name == "run_shell":
+            return auto_shell_ok(str(args.get("command") or ""))
+        path = str(args.get("path") or "")
+        if protected_path(path):
+            return False, T("ändert Startdateien, Autostart, Zugangsdaten oder Orbwise selbst – fragt auch im "
+                            "Auto-Modus", "changes start-up files, autostart, credentials or Orbwise itself – Auto "
+                            "still asks")
+        if not writable_path(path):
+            return False, T("nur mit Root-Rechten beschreibbar", "only writable with root privileges")
+        return True, ""
+
+    @staticmethod
     def _file_edit_ok(name: str, args: dict) -> bool:
         """Auto „Dateien“: Dateiänderung im eigenen Home ohne Root/Löschen (siehe tools/filepolicy.py)."""
         from .tools.filepolicy import editable_path
@@ -600,6 +618,9 @@ class Agent:
         risk, reason = spec.assess(ctx, args)
         if risk == CONFIRM and self.auto_mode == "files" and not self._plan and self._file_edit_ok(name, args):
             risk, reason = SAFE, prompts.text(self.cfg, "auto_files")
+        elif risk == CONFIRM and self.auto_mode == "auto" and not self._plan and name in ("run_shell", "write_file"):
+            ok, why = self._auto_ok(name, args)
+            risk, reason = (SAFE, prompts.text(self.cfg, "auto_full")) if ok else (risk, why or reason)
         if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED:
             risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
         if risk == SAFE and name == "run_shell" and self.auto_mode == "off":

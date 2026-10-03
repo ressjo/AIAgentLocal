@@ -84,3 +84,52 @@ def shell_edits_ok(segments: list[tuple[str, list[str], str]], redirects: list[t
         else:
             return False  # rm, rmdir, chmod, sed -i, … fragen weiter
     return all(t == "/dev/null" or editable_path(t, cwd) for t, cwd in redirects)
+
+
+# ---------------------------------------------------------------- Auto-Modus „Auto“ (alles ohne Root)
+# Dateien, über die sich etwas dauerhaft einnisten oder Orbwise selbst umgestellt werden könnte – fragen immer
+SHELL_START = {".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".zshrc", ".zprofile",
+               ".zshenv", ".zlogin", ".xprofile", ".xinitrc", ".xsession", ".xsessionrc", ".pam_environment"}
+PROTECTED_DIRS = (".config/autostart", ".config/systemd", ".config/environment.d", ".config/plasma-workspace/env",
+                  ".config/fish/conf.d", ".ssh", ".gnupg", ".config/orbwise", ".local/share/orbwise",
+                  ".local/share/applications", ".kde/Autostart")
+
+
+def _resolve(path: str, cwd: str | None) -> Path | None:
+    raw = (path or "").strip()
+    if not raw:
+        return None
+    p = Path(os.path.expanduser(os.path.expandvars(raw)))
+    p = p if p.is_absolute() else Path(cwd or os.path.expanduser("~")) / p
+    try:
+        return p.resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
+def protected_path(path: str, cwd: str | None = None) -> bool:
+    """Shell-Startdateien, Autostart, systemd-Units, ~/.ssh, Orbwise selbst, Programmstarter, Zugangsdaten."""
+    resolved = _resolve(path, cwd)
+    if resolved is None or set(path) & GLOB_CHARS:
+        return True  # unklar → lieber fragen
+    if resolved.name in SHELL_START or resolved.name.lower().endswith(EXEC_SUFFIXES):
+        return True
+    home = Path.home().resolve()
+    for d in PROTECTED_DIRS:
+        base = home / d
+        if resolved == base or base in resolved.parents:
+            return True
+    return is_secret_path(resolved) or is_secret_path(path)
+
+
+def writable_path(path: str, cwd: str | None = None) -> bool:
+    """Ohne Root beschreibbar (vorhandene Datei bzw. nächster vorhandener Ordner)?"""
+    resolved = _resolve(path, cwd)
+    if resolved is None:
+        return False
+    if resolved.exists():
+        return os.access(resolved, os.W_OK)
+    parent = resolved.parent
+    while not parent.exists() and parent != parent.parent:
+        parent = parent.parent
+    return parent.is_dir() and os.access(parent, os.W_OK | os.X_OK)
