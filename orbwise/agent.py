@@ -304,6 +304,7 @@ class Agent:
             # in echten Token: feste Grenze = Kontextfenster; ab compact_at wird Platz geschaffen
             "tokens": int(used * ratio), "reserve": self.answer_reserve(), "compact_at": self.compact_limit(),
             "epoch": len(conv.epochs), "small": plan.small, "cleared": conv.epoch.get("cleared", 0),
+            "capped": self.cfg.memory.context_budget_tokens or None, "ratio": ratio,
         }
         return messages
 
@@ -378,13 +379,18 @@ class Agent:
         return self._token_ratio.get(self._profile_key(), 1.0)
 
     def learn_tokens(self, estimated: int, real: int) -> None:
-        """Schätzung an die echten Token des Servers angleichen (gleitend, begrenzt auf 0,6–1,3)."""
+        """Schätzung an die echten Token des Servers angleichen (gleitend, begrenzt auf 0,5–3). Manche Modelle
+        zählen deutlich mehr als „3 Zeichen pro Token“ (Chat-Vorlage, Werkzeugbeschreibungen, Tokenizer) – mit einer
+        engeren Grenze zeigte die Anzeige z. B. 7k, obwohl der Server 21k las, und Komprimieren kam zu spät."""
         if estimated < 500 or not real:
             return
         key = self._profile_key()
-        sample = max(0.6, min(1.3, real / estimated))
+        sample = max(0.5, min(3.0, real / estimated))
         old = self._token_ratio.get(key)
-        self._token_ratio[key] = round(sample if old is None else 0.7 * old + 0.3 * sample, 3)
+        self._token_ratio[key] = round(sample if old is None else 0.5 * old + 0.5 * sample, 3)
+        if not 0.6 <= sample <= 1.5:
+            log.info("Prompt laut Server %s Token, geschätzt %s – Faktor jetzt %s", real, estimated,
+                     self._token_ratio[key])
 
     def choose_tools(self, used: set[str] | None = None) -> set[str]:
         """Werkzeuge für den nächsten Schritt (siehe toolselect.py). Passen alle gut ins Fenster, gehen immer alle mit.

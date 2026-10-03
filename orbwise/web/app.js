@@ -1860,6 +1860,10 @@
                + `Bis dahin wird nur Neues eingelesen; dann werden erst alte Werkzeug-Ergebnisse ausgeblendet, zusammengefasst nur, wenn das nicht reicht.`,
                `Making room at ~${kTok(at)} (${Math.round(100 * at / c.window)} %) – ~${kTok(Math.max(0, at - used))} tokens left. `
                + `Until then only new parts are read; then old tool results are hidden first, a summary only if that isn't enough.`) : "",
+        c.capped ? L(`Begrenzt durch memory.context_budget_tokens = ${c.capped} in der Config – der Prompt bleibt darunter, auch wenn das Fenster größer ist (Ältestes wird gekürzt). Für das volle Fenster die Zeile entfernen.`,
+                     `Limited by memory.context_budget_tokens = ${c.capped} in the config – the prompt stays below it even with a bigger window (oldest parts are trimmed). Remove the line for the full window.`) : "",
+        c.ratio && Math.abs(c.ratio - 1) > 0.25 ? L(`Schätzung angepasst: dieses Modell zählt ${fmt(c.ratio, 1)}× so viele Token wie geschätzt.`,
+                                                  `Estimate adjusted: this model counts ${fmt(c.ratio, 1)}× the estimated tokens.`) : "",
         c.cleared ? L(`Ausgeblendet: ${oldResults(c.cleared)} (vollständig in Dateien, das Modell kann sie nachlesen).`,
                       `Hidden: ${oldResults(c.cleared)} (complete in files, the model can read them again).`) : "",
         c.reserve ? L(`${c.reserve} Token bleiben frei für Antwort${c.reserve > 2000 ? " und Denkkette" : ""}.`,

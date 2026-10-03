@@ -58,10 +58,13 @@ def test_token_estimate_learns_from_server(cfg, memory, llm):
     agent.learn_tokens(4000, 5000)  # Server zählt mehr Token als geschätzt → Budget vorsichtiger
     assert agent.token_ratio() == 1.25 and agent.context_budget() < base
     for _ in range(20):
-        agent.learn_tokens(4000, 2000)  # weit darunter → Faktor sinkt, aber nicht unter 0,6
-    assert agent.token_ratio() >= 0.6 and agent.context_budget() > base
+        agent.learn_tokens(4000, 1000)  # weit darunter → Faktor sinkt, aber nicht unter 0,5
+    assert agent.token_ratio() >= 0.5 and agent.context_budget() > base
     agent.learn_tokens(100, 5000)  # zu kleine Stichprobe → ignoriert
-    assert agent.token_ratio() >= 0.6
+    assert agent.token_ratio() >= 0.5
+    for _ in range(6):  # Gemeldet (Bonsai): Server las 21k, die Anzeige blieb bei ~7k (Faktor war auf 1,3 begrenzt)
+        agent.learn_tokens(7000, 21000)
+    assert agent.token_ratio() > 2.8
 
 
 def test_context_event_reports_cache_and_condensed(cfg, memory, llm):
