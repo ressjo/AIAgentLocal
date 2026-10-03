@@ -43,8 +43,8 @@ All notable changes to this project are documented here. The format follows
   thinking, writing a tool call (e.g. `write_file` with its size), answering, reloading after image analysis,
   retrying with a trimmed context, summarising the chat or adding tools. Afterwards a small line under the answer
   sums up where the time went (total time, tokens read and cached, tokens written, tok/s – expand it for each step).
-  Background work (pre-reading the chat, Telegram, routines) stays in the activity panel. The current phase
-  also shows under the orb.
+  Background work (pre-reading the chat, Telegram, routines) stays in the activity panel. Under the orb, changing
+  Jarvis-style lines match what it is doing ("Consulting the command line …", "Leafing through your documents …").
 - **Auto button for read-only commands** (next to *Think*, on by default): many more harmless commands are recognised
   as read-only and run without a confirmation – containers (`docker/podman ps|images|logs`, `kubectl get`), packages
   (`dpkg -l`, `rpm -q`, `apt list`, `flatpak list`, `pip list`, `ollama list`), network (`nmcli … show/status`,

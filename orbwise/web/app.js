@@ -210,6 +210,9 @@
     if (S.recording) sub = S.recordingMode === "ptt" ? L("Loslassen zum Senden", "Release to send") : L("Sprich jetzt …", "Speak now …");
     else if (S.transcribing) sub = L("Transkribiere …", "Transcribing …");
     else if (s === "idle" && S.wake) sub = L("Sag „Hey Jarvis“", "Say “Hey Jarvis”");
+    const working = (s === "thinking" || s === "executing") && !loadingModel;
+    if (working && !sub) sub = saying();
+    else if (!working && Say.timer) stopSaying();
     $("substate-label").textContent = sub || "";
     $("btn-mic").classList.toggle("recording", S.recording);
     $("btn-wake").classList.toggle("on", S.wake);
@@ -275,7 +278,47 @@
     if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(obj));
   }
 
-  const THINKING_SUB = L("denkt nach …", "thinking …");
+  // Unter dem Orb, solange Jarvis arbeitet: wechselnde Sprüche passend zur Tätigkeit (die technischen
+  // Modell-Schritte stehen in der Antwort selbst)
+  const SAYINGS = {
+    think: [L("Einen Moment, Sir …", "One moment, sir …"), L("Analysiere …", "Analysing …"),
+            L("Ich gehe das kurz durch …", "Running through it …"), L("Verknüpfe die Fakten …", "Connecting the dots …"),
+            L("Werte aus …", "Evaluating …"), L("Fast so weit …", "Almost there …")],
+    shell: [L("Bemühe die Kommandozeile …", "Consulting the command line …"), L("Erteile Befehle …", "Issuing commands …"),
+            L("Spreche mit dem System …", "Talking to the system …")],
+    sysadmin: [L("Prüfe die Systemwerte …", "Checking the vitals …"), L("Sehe nach dem Rechten …", "Inspecting the system …"),
+               L("Werfe einen Blick unter die Haube …", "Looking under the hood …")],
+    packages: [L("Sichte die Pakete …", "Reviewing packages …"), L("Prüfe auf Neuigkeiten …", "Checking for updates …")],
+    web: [L("Durchforste das Netz …", "Scouring the web …"), L("Befrage das Internet …", "Consulting the internet …"),
+          L("Lese quer …", "Skimming the sources …")],
+    files: [L("Durchsuche die Dateien …", "Searching the files …"), L("Blättere im Dateisystem …", "Leafing through the file system …"),
+            L("Sortiere Akten …", "Sorting records …")],
+    mail: [L("Sichte die Post …", "Going through the mail …"), L("Öffne die Umschläge …", "Opening envelopes …")],
+    paperless: [L("Blättere in Ihren Unterlagen …", "Leafing through your documents …"), L("Ziehe die Akte …", "Pulling the file …")],
+    calendar_tools: [L("Konsultiere den Kalender …", "Consulting the calendar …"), L("Prüfe Ihre Termine …", "Checking your schedule …")],
+    homeassistant: [L("Spreche mit dem Haus …", "Talking to the house …"), L("Lege Schalter um …", "Flipping switches …")],
+    memory_tools: [L("Krame in meinem Gedächtnis …", "Searching my memory …"), L("Erinnere mich …", "Recalling …")],
+    vision: [L("Sehe genau hin …", "Taking a close look …"), L("Betrachte das Bild …", "Studying the image …")],
+    compress: [L("Ordne meine Gedanken …", "Gathering my thoughts …"), L("Fasse zusammen …", "Summarising …")],
+  };
+  const Say = { ctx: "think", text: "", timer: null };
+  function sayNext(ctx) {
+    if (ctx && ctx !== Say.ctx) { Say.ctx = ctx; Say.text = ""; }
+    const pool = SAYINGS[Say.ctx] || SAYINGS.think;
+    const choices = pool.length > 1 ? pool.filter((t) => t !== Say.text) : pool;
+    Say.text = choices[Math.floor(Math.random() * choices.length)];
+  }
+  function saying() {
+    if (!Say.text) sayNext();
+    if (!Say.timer) Say.timer = setInterval(() => { sayNext(); refresh(); }, 3500);
+    return Say.text;
+  }
+  function stopSaying() {
+    clearInterval(Say.timer);
+    Say.timer = null;
+    Say.ctx = "think";
+    Say.text = "";
+  }
 
   function handle(ev) {
     switch (ev.type) {
@@ -299,7 +342,8 @@
           orb.clearSatellites("rt:");
         }
         S.serverState = ev.state === "confirm" ? S.serverState : ev.state;
-        S.substate = ev.state === "executing" && ev.tool ? ev.tool : "";
+        S.substate = "";
+        if (ev.state === "idle") stopSaying();
         break;
       case "user":
         addUser(ev.text, ev.source);
@@ -325,15 +369,12 @@
         orb.token();
         T.tokenTimes.push(performance.now());
         if (Thought.active) Thought.zoomOut();
-        if (S.substate === THINKING_SUB) { S.substate = ""; break; }
         return;  // Zustand ändert sich pro Token nicht – kein refresh() nötig
       case "reasoning":
         // Denkkette: nicht in die Antwort, sondern in den Orb (hineinzoomen) und später aufklappbar im Chat
         Thought.add(ev.id, ev.text || "");
         orb.token();  // Denk-Puls folgt auch dem Gedankengang
-        if (S.substate !== THINKING_SUB) S.substate = THINKING_SUB;
-        else return;
-        break;
+        return;
       case "segment_end":
         appendToken(ev.id, "\n\n");
         break;
@@ -341,7 +382,7 @@
         Thought.finish(ev.id);
         finishAssistant(ev.id, ev.cancelled);
         S.serverState = "idle";  // Antwort fertig = bereit, auch wenn das „idle“ des Servers noch aussteht
-        if (S.substate === THINKING_SUB) S.substate = "";
+        stopSaying();
         setTimeout(loadStatus, 300);
         if (!$("chat-title").textContent) {
           getJSON("/api/chats").then((l) => {
@@ -363,6 +404,7 @@
         break;
       case "tool_result":
         toolResult(ev);
+        sayNext("think");
         break;
       case "confirm_request":
         openConfirm(ev);
@@ -890,24 +932,12 @@
     }
   }
 
-  // Unsichtbare Phasen auch unter dem Orb nennen; Denken und Antworten sieht man dort ohnehin
-  function orbPhase(ev, text) {
-    if (["prompt", "loading", "retry", "tool_args", "compress"].includes(ev.phase)) {
-      const short = text.replace(/ \([^)]*\)/, "");  // kurz – ohne den Klammerzusatz zum Cache
-      S.substate = S.phaseSub = short.charAt(0).toUpperCase() + short.slice(1) + " …";
-    } else if (S.phaseSub && S.substate === S.phaseSub) { S.substate = ""; S.phaseSub = ""; }
-  }
-  function clearOrbPhase() {
-    if (S.phaseSub && S.substate === S.phaseSub) S.substate = "";
-    S.phaseSub = "";
-  }
 
   // Schritt einer laufenden Antwort: Live-Zeile in der Nachricht, Kennzahlen für die Statistik danach
   function chatPhase(a, ev) {
     const live = a.live;
     if (ev.phase === "done") {
       a.steps.push(ev);
-      clearOrbPhase();
       live.dataset.phase = "";
       setBar(live.querySelector(".act-bar i"), ev);
       live._start = performance.now();
@@ -921,14 +951,13 @@
     live.querySelector(".lt").textContent = text;
     live.dataset.phase = ev.phase;
     setBar(live.querySelector(".act-bar i"), ev);
-    orbPhase(ev, text);
+    if (ev.phase === "compress" && Say.ctx !== "compress") { sayNext("compress"); refresh(); }
   }
 
   // Zusammenfassen nach einer schon fertigen Antwort (in Ruhe): kleine Zeile unter dieser Antwort
   function afterPhase(msgEl, ev) {
     let live = msgEl.querySelector(".live");
     if (ev.phase === "done") {
-      clearOrbPhase();
       if (!live) return;
       live.classList.remove("on");
       live.querySelector(".lt").textContent = phaseSummary(ev);
@@ -939,7 +968,7 @@
     if (!live) { live = liveLine(""); msgEl.appendChild(live); }
     const text = phaseText(ev);
     live.querySelector(".lt").textContent = text;
-    orbPhase(ev, text);
+    if (ev.phase === "compress" && Say.ctx !== "compress") { sayNext("compress"); refresh(); }
   }
 
   // Nach der Antwort: eine dezente Zeile – Gesamtzeit, eingelesen, geschrieben, tok/s; aufgeklappt je Schritt
@@ -997,7 +1026,6 @@
       el.className = "act model " + (ev.error ? "error" : "ok");
       el.querySelector(".act-args").textContent = phaseSummary(ev);
       el.querySelector(".act-status").textContent = secs(ev.seconds ?? (performance.now() - el._start) / 1000);
-      clearOrbPhase();
       delete acts["m-" + ev.id];
       return;
     }
@@ -1005,7 +1033,7 @@
     el.querySelector(".act-args").textContent = text;
     el.dataset.phase = ev.phase;
     setBar(bar, ev);
-    orbPhase(ev, text);
+    if (ev.phase === "compress" && Say.ctx !== "compress") { sayNext("compress"); refresh(); }
   }
 
   // Kurzname für den Werkzeug-Satelliten am Orb
@@ -1028,6 +1056,7 @@
 
   function toolCall(ev) {
     activityArrived();
+    if (!ev.routine) { sayNext(SAYINGS[ev.group] ? ev.group : "think"); refresh(); }
     if (ev.group === "memory_tools") orb.memoryGlow(ev.id, true, satLabel(ev.name));
     else orb.addSatellite(ev.id, satLabel(ev.name), ICON_GROUPS[ev.group] || null);
     const empty = activity.querySelector(".empty");
