@@ -252,6 +252,7 @@
       loadStatus();
       getJSON("/api/metrics").then(showMetrics).catch(() => {});
       if (!S.historyLoaded) loadHistory();
+      loadChats();  // Seitenleiste gleich füllen (vorher erst nach NEU oder der ersten Antwort)
       renderBoot();
     };
     ws.onclose = () => {
@@ -287,6 +288,7 @@
         S.transcribing = false;  // neue Verbindung = neue Audio-Sitzung, eine alte Transkription meldet sich nie mehr
         if (ev.context) showContext(ev.context);
         applyMode(ev);
+        loadChats();  // Chats des aktuellen Modus
         break;
       case "context":
         showContext(ev);
@@ -614,7 +616,10 @@
   function startAssistant(id, plan) {
     const el = addMsg("assistant streaming" + (plan ? " plan" : ""), "JARVIS", "");
     el.dataset.msg = id;
-    assistants[id] = { el, raw: "" };
+    // statt eines blinkenden Cursors: was das Modell gerade macht (Einlesen, Denken, Aufruf schreiben …)
+    const live = liveLine(L("wartet auf das Modell", "waiting for the model"));
+    el.appendChild(live);
+    assistants[id] = { el, raw: "", live, steps: [], started: performance.now() };
     S.currentMsg = id;
   }
   // Token werden gesammelt und höchstens einmal pro Bild (~16–60 ms) als Markdown gerendert –
@@ -709,6 +714,8 @@
     if (!a) return;
     if (dirty.has(a)) { dirty.delete(a); renderAssistant(a); scrollChat(); }
     a.el.classList.remove("streaming");
+    a.live.remove();
+    if (a.steps.length) a.el.appendChild(statsLine(a, cancelled));
     if (!a.raw.trim()) {
       a.el.querySelector(".body").innerHTML = cancelled ? "<em>(abgebrochen)</em>" : "";
       if (!cancelled && !a.el.querySelector(".tool-chip")) a.el.remove();
@@ -845,14 +852,129 @@
   }
 
   function tickPhases() {
-    const open = activity.querySelectorAll(".act.model.running");
+    const open = [...activity.querySelectorAll(".act.model.running"), ...chat.querySelectorAll(".live.on")];
     open.forEach((el) => {
-      el.querySelector(".act-status").textContent = secs(Math.floor((performance.now() - el._start) / 1000));
+      const s = Math.floor((performance.now() - el._start) / 1000);
+      const t = el.querySelector(".act-status, .ls");
+      if (t && (s >= 1 || t.classList.contains("act-status"))) t.textContent = secs(s);
     });
     if (!open.length) { clearInterval(phaseTimer); phaseTimer = null; }
   }
 
+  // Live-Zeile in der Antwort (ersetzt den Cursor) – Sekunden zählt tickPhases
+  function liveLine(text) {
+    const el = document.createElement("div");
+    el.className = "live on";
+    el.innerHTML = `<div class="live-row"><span class="dot"></span><span class="lt"></span><span class="ls"></span></div>
+      <div class="act-bar"><i></i></div>`;
+    el.querySelector(".lt").textContent = text;
+    el._start = performance.now();
+    if (!phaseTimer) phaseTimer = setInterval(tickPhases, 1000);
+    return el;
+  }
+
+  // Fortschrittsbalken beim Einlesen: echter Fortschritt (llama-server) oder geschätzt aus der gelernten Geschwindigkeit
+  function setBar(bar, ev) {
+    if (ev.phase === "prompt" && ev.progress != null) {
+      bar.style.transition = "width .4s";
+      bar.style.width = `${Math.round(ev.progress * 100)}%`;
+    } else if (ev.phase === "prompt" && ev.eta_s > 0) {
+      bar.style.transition = "none";
+      bar.style.width = "0";
+      void bar.offsetWidth;
+      bar.style.transition = `width ${ev.eta_s}s linear`;
+      bar.style.width = "95%";
+    } else if (ev.phase !== "prompt") {
+      bar.style.transition = "none";
+      bar.style.width = "0";
+    }
+  }
+
+  // Unsichtbare Phasen auch unter dem Orb nennen; Denken und Antworten sieht man dort ohnehin
+  function orbPhase(ev, text) {
+    if (["prompt", "loading", "retry", "tool_args", "compress"].includes(ev.phase)) {
+      const short = text.replace(/ \([^)]*\)/, "");  // kurz – ohne den Klammerzusatz zum Cache
+      S.substate = S.phaseSub = short.charAt(0).toUpperCase() + short.slice(1) + " …";
+    } else if (S.phaseSub && S.substate === S.phaseSub) { S.substate = ""; S.phaseSub = ""; }
+  }
+  function clearOrbPhase() {
+    if (S.phaseSub && S.substate === S.phaseSub) S.substate = "";
+    S.phaseSub = "";
+  }
+
+  // Schritt einer laufenden Antwort: Live-Zeile in der Nachricht, Kennzahlen für die Statistik danach
+  function chatPhase(a, ev) {
+    const live = a.live;
+    if (ev.phase === "done") {
+      a.steps.push(ev);
+      clearOrbPhase();
+      live.dataset.phase = "";
+      setBar(live.querySelector(".act-bar i"), ev);
+      live._start = performance.now();
+      live.querySelector(".ls").textContent = "";
+      live.querySelector(".lt").textContent = ev.calls && ev.calls.length
+        ? L(`führt ${ev.calls.join(", ")} aus`, `running ${ev.calls.join(", ")}`) : L("gleich weiter", "continuing");
+      return;
+    }
+    if (live._phase !== ev.id) { live._phase = ev.id; live._start = performance.now(); live.querySelector(".ls").textContent = ""; }
+    const text = phaseText(ev);
+    live.querySelector(".lt").textContent = text;
+    live.dataset.phase = ev.phase;
+    setBar(live.querySelector(".act-bar i"), ev);
+    orbPhase(ev, text);
+  }
+
+  // Zusammenfassen nach einer schon fertigen Antwort (in Ruhe): kleine Zeile unter dieser Antwort
+  function afterPhase(msgEl, ev) {
+    let live = msgEl.querySelector(".live");
+    if (ev.phase === "done") {
+      clearOrbPhase();
+      if (!live) return;
+      live.classList.remove("on");
+      live.querySelector(".lt").textContent = phaseSummary(ev);
+      live.querySelector(".ls").textContent = secs(ev.seconds ?? 0);
+      live.dataset.phase = "";
+      return;
+    }
+    if (!live) { live = liveLine(""); msgEl.appendChild(live); }
+    const text = phaseText(ev);
+    live.querySelector(".lt").textContent = text;
+    orbPhase(ev, text);
+  }
+
+  // Nach der Antwort: eine dezente Zeile – Gesamtzeit, eingelesen, geschrieben, tok/s; aufgeklappt je Schritt
+  function statsLine(a, cancelled) {
+    const steps = a.steps;
+    const sum = (k) => steps.reduce((n, s) => n + (Number(s[k]) || 0), 0);
+    const read = sum("prompt_tokens"), cached = sum("prompt_cached"), written = sum("tokens");
+    const timed = steps.filter((s) => s.tps && s.tokens);
+    const tokTimed = timed.reduce((n, s) => n + s.tokens, 0);
+    const tps = tokTimed ? timed.reduce((n, s) => n + s.tps * s.tokens, 0) / tokTimed : 0;
+    const parts = [secs(Math.round((performance.now() - a.started) / 100) / 10)];
+    if (read) parts.push(L(`${num(read)} Token eingelesen`, `${num(read)} tokens read`)
+                         + (cached ? L(` (+${num(cached)} Cache)`, ` (+${num(cached)} cached)`) : ""));
+    if (written) parts.push(L(`${num(written)} geschrieben`, `${num(written)} written`));
+    if (tps) parts.push(`${tps.toLocaleString(LOCALE, { maximumFractionDigits: 1 })} tok/s`);
+    if (steps.some((s) => s.error)) parts.unshift(L("Fehler beim Modell", "model error"));
+    else if (cancelled) parts.unshift(L("abgebrochen", "stopped"));
+    const el = document.createElement("details");
+    el.className = "stats";
+    el.innerHTML = `<summary></summary><ol></ol>`;
+    el.querySelector("summary").textContent = parts.join(" · ");
+    for (const s of steps) {
+      const li = document.createElement("li");
+      li.textContent = phaseSummary(s) + (s.seconds != null ? ` · ${secs(s.seconds)}` : "");
+      el.querySelector("ol").appendChild(li);
+    }
+    return el;
+  }
+
   function modelPhase(ev) {
+    const a = ev.msg && assistants[ev.msg];
+    if (a) return chatPhase(a, ev);
+    const compress = ev.phase === "compress" || ev.compress;
+    const msgEl = ev.msg && compress && chat.querySelector(`.msg[data-msg="${ev.msg}"]`);
+    if (msgEl) return afterPhase(msgEl, ev);
     let el = acts["m-" + ev.id];
     if (!el) {
       if (ev.phase === "done") return;
@@ -875,34 +997,15 @@
       el.className = "act model " + (ev.error ? "error" : "ok");
       el.querySelector(".act-args").textContent = phaseSummary(ev);
       el.querySelector(".act-status").textContent = secs(ev.seconds ?? (performance.now() - el._start) / 1000);
-      if (S.phaseSub && S.substate === S.phaseSub) S.substate = "";
-      S.phaseSub = "";
+      clearOrbPhase();
       delete acts["m-" + ev.id];
       return;
     }
     const text = phaseText(ev);
     el.querySelector(".act-args").textContent = text;
     el.dataset.phase = ev.phase;
-    if (ev.phase === "prompt" && ev.progress != null) {  // echter Fortschritt (llama-server)
-      bar.style.transition = "width .4s";
-      bar.style.width = `${Math.round(ev.progress * 100)}%`;
-    } else if (ev.phase === "prompt" && ev.eta_s > 0) {  // geschätzt aus der gelernten Einlese-Geschwindigkeit
-      bar.style.transition = "none";
-      bar.style.width = "0";
-      void bar.offsetWidth;
-      bar.style.transition = `width ${ev.eta_s}s linear`;
-      bar.style.width = "95%";
-    } else if (ev.phase !== "prompt") {
-      bar.style.transition = "none";
-      bar.style.width = "0";
-    }
-    // Unsichtbare Phasen auch unter dem Orb nennen; Denken und Antworten sieht man dort ohnehin
-    const quiet = ["prompt", "loading", "retry", "tool_args", "compress"].includes(ev.phase);
-    if (quiet) {  // unter dem Orb kurz – ohne den Klammerzusatz zum Cache
-      const short = text.replace(/ \([^)]*\)/, "");
-      S.substate = S.phaseSub = short.charAt(0).toUpperCase() + short.slice(1) + " …";
-    }
-    else if (S.phaseSub && S.substate === S.phaseSub) { S.substate = ""; S.phaseSub = ""; }
+    setBar(bar, ev);
+    orbPhase(ev, text);
   }
 
   // Kurzname für den Werkzeug-Satelliten am Orb

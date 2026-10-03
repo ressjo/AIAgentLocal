@@ -34,11 +34,12 @@ All notable changes to this project are documented here. The format follows
 - **Remember the sudo password** for 15 minutes (`tools.sudo_remember_minutes`, checkbox in the password dialog):
   in memory only, only after sudo accepted it, only for requests at the computer – never for Telegram or routines.
   Settings → Status shows how long it is kept and has a *Forget* button.
-- **Activity shows what the model is doing between tools:** one live "Model" row per step with a running timer –
+- **The answer shows what the model is doing** instead of a blinking cursor: a live line with a running timer –
   reading the prompt (how many new tokens, how much is cached, estimated time or real progress with llama-server),
   thinking, writing a tool call (e.g. `write_file` with its size), answering, reloading after image analysis,
-  retrying with a trimmed context, summarising the chat, adding tools and pre-reading the chat. Afterwards the row
-  sums up where the time went (tokens read and how long, tokens written, tok/s, model load time). The current phase
+  retrying with a trimmed context, summarising the chat or adding tools. Afterwards a small line under the answer
+  sums up where the time went (total time, tokens read and cached, tokens written, tok/s – expand it for each step).
+  Background work (pre-reading the chat, Telegram, routines) stays in the activity panel. The current phase
   also shows under the orb.
 - **Auto button for read-only commands** (next to *Think*, on by default): many more harmless commands are recognised
   as read-only and run without a confirmation – containers (`docker/podman ps|images|logs`, `kubectl get`), packages
@@ -64,6 +65,7 @@ All notable changes to this project are documented here. The format follows
   orb, `orbwise doctor` checks the model and the screenshot program.
 
 ### Fixed
+- The chat list in the sidebar stayed empty after starting Orbwise until *New chat* was clicked.
 - The context tile showed a moving limit (e.g. "9k/8k", later "11k/9k"): it divided an estimate by a budget that
   changed with the thinking reserve and the learned token estimate. It now shows real tokens (from the model server
   when known) against the fixed context window of the model; reserve and the compaction point are in the tooltip.
