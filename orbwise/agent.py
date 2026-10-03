@@ -217,6 +217,9 @@ class Agent:
             "parts": {"system": base_t, "tools": self.schema_tokens, "memory": system_t - base_t + note_t,
                       "history": history_t - note_t},
             "trimmed": trimmed, "summarized": bool(conv.running_summary),
+            # für die Anzeige in echten Token: feste Grenze = Kontextfenster, Reserve für Antwort/Denken
+            "tokens": int((system_t + self.schema_tokens + history_t) * self.token_ratio()),
+            "reserve": self.answer_reserve(), "compress_at": COMPRESS_AT,
         }
         return [{"role": "system", "content": system}, *history]
 

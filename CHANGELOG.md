@@ -47,6 +47,10 @@ All notable changes to this project are documented here. The format follows
   orb, `orbwise doctor` checks the model and the screenshot program.
 
 ### Fixed
+- The context tile showed a moving limit (e.g. "9k/8k", later "11k/9k"): it divided an estimate by a budget that
+  changed with the thinking reserve and the learned token estimate. It now shows real tokens (from the model server
+  when known) against the fixed context window of the model; reserve and the 90 % compression point are in the
+  tooltip.
 - **Long tasks no longer die at a full context window** (e.g. "16k of 16k – increase the window" and the work was
   gone): at 90 % of the window Orbwise pauses the task once, has the model summarise its progress and continues
   automatically with that summary; the steps stay saved. In between the prompt only grows at the end, so the model

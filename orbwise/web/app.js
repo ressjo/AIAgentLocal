@@ -1579,18 +1579,27 @@
     return n >= 1000 ? `${fmt(n / 1000, n >= 10000 ? 0 : 1)}k` : String(n);
   }
   function showContext(c) {
-    if (!c || !c.budget) return;
-    const pct = (100 * c.used) / c.budget;
+    if (!c || !c.window) return;
+    // Feste Grenze: das Kontextfenster des Modells. Vorne die echte Prompt-Größe laut Server, sonst die Schätzung
+    // (beide in echten Token) – so wandert die Grenze nicht mehr mit Reserve, Denkmodus oder gelernter Schätzung.
+    const used = c.real || c.tokens || c.used;
+    const pct = (100 * used) / c.window;
     const p = c.parts || {};
-    setTile("ctx", c.used / 1000, {
+    const ratio = c.tokens && c.used ? c.tokens / c.used : 1;
+    const real = (n) => (n == null ? "?" : Math.round(n * ratio));
+    setTile("ctx", used / 1000, {
       pct,
       digits: 1,
       sub: `${Math.round(pct)} %` + (c.trimmed ? L(" · gekürzt", " · trimmed") : c.summarized ? L(" · verdichtet", " · condensed") : ""),
       title: [
-        L(`Prompt ca. ${c.used} von ${c.budget} Token Budget (Fenster ${c.window}, Rest bleibt für die Antwort)`,
-          `Prompt approx. ${c.used} of ${c.budget} token budget (window ${c.window}, the rest is kept for the answer)`),
-        `System ${p.system ?? "?"} · Tools ${p.tools ?? "?"} · ${L("Gedächtnis", "Memory")} ${p.memory ?? "?"} · `
-          + `${L("Verlauf", "History")} ${p.history ?? "?"}`,
+        L(`Prompt ${c.real ? "" : "ca. "}${used} von ${c.window} Token (Kontextfenster des Modells)`,
+          `Prompt ${c.real ? "" : "approx. "}${used} of ${c.window} tokens (the model's context window)`),
+        c.reserve ? L(`${c.reserve} Token bleiben frei für Antwort${c.reserve > 2000 ? " und Denkkette" : ""}; `
+                      + `ab ${Math.round((c.compress_at || 0.9) * 100)} % wird eine lange Aufgabe komprimiert`,
+                      `${c.reserve} tokens are kept free for the answer${c.reserve > 2000 ? " and the reasoning" : ""}; `
+                      + `from ${Math.round((c.compress_at || 0.9) * 100)} % a long task is compressed`) : "",
+        `System ${real(p.system)} · Tools ${real(p.tools)} · ${L("Gedächtnis", "Memory")} ${real(p.memory)} · `
+          + `${L("Verlauf", "History")} ${real(p.history)}`,
         c.real ? L("Laut Modell-Server: ", "According to the model server: ") + `${c.real} Token`
           + (c.cached ? L(`, davon ${c.cached} aus dem Cache (schneller)`, `, ${c.cached} of them from the cache (faster)`) : "") : "",
         c.summarized ? L("Älterer Verlauf ist in einer Zusammenfassung verdichtet – Details holt das Gedächtnis bei Bedarf zurück.",
@@ -1599,10 +1608,10 @@
                       "Older parts/long tool results were trimmed so everything fits.") : "",
       ].filter(Boolean).join("\n"),
     });
-    $("tele-ctx").querySelector(".tele-num").textContent = kTok(c.used);
-    $("tele-ctx").querySelector(".tele-unit").textContent = "/" + Math.round(c.budget / 1000) + "k";
+    $("tele-ctx").querySelector(".tele-num").textContent = kTok(used);
+    $("tele-ctx").querySelector(".tele-unit").textContent = "/" + Math.round(c.window / 1024) + "k";
     $("tele-ctx").classList.toggle("warn", c.trimmed || (pct >= 80 && pct < 95));
-    orb.setContext(c.used / c.budget, !!c.summarized);
+    orb.setContext(used / c.window, !!c.summarized);
     pushSpark("ctx", Math.min(100, pct));
   }
 
