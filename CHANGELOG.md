@@ -12,6 +12,12 @@ All notable changes to this project are documented here. The format follows
   follow-up (Bonsai: checkpoints), whether a prompt up to the compaction point fits and the model still sees its
   start (code word), and whether an oversized prompt is rejected instead of silently cut. Uses its own messages –
   the open chat stays untouched.
+
+### Fixed
+- **Cache numbers for one-token requests:** llama-server sometimes omits the generation speed when only one token is
+  generated (warm-up, self-test); the prompt counts then came from `usage`, which includes cached tokens, so a
+  cache hit looked like a full re-read. The prompt counts now always come from the timings, and the self-test
+  also judges the cache by time.
 - **Faster Bonsai:** Bonsai 2 is a hybrid model that can only reuse an earlier prompt through checkpoints; Orbwise now
   starts its launcher with `--ctx-checkpoints 32`, a RAM prompt cache (`--cache-ram`, 15 % of RAM, ≤ 4 GB) and
   `--cache-idle-slots` – only what the installed llama-server knows. Much less re-reading after hidden results, a

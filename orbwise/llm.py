@@ -424,8 +424,11 @@ def openai_stats(timings: dict, usage: dict, first_token: float | None, started:
     total = usage.get("prompt_tokens")
     if timings.get("prompt_n") is not None:
         total = (timings.get("prompt_n") or 0) + (timings.get("cache_n") or 0) or total
-    if timings.get("predicted_per_second"):
-        return {"tokens": timings.get("predicted_n"), "tps": round(timings["predicted_per_second"], 1),
+    # Auch ohne Generier-Geschwindigkeit (max_tokens=1 beim Vorwärmen/Test: predicted_per_second fehlt oder ist 0)
+    # zählen die Prompt-Zahlen aus den Timings – usage.prompt_tokens enthält bei llama-server die Cache-Token mit
+    if timings.get("predicted_per_second") or timings.get("prompt_n") is not None:
+        tps = timings.get("predicted_per_second")
+        return {"tokens": timings.get("predicted_n"), "tps": round(tps, 1) if tps else None,
                 "prompt_tokens": timings.get("prompt_n"), "prompt_total": total,
                 **({"prompt_cached": timings["cache_n"]} if timings.get("cache_n") is not None else {}),
                 "prompt_tps": round(timings["prompt_per_second"], 1) if timings.get("prompt_per_second") else None,

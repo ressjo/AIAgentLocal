@@ -288,6 +288,11 @@ class ContextTest:
                 self.checks[key] = _check("ok", key, title, T(
                     f"Nur {_num(new)} von {_num(stats.get('prompt_total') or total)} Token neu eingelesen{secs}.",
                     f"Only {_num(new)} of {_num(stats.get('prompt_total') or total)} tokens read again{secs}."))
+            elif first["seconds"] >= 2 and stats["seconds"] <= 0.25 * first["seconds"]:
+                # Zahlen sagen „alles neu“, die Zeit sagt „aus dem Cache“ – dann zählt die Zeit
+                self.checks[key] = _check("ok", key, title, T(
+                    f"Aus dem Cache{secs} – der Server meldet dazu nur keine Cache-Zahlen.",
+                    f"Served from the cache{secs} – the server just doesn't report cache numbers."))
             else:
                 self.checks[key] = _check("fail", key, title, T(
                     f"{_num(new)} von {_num(stats.get('prompt_total') or total)} Token neu eingelesen – der Anfang "

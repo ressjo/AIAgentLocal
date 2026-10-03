@@ -154,3 +154,25 @@ def test_cli_without_running_server(cfg, monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["context-test", "--quick"])
     assert "orbwise serve" in str(e.value)
+
+
+def test_cache_judged_by_time_without_cache_numbers(cfg, memory):
+    """Manche llama-server melden bei max_tokens=1 keine Timings – usage zählt dann die Cache-Token mit."""
+    class NoNumbers(Server):
+        async def chat_stream(self, messages, tools=None, **kw):
+            async for ev in super().chat_stream(messages, tools, **kw):
+                st = ev["stats"]
+                cold = st["prompt_tokens"] > 0.5 * st["prompt_total"]
+                if cold:
+                    import asyncio
+                    await asyncio.sleep(2.1)
+                st["prompt_tokens"] = st["prompt_total"]
+                yield ev
+    _, result = _test(cfg, memory, NoNumbers(8192), quick=True)
+    assert _status(result)["cache"] == "ok"
+
+
+def test_stats_use_timings_without_generation_speed():
+    from orbwise.llm import openai_stats
+    st = openai_stats({"prompt_n": 3, "cache_n": 2638, "predicted_n": 1}, {"prompt_tokens": 2641}, None, 0)
+    assert st["prompt_tokens"] == 3 and st["prompt_total"] == 2641 and st["prompt_cached"] == 2638
