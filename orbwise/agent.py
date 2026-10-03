@@ -185,9 +185,9 @@ class Agent:
             self._coding_schemas = (schemas, est_tokens(json.dumps(schemas, ensure_ascii=False)))
         return self._coding_schemas
 
-    def system_prompt(self) -> str:
+    def system_prompt(self, groups: set[str] | None = None) -> str:
         """Feste Anweisungen – ohne Datum/Uhrzeit (die stehen in der Kontext-Notiz), damit sich der Anfang des
-        Prompts nicht ändert."""
+        Prompts nicht ändert. groups: geladene Werkzeuggruppen – Hinweise nur für diese (None = alle)."""
         c = self.cfg
         if self.mode == "coding":
             return (prompts.coding_prompt(
@@ -197,8 +197,8 @@ class Agent:
         base = prompts.base_prompt(
             c, name=c.assistant_name, os=_os_name(), host=platform.node(),
             user=c.user_name or getpass.getuser(), home=Path.home(),
-            nas=", ".join(map(str, c.tools.nas_paths)) or prompts.text(c, "no_nas"))
-        return (base + prompts.hints(c) + c.persona_extra).strip()
+            nas=", ".join(map(str, c.tools.nas_paths)))
+        return (base + prompts.hints(c, groups) + c.persona_extra).strip()
 
     def epoch_system(self) -> str:
         """System-Prompt der Epoche: Anweisungen + Fakten-Schnappschuss + Zusammenfassung des Früheren. Bleibt bis
@@ -206,12 +206,17 @@ class Agent:
         ep = self.memory.conversation.epoch
         if ep.get("facts") is None:
             ep["facts"] = self.memory.facts_text()
-        sections = [self.system_prompt()]
+        sections = [self.system_prompt(self._epoch_groups())]
         if ep["facts"]:
             sections.append(prompts.section(self.cfg, "facts") + "\n" + ep["facts"])
         if ep.get("summary"):
             sections.append(prompts.section(self.cfg, "summary") + "\n" + ep["summary"])
         return "\n\n".join(sections)
+
+    def _epoch_groups(self) -> set[str] | None:
+        """Werkzeuggruppen der Epoche (None = alle Werkzeuge gehen mit, großes Fenster)."""
+        groups = self.memory.conversation.epoch.get("groups")
+        return set(groups) if groups is not None else None
 
     def _freeze_note(self, hits=None) -> None:
         """Kontext-Notiz (Datum/Uhrzeit, Erinnerungen, Planmodus) der aktuellen Nutzernachricht beim ersten Senden
@@ -251,7 +256,7 @@ class Agent:
             history = [{k: v for k, v in m.items() if k in ("role", "content", "tool_calls", "tool_name", "note")}
                        for m in conv.epoch_messages()]
         # Für die Anzeige „Kontext“ (Schätzung; echte Server-Token kommen nach dem Schritt)
-        base_t, system_t = est_tokens(self.system_prompt()), est_tokens(system)
+        base_t, system_t = est_tokens(self.system_prompt(self._epoch_groups())), est_tokens(system)
         history_t = sum(msg_tokens(m) for m in history)
         notes_t = sum(est_tokens(m.get("note") or "") for m in history)
         ratio = self.token_ratio()
@@ -331,11 +336,12 @@ class Agent:
         eine feste Auswahl, die nur wächst: Grundausstattung + passende + benutzte Gruppen (siehe toolselect.py).
         Eine neue Gruppe ändert den Prompt-Anfang (einmal neu einlesen) – liefert die neu dazugekommenen Gruppen."""
         base, base_tokens = self._mode_schemas()
-        if base_tokens <= 0.3 * self.context_budget():
-            self.schemas, self.schema_tokens = base, base_tokens
-            return set()
         conv = self.memory.conversation
         ep = conv.epoch
+        if base_tokens <= 0.3 * self.context_budget():
+            self.schemas, self.schema_tokens = base, base_tokens
+            ep["groups"] = None  # alle Werkzeuge – und alle Hinweise
+            return set()
         question = conv.history[conv.turn_start()].get("content", "") if conv.history else ""
         wanted = toolselect.CORE_GROUPS | toolselect.relevant_groups([question]) | (used_groups or set())
         have = set(ep.get("groups") or [])
@@ -670,7 +676,12 @@ class Agent:
             hist[q]["note"] = prompts.context_note(
                 self.cfg, meta.get("time", ""), "", meta.get("plan", False), meta.get("approved", ""),
                 extra=prompts.compact_text(self.cfg, "continue") if in_turn else "")
+        turn_groups = {self.groups_of.get(c.get("function", {}).get("name", ""), "")
+                       for m in hist[q:] for c in m.get("tool_calls") or []} - {""}
         conv.start_epoch(carry, summary, reason=reason, before=before, carried=len(carry), mode=self.mode)
+        # Werkzeuge (und ihre Hinweise) der neuen Epoche gleich festlegen – samt denen dieser Runde, damit der
+        # nächste Schritt nichts „dazuladen“ muss und Anzeige wie Vorwärmen den echten Prompt sehen
+        self.choose_tools(turn_groups)
         self._compacted_at = (conv.chat_id, len(conv.epochs), len(hist))
         self._cache_owner = None
         conv.save()

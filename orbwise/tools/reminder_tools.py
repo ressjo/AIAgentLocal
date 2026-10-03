@@ -17,9 +17,7 @@ def store_for(ctx: ToolContext) -> ReminderStore:
     return store
 
 
-@tool("Setzt eine Erinnerung oder einen Timer. Jarvis meldet sich zur Zeit per Sprachansage, in der Oberfläche, "
-      "als Desktop-Benachrichtigung und – falls eingerichtet – per Telegram aufs Handy. Relative Zeit über "
-      "in_minutes, feste Zeit über at. Für Angaben wie „auf der Arbeit“ oder „morgen früh“ eine bekannte Uhrzeit "
+@tool("Setzt eine Erinnerung oder einen Timer. Relative Zeit über in_minutes, feste Zeit über at. Für Angaben wie „auf der Arbeit“ oder „morgen früh“ eine bekannte Uhrzeit "
       "aus den Fakten nehmen (z. B. Arbeitsbeginn) oder kurz nachfragen.")
 async def set_reminder(
     ctx: ToolContext,

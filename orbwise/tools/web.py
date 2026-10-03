@@ -73,8 +73,8 @@ def website_url(site: str, query: str = "", extra: dict[str, str] | None = None)
     return "https://duckduckgo.com/?q=" + quote_plus(f"!ducky {site} {query}".strip())
 
 
-@tool("Öffnet eine Website im Browser – eine bekannte Seite (YouTube, Amazon, Wikipedia, Google Maps, GitHub, "
-      "Chefkoch, …), eine Domain wie heise.de oder direkt eine Suche auf der Seite.")
+@tool("Öffnet eine Website im Browser – eine bekannte Seite (YouTube, Amazon, Wikipedia …), eine Domain wie "
+      "heise.de oder direkt eine Suche auf der Seite.")
 async def open_website(
     ctx: ToolContext,
     site: Annotated[str, "Name der Seite oder Domain, z. B. 'youtube', 'amazon', 'heise.de'"],

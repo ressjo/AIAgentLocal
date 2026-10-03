@@ -103,7 +103,8 @@ async def find_files(
     return _describe(paths, max(1, min(max_results, 100)))
 
 
-@tool("Durchsucht das gemountete NAS nach Dateien/Ordnern (Name), optional auch nach Inhalt.")
+@tool("Durchsucht das gemountete NAS nach Dateien/Ordnern (Name), optional auch nach Inhalt.",
+      enabled=lambda cfg: bool(cfg.tools.nas_paths))  # ohne NAS kein Werkzeug (spart Platz im Prompt)
 async def search_nas(
     ctx: ToolContext,
     query: Annotated[str, "Teil des Datei- oder Ordnernamens bzw. Suchtext"],

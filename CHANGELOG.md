@@ -22,6 +22,10 @@ All notable changes to this project are documented here. The format follows
   - Big tool output is limited at the source: `read_file` reads page by page (`offset`/`limit`), long shell, log and
     web output keeps start and end and saves the full text in `~/.cache/orbwise/outputs/` for the model to read on.
   - `orbwise doctor` points out a llama-server with several slots (`-np 1` keeps one cache).
+  - Leaner start: instructions for Paperless, mail, calendar, notes, smart home and system tools are only in the
+    prompt together with their tools, tool descriptions lost internal details and "Optional:" prefixes, the NAS
+    search only exists with a configured NAS, the Telegram tool loads on demand. A new chat with every integration
+    starts with ~30 % less context (~3.8k instead of ~5.5k tokens with a small window).
 - **Tools and Coding mode** (switch top left): Coding loads only files, shell, web and memory tools (≈ 2k instead of
   ≈ 10k tokens of tool descriptions), uses a developer prompt, has no voice (no read-aloud, push-to-talk or wake word)
   and a wider chat. Separate chat histories per mode, a project folder per coding chat (working directory for shell

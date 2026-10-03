@@ -13,8 +13,7 @@ def _risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
 
 @tool(
     "Führt einen Bash-Befehl auf dem Linux-System des Nutzers aus und liefert die Ausgabe. "
-    "Für Root-Rechte 'sudo' voranstellen. Keine interaktiven Programme (vim, htop, less) verwenden. "
-    "Lesende Befehle laufen sofort, verändernde werden dem Nutzer automatisch zur Bestätigung vorgelegt.",
+    "Für Root-Rechte 'sudo' voranstellen. Keine interaktiven Programme (vim, htop, less) verwenden.",
     risk=_risk,
 )
 async def run_shell(

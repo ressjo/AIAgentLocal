@@ -398,7 +398,7 @@ async def calendar_free(
     return text
 
 
-@tool("Legt einen neuen Termin im Kalender an (erscheint sofort auf dem iPhone). Mit Uhrzeit = normaler Termin, "
+@tool("Legt einen neuen Termin im Kalender an. Mit Uhrzeit = normaler Termin, "
       "nur Datum = ganztägig.", enabled=_enabled)
 async def calendar_add(
     ctx: ToolContext,

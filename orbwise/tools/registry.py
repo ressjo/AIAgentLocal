@@ -72,12 +72,30 @@ class ToolSpec:
 
     def schema(self) -> dict:
         return {"type": "function",
-                "function": {"name": self.name, "description": self.description, "parameters": self.parameters}}
+                "function": {"name": self.name, "description": self.description,
+                             "parameters": lean_parameters(self.parameters)}}
 
     def assess(self, ctx: ToolContext, args: dict) -> tuple[str, str]:
         if callable(self.risk):
             return self.risk(ctx, args)
         return self.risk, ""
+
+
+def lean_parameters(parameters: dict) -> dict:
+    """Für den Prompt ohne Ballast: „Optional: “ vor Beschreibungen sagt schon „required“, leeres required fällt
+    weg. Namen, Typen und Pflichtangaben bleiben unverändert."""
+    props = {}
+    for name, prop in parameters.get("properties", {}).items():
+        prop = dict(prop)
+        desc = prop.get("description") or ""
+        if desc.startswith("Optional: "):
+            desc = desc[len("Optional: "):]
+            prop["description"] = desc[:1].upper() + desc[1:]
+        props[name] = prop
+    out = {"type": "object", "properties": props}
+    if parameters.get("required"):
+        out["required"] = list(parameters["required"])
+    return out
 
 
 REGISTRY: dict[str, ToolSpec] = {}

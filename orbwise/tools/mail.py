@@ -699,9 +699,8 @@ def _send_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
                       f"Send an e-mail to {to} – recipients, subject and text can still be edited in the dialog.")
 
 
-@tool("Sendet eine E-Mail – immer erst nach Bestätigung: Der Nutzer sieht Empfänger, Betreff und Text in einem Fenster, "
-      "kann alles ändern und muss auf SENDEN klicken. Schreibe Betreff und Text vollständig und fertig formuliert "
-      "(keine Platzhalter). Für eine Antwort reply_uid (und ggf. reply_folder) der Original-Mail angeben.",
+@tool("Sendet eine E-Mail – der Nutzer prüft und bestätigt sie vorher. Schreibe Betreff und Text vollständig und "
+      "fertig formuliert (keine Platzhalter). Für eine Antwort reply_uid (und ggf. reply_folder) der Original-Mail angeben.",
       risk=_send_risk, enabled=_send_enabled, editable=("to", "cc", "subject", "body"))
 async def mail_send(
     ctx: ToolContext,

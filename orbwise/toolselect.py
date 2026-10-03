@@ -36,6 +36,8 @@ KEYWORDS = {
     "vision": r"bildschirm|screen|monitor|fenster|window|siehst du|sieh dir|schau (dir |mal )?|guck|"
               r"fehlermeldung|error message|meldung|dialog|popup|pop-up|foto|photo|bild\b|bilder|image|picture|"
               r"screenshot|was steht da|what does it say|look at|anschau",
+    "telegram_tools": r"telegram|handy|smartphone|\bphone|aufs? (telefon|mobil)|schick (mir|sie|es|das|die|den)|"
+                      r"send (me|it|this|that)",
     "calendar_tools": r"termin|kalender|calendar|meeting|appointment|\bevent|verabred|besprechung|"
                       r"frei(e zeit)?\b|free time|schedule|wann habe ich|when do i",
 }

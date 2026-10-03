@@ -9,7 +9,21 @@ def test_schemas_valid():
     for spec in tools.values():
         s = spec.schema()["function"]
         assert s["description"]
-        assert set(s["parameters"]["required"]) <= set(s["parameters"]["properties"])
+        assert set(s["parameters"].get("required", [])) <= set(s["parameters"]["properties"])
+
+
+def test_schemas_are_lean_but_lose_nothing():
+    """Im Prompt ohne „Optional: “ und leeres required – Parameter, Typen und Pflichtangaben bleiben gleich."""
+    for spec in load_all_tools().values():
+        params = spec.schema()["function"]["parameters"]
+        assert params.get("required", []) == spec.parameters["required"]
+        assert params.get("required", True)  # nie leer
+        assert list(params["properties"]) == list(spec.parameters["properties"])
+        for name, prop in params["properties"].items():
+            assert prop["type"] == spec.parameters["properties"][name]["type"]
+            assert not (prop.get("description") or "").startswith("Optional: ")
+    p = get_tool("find_files").schema()["function"]["parameters"]["properties"]
+    assert p["path"]["description"].startswith("Startverzeichnis")
 
 
 def test_coerce_args():

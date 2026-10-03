@@ -298,7 +298,8 @@ The `api_key` keeps websites in your browser from talking to the llama-server.
 **Small context windows** (e.g. 8k): Orbwise then sends only the core tools plus the tool groups that match the
 request (e.g. Home Assistant tools only when you talk about lights or heating). A group once added stays until the
 next compaction, so the start of the prompt does not change with every question (the activity shows "tools added –
-one-off re-read"). You can also switch tools or whole groups off: `tools: {disabled: [sysadmin, paperless]}`.
+one-off re-read"). The instructions for a service (Paperless, mail, calendar, notes, smart home, system tools) come
+with its tools – a new chat with every integration set up starts at ~3.8k instead of ~5.5k tokens. You can also switch tools or whole groups off: `tools: {disabled: [sysadmin, paperless]}`.
 
 #### Prompt cache tips
 
