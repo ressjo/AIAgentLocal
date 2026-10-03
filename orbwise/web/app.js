@@ -464,6 +464,7 @@
         S.modelSwitching = ev.label || ev.name;
         S.substate = L("Wechsle zu ", "Switching to ") + `${ev.label || ev.name} …`;
         setPill("pill-llm", "warn", L("lädt …", "loading …"));
+        refreshModelViews();
         break;
       case "model_progress":
         S.substate = ev.text;
@@ -474,10 +475,11 @@
         S.modelDoneAt = Date.now();
         S.substate = "";
         loadStatus();
+        refreshModelViews();
         setTimeout(loadCtxMemory, 1500);
         break;
       case "models_changed":
-        if (!modelMenu.classList.contains("hidden") && !modelMenu.querySelector(".fit-ok, .fit-tight, .fit-big")) openModelMenu();
+        refreshModelViews();
         loadStatus();
         return;
       case "model_pull":
@@ -489,6 +491,7 @@
         S.substate = "";
         addError(L("Modellwechsel fehlgeschlagen: ", "Model switch failed: ") + ev.text);
         loadStatus();
+        refreshModelViews();
         break;
       case "metrics":
         showMetrics(ev);
@@ -2065,11 +2068,15 @@
       b.innerHTML = `<div class="mi-head"><span class="mi-name"></span><span class="mi-tag"></span></div><div class="mi-sub"></div>`;
       b.querySelector(".mi-name").textContent = p.label;
       b.querySelector(".mi-tag").textContent = p.active ? L("AKTIV", "ACTIVE")
+        : p.name === data.switching ? L("LÄDT …", "LOADING …")
         : p.managed ? L("STARTET SERVER", "STARTS SERVER") : p.backend.toUpperCase();
       b.querySelector(".mi-sub").textContent = `${p.backend} · ${p.model}` + (p.size_gb ? ` · ${p.size_gb} GB` : "");
       b.onclick = async () => {
         closeModelMenu();
         if (p.active) return;
+        // sofort sperren und markieren – der Aufruf kehrt erst nach dem Wechsel zurück
+        modelMenu.querySelectorAll("button").forEach((x) => { x.disabled = true; });
+        b.querySelector(".mi-tag").textContent = L("LÄDT …", "LOADING …");
         const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/activate`, { method: "POST" });
         if (!r.ok && r.status !== 502) toast(L("Umschalten fehlgeschlagen", "Switching failed"));
       };
@@ -2094,6 +2101,12 @@
       modelMenu.appendChild(add);
     }
     modelMenu.classList.remove("hidden");
+  }
+  // Liste und Kontext-Block nach Wechsel/Änderung neu zeichnen (nicht, solange die Vorauswahl offen ist)
+  function refreshModelViews() {
+    if (openSheetName !== "settings" || $("set-models").classList.contains("hidden") || modelMenu.querySelector(".fit-ok, .fit-tight, .fit-big")) return;
+    openModelMenu();
+    loadCtxMemory().then(renderCtxSettings);
   }
   // Vorauswahl bekannter Ollama-Modelle: passend zum Grafikspeicher, Laden mit Fortschritt (model_pull-Events)
   async function openPresetMenu() {
