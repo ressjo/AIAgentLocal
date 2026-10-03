@@ -97,3 +97,52 @@ def test_todo_list_lives_in_the_answer_and_survives_compaction(cfg, llm, memory)
     memory.switch_mode("coding")
     agent.choose_tools()
     assert {"todo_write", "edit_file"} <= {s["function"]["name"] for s in agent.schemas}
+
+
+def test_unasked_calls_of_one_step_run_in_parallel(cfg, memory, tmp_path, monkeypatch):
+    import asyncio
+    import time
+
+    load_all_tools()
+    spec = get_tool("system_info")
+    started = []
+
+    async def slow(ctx):
+        started.append(time.monotonic())
+        await asyncio.sleep(0.3)
+        return f"Info {len(started)}"
+
+    monkeypatch.setattr(spec, "func", slow)
+    target = tmp_path / "neu.txt"
+
+    class TwoCalls:
+        n = 0
+
+        async def chat_stream(self, messages, tools=None, **kw):
+            TwoCalls.n += 1
+            if TwoCalls.n == 1:
+                calls = [{"function": {"name": "system_info", "arguments": {}}},
+                         {"function": {"name": "write_file", "arguments": {"path": str(target), "content": "x"}}},
+                         {"function": {"name": "system_info", "arguments": {}}}]
+                msg = {"role": "assistant", "content": "", "tool_calls": calls}
+            else:
+                msg = {"role": "assistant", "content": "fertig"}
+            yield {"type": "done", "message": msg, "stats": {}}
+
+    asked = []
+
+    async def confirm(*a):
+        asked.append(a[1])
+        return False
+
+    async def emit(ev):
+        pass
+
+    agent = Agent(cfg, TwoCalls(), memory)
+    t0 = time.monotonic()
+    run(agent.run("Systeminfo zweimal und eine Datei", emit, confirm))
+    assert time.monotonic() - t0 < 0.55  # beide system_info gleichzeitig (nacheinander wären es 0,6 s)
+    assert abs(started[0] - started[1]) < 0.1
+    assert asked == ["write_file"]  # was fragt, fragt weiter
+    tools = [m for m in memory.conversation.history if m["role"] == "tool"]
+    assert [m["tool_name"] for m in tools] == ["system_info", "write_file", "system_info"]  # Reihenfolge bleibt

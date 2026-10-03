@@ -490,7 +490,8 @@ class Agent:
                     break
                 await emit({"type": "segment_end", "id": msg_id})
                 looping = False
-                for call in calls:
+                done: dict[int, tuple[str, str, str]] = {}
+                for i, call in enumerate(calls):
                     fn = call.get("function", {})
                     used_groups.add(self.groups_of.get(fn.get("name", ""), ""))
                     key = fn.get("name", "") + json.dumps(fn.get("arguments"), sort_keys=True, ensure_ascii=False)
@@ -498,11 +499,18 @@ class Agent:
                     if seen[key] >= 3:
                         # Nicht noch einmal ausführen – das Modell dreht sich im Kreis
                         name = fn.get("name", "")
-                        result = prompts.text(self.cfg, "repeat_skipped")
-                        note = f"{name}: Wiederholung übersprungen"
+                        done[i] = (name, prompts.text(self.cfg, "repeat_skipped"), f"{name}: Wiederholung übersprungen")
                         looping = looping or seen[key] >= 4
-                    else:
-                        name, result, note = await self._execute(call, emit, confirm)
+                # Mehrere Aufrufe ohne Rückfrage (lesend) gleichzeitig – das Modell hat sie ohnehin unabhängig
+                # voneinander geplant. Bringt einer fremde Inhalte (Mail, Bildschirm), bleibt es bei der Reihenfolge.
+                todo = [i for i in range(len(calls)) if i not in done]
+                if len(todo) > 1 and not any(c.get("function", {}).get("name") in TAINT_SOURCES for c in calls):
+                    quick = [i for i in todo if self._runs_unasked(calls[i])]
+                    if len(quick) > 1:
+                        results = await asyncio.gather(*(self._execute(calls[i], emit, confirm) for i in quick))
+                        done.update(zip(quick, results))
+                for i, call in enumerate(calls):
+                    name, result, note = done[i] if i in done else await self._execute(call, emit, confirm)
                     conv.add({"role": "tool", "content": result, "tool_name": name})
                     tool_notes.append(note)
                 if looping:
@@ -1018,6 +1026,37 @@ class Agent:
             if m["role"] == "user":
                 break
 
+    def _final_risk(self, name: str, spec, args: dict, ctx: ToolContext) -> tuple[str, str]:
+        """Risiko eines Aufrufs nach Auto-Modus, Planmodus und Schutz vor fremden Inhalten."""
+        cwd = ctx.cwd
+        risk, reason = spec.assess(ctx, args)
+        if risk == CONFIRM and self.auto_mode == "files" and not self._plan and self._file_edit_ok(name, args, cwd):
+            risk, reason = SAFE, prompts.text(self.cfg, "auto_files")
+        elif risk == CONFIRM and self.auto_mode == "auto" and not self._plan and name in ("run_shell", "write_file", "edit_file"):
+            ok, why = self._auto_ok(name, args, cwd)
+            risk, reason = (SAFE, prompts.text(self.cfg, "auto_full")) if ok else (risk, why or reason)
+        if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED:
+            risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
+        if risk == SAFE and name == "run_shell" and self.auto_mode == "off":
+            risk, reason = CONFIRM, prompts.text(self.cfg, "auto_read_off")
+        return risk, reason
+
+    def _runs_unasked(self, call: dict) -> bool:
+        """Läuft dieser Aufruf ohne Rückfrage (und bringt keine fremden Inhalte)? Dann darf er parallel laufen."""
+        fn = call.get("function", {})
+        name = fn.get("name", "")
+        spec = get_tool(name)
+        if not spec or not spec.is_enabled(self.cfg) or not self.tool_allowed(name) or name in TAINT_SOURCES:
+            return False
+        args = coerce_args(spec, fn.get("arguments"))
+        if missing_args(spec, args):
+            return False
+        ctx = ToolContext(cfg=self.cfg, memory=self.memory, cwd=self.project_dir(), output_chars=self.output_chars())
+        try:
+            return self._final_risk(name, spec, args, ctx)[0] == SAFE
+        except Exception:  # noqa: BLE001 – im Zweifel der Reihe nach
+            return False
+
     async def _execute(self, call: dict, emit: Emit, confirm: Confirm) -> tuple[str, str, str]:
         fn = call.get("function", {})
         name = fn.get("name", "")
@@ -1034,16 +1073,7 @@ class Agent:
         cwd = self.project_dir()
         ctx = ToolContext(cfg=self.cfg, memory=self.memory, emit=emit, call_id=call_id, services=self.services,
                           cwd=cwd, output_chars=self.output_chars())
-        risk, reason = spec.assess(ctx, args)
-        if risk == CONFIRM and self.auto_mode == "files" and not self._plan and self._file_edit_ok(name, args, cwd):
-            risk, reason = SAFE, prompts.text(self.cfg, "auto_files")
-        elif risk == CONFIRM and self.auto_mode == "auto" and not self._plan and name in ("run_shell", "write_file", "edit_file"):
-            ok, why = self._auto_ok(name, args, cwd)
-            risk, reason = (SAFE, prompts.text(self.cfg, "auto_full")) if ok else (risk, why or reason)
-        if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED:
-            risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
-        if risk == SAFE and name == "run_shell" and self.auto_mode == "off":
-            risk, reason = CONFIRM, prompts.text(self.cfg, "auto_read_off")
+        risk, reason = self._final_risk(name, spec, args, ctx)
         args_str = json.dumps(args, ensure_ascii=False)
         await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": reason,
                     "group": spec.group})
