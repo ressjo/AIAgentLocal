@@ -291,7 +291,8 @@ def _write_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     return (CONFIRM, f"{'überschreibt' if p.exists() else 'erstellt'} {p}") if args.get("path") else (SAFE, "")
 
 
-@tool("Schreibt Text in eine Datei (erstellt oder überschreibt sie).", risk=_write_risk)
+@tool("Schreibt Text in eine Datei (erstellt oder überschreibt sie). Für Änderungen an bestehenden Dateien "
+      "lieber edit_file.", risk=_write_risk)
 async def write_file(
     ctx: ToolContext,
     path: Annotated[str, "Zielpfad"],
@@ -303,3 +304,60 @@ async def write_file(
     with p.open("a" if append else "w", encoding="utf-8") as f:
         f.write(content)
     return f"{'Angehängt an' if append else 'Geschrieben:'} {p} ({len(content)} Zeichen)"
+
+
+def _edit_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
+    return (CONFIRM, f"ändert {ctx.path(args['path'])}") if args.get("path") else (SAFE, "")
+
+
+def _around(text: str, start: int, end: int, context: int = 3) -> tuple[int, int, str]:
+    """Zeilennummern der Änderung und ein paar Zeilen drumherum (mit Nummern) – das Modell muss nicht neu lesen."""
+    lines = text.splitlines()
+    first = text.count("\n", 0, start) + 1
+    last = text.count("\n", 0, max(start, end - 1)) + 1
+    lo, hi = max(1, first - context), min(len(lines), last + context)
+    shown = "\n".join(f"{n:>5}\t{lines[n - 1]}" for n in range(lo, hi + 1))
+    return first, last, shown
+
+
+@tool("Ändert eine bestehende Textdatei gezielt: ersetzt den exakten Ausschnitt old_text durch new_text (wie "
+      "Suchen/Ersetzen). old_text muss genau einmal vorkommen – Einrückung und Leerzeichen exakt wie in read_file "
+      "übernehmen und genug Kontext mitgeben. Für neue Dateien write_file.", risk=_edit_risk)
+async def edit_file(
+    ctx: ToolContext,
+    path: Annotated[str, "Pfad zur Datei"],
+    old_text: Annotated[str, "Der zu ersetzende Ausschnitt, exakt wie in der Datei"],
+    new_text: Annotated[str, "Der neue Text an seiner Stelle (leer = löschen)"],
+    replace_all: Annotated[bool, "true = jedes Vorkommen ersetzen"] = False,
+) -> str:
+    p = ctx.path(path)
+    if is_secret_path(str(p)):
+        return secret_reason()
+    if not p.is_file():
+        return f"Datei {p} gibt es nicht – für neue Dateien write_file nutzen."
+    try:
+        text = p.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return f"{p} ist keine Textdatei."
+    if not old_text:
+        return "old_text ist leer – gib den Ausschnitt an, der ersetzt werden soll."
+    count = text.count(old_text)
+    if count == 0:
+        import difflib
+        first = old_text.strip().splitlines()[0] if old_text.strip() else old_text
+        close = difflib.get_close_matches(first.strip(), [ln.strip() for ln in text.splitlines()], n=1, cutoff=0.6)
+        hint = ""
+        if close:
+            n = next(i for i, ln in enumerate(text.splitlines(), 1) if ln.strip() == close[0])
+            hint = f" Ähnlichste Zeile {n}: {text.splitlines()[n - 1]!r}"
+        return (f"old_text kommt in {p} nicht vor – mit read_file nachsehen und den Ausschnitt exakt (Einrückung, "
+                f"Leerzeichen) übernehmen.{hint}")
+    if count > 1 and not replace_all:
+        return (f"old_text kommt {count}-mal in {p} vor – mehr umgebenden Text mitgeben, damit die Stelle eindeutig "
+                "ist, oder replace_all=true.")
+    start = text.index(old_text)
+    new = text.replace(old_text, new_text) if replace_all else text[:start] + new_text + text[start + len(old_text):]
+    p.write_text(new, encoding="utf-8")
+    first, last, shown = _around(new, start, start + len(new_text))
+    what = f"{count} Stellen" if replace_all and count > 1 else f"Zeilen {first}–{last}"
+    return f"Geändert: {p} ({what}).\n{shown}"

@@ -254,8 +254,9 @@ Arbeitsweise:
 - Antworte auf Deutsch, sachlich und knapp. Code, Befehle und Pfade immer als Markdown-Codeblock mit Sprache.
 - Erst verstehen, dann ändern: relevante Dateien lesen bzw. durchsuchen, bevor du Code schreibst. Rate keine
   Dateiinhalte, APIs oder Pfade.
-- Ändere gezielt: bei kleinen Änderungen nur die betroffene Stelle zeigen; mit write_file nur vollständige,
-  lauffähige Dateien schreiben.
+- Ändere gezielt: bestehende Dateien mit edit_file (Ausschnitt ersetzen), write_file nur für neue Dateien oder
+  komplettes Neuschreiben – dann vollständig und lauffähig.
+- Bei Aufgaben mit mehreren Schritten eine Aufgabenliste mit todo_write führen und nach jedem Schritt aktualisieren.
 - Prüfe Änderungen: vorhandene Tests, Linter oder einen Build ausführen und das Ergebnis ehrlich berichten.
 - Bei Fehlern die Ursache suchen statt Symptome zu überdecken.
 - Gefährliche Aktionen werden automatisch zur Bestätigung vorgelegt – frag nicht selbst, ruf das Werkzeug auf.
@@ -276,8 +277,9 @@ Way of working:
   language.
 - Understand first, then change: read or search the relevant files before writing code. Never guess file
   contents, APIs or paths.
-- Change precisely: for small changes show only the affected part; with write_file only write complete, working
-  files.
+- Change precisely: edit existing files with edit_file (replace a snippet); write_file only for new files or a
+  complete rewrite – then complete and working.
+- For tasks with several steps keep a task list with todo_write and update it after each step.
 - Verify changes: run existing tests, linters or a build and report the result honestly.
 - On errors look for the cause instead of covering up symptoms.
 - Dangerous actions are presented for confirmation automatically – don't ask yourself, call the tool.
@@ -353,6 +355,7 @@ SPOKEN = {
         "call_remove": "das Entfernen von {v}", "call_update": "ein vollständiges Systemupdate",
         "call_cal_update": "das Ändern des Termins {v}", "call_cal_delete": "das Löschen des Termins {v}",
         "call_trilium": "das Überschreiben der Trilium-Notiz {v}", "call_write": "das Schreiben der Datei {v}",
+        "call_edit": "die Änderung an der Datei {v}",
         "call_other": "die Aktion {v}", "call_mail": "das Senden einer Mail an {v}",
         "setup_terminal": "Dieses Modell wird im Terminal eingerichtet: {cmd}",
     },
@@ -374,6 +377,7 @@ SPOKEN = {
         "call_remove": "the removal of {v}", "call_update": "a full system update",
         "call_cal_update": "changing the event {v}", "call_cal_delete": "deleting the event {v}",
         "call_trilium": "overwriting the Trilium note {v}", "call_write": "writing the file {v}",
+        "call_edit": "changing the file {v}",
         "call_other": "the action {v}", "call_mail": "sending an e-mail to {v}",
         "setup_terminal": "This model is set up in the terminal: {cmd}",
     },
@@ -446,6 +450,7 @@ COMPACT = {
         "focus": "Besonders wichtig laut Nutzer: {focus}",
         "user_list": "Nutzernachrichten seit der letzten Zusammenfassung (gekürzt):",
         "files": "Berührte Dateien und Ordner:",
+        "todos": "Aufgabenliste (Stand vor der Zusammenfassung):",
         "continue": "(System: Die Aufgabe läuft noch – der Kontext wurde dazwischen zusammengefasst. Mach beim "
                     "nächsten Schritt weiter und wiederhole nichts, was laut Zusammenfassung schon erledigt ist.)",
     },
@@ -478,6 +483,7 @@ COMPACT = {
         "focus": "Especially important according to the user: {focus}",
         "user_list": "User messages since the last summary (shortened):",
         "files": "Files and folders touched:",
+        "todos": "Task list (state before the summary):",
         "continue": "(System: The task is still running – the context was summarised in between. Continue with the "
                     "next step and do not repeat anything the summary lists as done.)",
     },

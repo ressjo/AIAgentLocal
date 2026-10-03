@@ -11,7 +11,7 @@ import re
 
 # Immer dabei (zusammen ca. 3k Token)
 CORE_GROUPS = {"files", "shell", "web", "apps", "memory_tools", "reminder_tools", "power", "weather", "briefing",
-               "system"}
+               "system", "todo_tools"}
 
 KEYWORDS = {
     "packages": r"update|upgrade|paket|package|install|deinstall|uninstall|entfern|pacman|\bapt\b|\baur\b|yay|paru",

@@ -75,7 +75,7 @@ def prompt_size(stats: dict, estimated: int) -> int:
 ANSWER_RESERVE = 1500  # Token, die im Kontextfenster für die Antwort frei bleiben
 THINK_RESERVE = 3000  # mit Denkmodus: die Denkkette belegt dasselbe Fenster
 # Coding-Modus: nur was man zum Programmieren braucht – mehr Kontext bleibt für den Code frei
-CODING_GROUPS = {"files", "shell", "web", "memory_tools"}
+CODING_GROUPS = {"files", "shell", "web", "memory_tools", "todo_tools"}
 # Denkstufen: Höchstlänge der Denkkette (0 = unbegrenzt). Modelle mit echten Stufen (gpt-oss) bekommen sie dazu.
 THINK_LEVELS = {"low": 512, "medium": 2048, "high": 0}
 CARRY_SHARE = 0.2  # so viel vom Fenster dürfen die wörtlich mitgenommenen letzten Schritte belegen
@@ -616,6 +616,10 @@ class Agent:
             parts.append(prompts.compact_text(self.cfg, "user_list") + "\n" + "\n".join(f"- „{u}“" for u in users))
         if paths:
             parts.append(prompts.compact_text(self.cfg, "files") + "\n" + "\n".join(f"- {p}" for p in paths[-12:]))
+        todos = self.memory.conversation.meta.get("todos")
+        if todos and any(t.get("state") != "done" for t in todos):  # offene Aufgabenliste geht mit
+            from .tools.todo_tools import format_todos
+            parts.append(prompts.compact_text(self.cfg, "todos") + "\n" + format_todos(todos))
         return "\n\n".join(parts)
 
     async def compact_epoch(self, emit: Emit, msg_id: str = "", in_turn: bool = False, reason: str = "full",
@@ -831,7 +835,7 @@ class Agent:
         """Auto „Dateien“: Dateiänderung im eigenen Home ohne Root/Löschen (siehe tools/filepolicy.py)."""
         from .tools.filepolicy import editable_path
         from .tools.safety import file_edit_ok
-        if name == "write_file":
+        if name in ("write_file", "edit_file"):
             return editable_path(str(args.get("path") or ""), cwd)
         if name == "run_shell":
             return file_edit_ok(str(args.get("command") or ""), cwd)
@@ -1031,7 +1035,7 @@ class Agent:
         risk, reason = spec.assess(ctx, args)
         if risk == CONFIRM and self.auto_mode == "files" and not self._plan and self._file_edit_ok(name, args, cwd):
             risk, reason = SAFE, prompts.text(self.cfg, "auto_files")
-        elif risk == CONFIRM and self.auto_mode == "auto" and not self._plan and name in ("run_shell", "write_file"):
+        elif risk == CONFIRM and self.auto_mode == "auto" and not self._plan and name in ("run_shell", "write_file", "edit_file"):
             ok, why = self._auto_ok(name, args, cwd)
             risk, reason = (SAFE, prompts.text(self.cfg, "auto_full")) if ok else (risk, why or reason)
         if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED:

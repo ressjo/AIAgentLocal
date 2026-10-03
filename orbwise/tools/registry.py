@@ -210,6 +210,7 @@ def load_all_tools() -> dict[str, ToolSpec]:
         sysadmin,
         system,
         telegram_tools,
+        todo_tools,
         trilium,
         vision,
         weather,

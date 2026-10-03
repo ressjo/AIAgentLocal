@@ -402,6 +402,9 @@
       case "llm_phase":
         modelPhase(ev);
         break;
+      case "todos":
+        showTodos(ev.items || []);
+        break;
       case "tool_call":
         toolCall(ev);  // im Denkmodus bleibt der Zoom – das Werkzeug erscheint als Chip im Gedankenkasten
         break;
@@ -909,6 +912,25 @@
       if (t && (s >= 1 || t.classList.contains("act-status"))) t.textContent = secs(s);
     });
     if (!open.length) { clearInterval(phaseTimer); phaseTimer = null; }
+  }
+
+  // Aufgabenliste (todo_write) als kleine Checkliste in der laufenden Antwort – bleibt danach stehen
+  function showTodos(items) {
+    const a = S.currentMsg && assistants[S.currentMsg];
+    if (!a) return;
+    let box = a.el.querySelector(".todos");
+    if (!box) {
+      box = document.createElement("ul");
+      box.className = "todos";
+      a.el.insertBefore(box, a.live);
+    }
+    box.replaceChildren(...items.map((t) => {
+      const li = document.createElement("li");
+      li.className = t.state;
+      li.textContent = t.text;
+      return li;
+    }));
+    scrollChat();
   }
 
   // Live-Zeile in der Antwort (ersetzt den Cursor) – Sekunden zählt tickPhases

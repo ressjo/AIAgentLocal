@@ -331,6 +331,15 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .msg .live .act-bar { margin-top: 5px; }
 .msg .live[data-phase="prompt"] .act-bar { display: block; }
 @keyframes livePulse { 50% { opacity: .25; transform: scale(.75); } }
+.msg .todos { list-style: none; margin: 8px 0 2px; padding: 8px 12px; max-width: 520px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-size: 13px; color: var(--text-2); }
+.msg .todos li { position: relative; padding: 2px 0 2px 22px; }
+.msg .todos li::before { content: ""; position: absolute; left: 0; top: 6px; width: 11px; height: 11px; border-radius: 3px;
+  border: 1.5px solid var(--faint); }
+.msg .todos li.active { color: var(--text); font-weight: 550; }
+.msg .todos li.active::before { border-color: var(--accent); background: var(--accent-soft); }
+.msg .todos li.done { color: var(--muted); text-decoration: line-through; }
+.msg .todos li.done::before { border-color: var(--accent-2); background: var(--accent-2); }
 .msg .stats { margin-top: 6px; font-size: 12px; color: var(--faint); }
 .msg .stats > summary { list-style: none; cursor: pointer; width: fit-content; user-select: none; }
 .msg .stats > summary::-webkit-details-marker { display: none; }

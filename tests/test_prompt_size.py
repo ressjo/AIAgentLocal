@@ -37,7 +37,7 @@ def test_new_chat_starts_lean_with_all_integrations(cfg, llm, memory, tmp_path):
     all_integrations(cfg, tmp_path)
     system, names, tool_tokens = first_request(cfg, llm, memory, "Hallo")
     # vorher ~5.550 (Hinweise zu allen Diensten standen immer im Systemprompt) – nicht wieder wachsen lassen
-    assert est_tokens(system) + tool_tokens <= 4000
+    assert est_tokens(system) + tool_tokens <= 4350  # inkl. edit_file und todo_write
     assert "paperless_search" not in names and "telegram_send_file" not in names and "search_nas" not in names
     assert "Paperless" not in system and "mail_list" not in system and "top_processes" not in system
     assert "Gemountetes NAS" not in system  # kein NAS eingerichtet

@@ -58,6 +58,7 @@ CALL_TEXTS = {"run_shell": ("call_shell", "command"), "install_package": ("call_
               "remove_package": ("call_remove", "names"), "system_update": ("call_update", ""),
               "calendar_update": ("call_cal_update", "query"), "calendar_delete": ("call_cal_delete", "query"),
               "trilium_update_note": ("call_trilium", "note"), "write_file": ("call_write", "path"),
+              "edit_file": ("call_edit", "path"),
               "mail_send": ("call_mail", "to")}
 
 
@@ -67,7 +68,7 @@ def spoken_confirm(name: str, args: dict, cfg=None) -> str:
         return prompts.spoken(cfg, "confirm_shell")
     if name == "mail_send":
         return prompts.spoken(cfg, "confirm_mail", v=str(args.get("to", "")))
-    if name == "write_file" and args.get("path"):
+    if name in ("write_file", "edit_file") and args.get("path"):
         args = {**args, "path": Path(str(args["path"])).name}
     return prompts.spoken(cfg, "confirm", what=describe_call(name, args, cfg))
 
