@@ -422,3 +422,29 @@ def test_apply_uses_similar_existing_names_instead_of_creating(cfg, fake):
     assert "Neu angelegt: Tag „Steuer 2025“" in out
     assert [c["name"] for c in fake.correspondents] == ["Telekom", "Stadtwerke"]  # keine Dublette
     assert [t["name"] for t in fake.types] == ["Vertrag", "Rechnung"]
+
+
+def test_search_documents_without_correspondent_type_or_tags(cfg, fake):
+    """Gemeldet: „Dokumente ohne Korrespondent“ – Jarvis wich auf curl aus, weil die Suche keinen Filter dafür hatte."""
+    fake.docs.append({"id": 40, "title": "Scan ohne alles", "created": "2026-09-01", "added": "2026-09-01",
+                      "correspondent": None, "document_type": None, "tags": [], "content": "Brief"})
+    fake.docs.append({"id": 41, "title": "Scan mit Typ", "created": "2026-09-02", "added": "2026-09-02",
+                      "correspondent": None, "document_type": 21, "tags": [11], "content": "Rechnung"})
+    out = run(pl.paperless_search(ctx(cfg), missing="correspondent"))
+    assert out.startswith("2 Dokumente ohne Korrespondent") and "[40]" in out and "[41]" in out and "[7]" not in out
+    docs_req = [r for r in fake.requests if r.url.path == "/api/documents/"]
+    assert docs_req[-1].url.params["correspondent__isnull"] == "true"
+    assert "paperless_review_next(scope='incomplete')" in out
+    out = run(pl.paperless_search(ctx(cfg), missing="tags"))
+    docs_req = [r for r in fake.requests if r.url.path == "/api/documents/"]
+    assert "[40]" in out and "[41]" not in out and docs_req[-1].url.params["is_tagged"] == "false"
+    assert run(pl.paperless_search(ctx(cfg), correspondent="keiner")).startswith("2 Dokumente ohne Korrespondent")
+    out = run(pl.paperless_search(ctx(cfg), missing="any"))
+    assert "ohne Korrespondent oder Dokumenttyp oder Tags" in out and "[40]" in out and "[41]" in out
+    assert "möglich: correspondent" in run(pl.paperless_search(ctx(cfg), missing="farbe"))
+
+
+def test_paperless_hint_says_never_curl(cfg):
+    from orbwise import prompts
+    hint = prompts.hints(cfg, {"paperless_search", "paperless_ask"})
+    assert "missing" in hint and "NIE per run_shell/curl" in hint

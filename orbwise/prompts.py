@@ -82,7 +82,9 @@ HINTS = {
         "paperless": "- Die Dokumente des Nutzers (Rechnungen, Verträge, Briefe, Bescheide, Versicherungen …) liegen in "
                      "Paperless. Fragen dazu: erst paperless_search, dann mit der Dokument-ID paperless_ask (Frage zum "
                      "Inhalt) – antworte aus den gelieferten Textstellen und nenne Titel und Datum des Dokuments. "
-                     "'Zeig/öffne das Dokument' → paperless_open. Merke dir die ID für Folgefragen.\n",
+                     "'Zeig/öffne das Dokument' → paperless_open. Merke dir die ID für Folgefragen. Dokumente ohne "
+                     "Korrespondent/Typ/Tags: paperless_search mit missing. Paperless NIE per run_shell/curl abfragen – "
+                     "immer die paperless_-Werkzeuge; passt keins genau, paperless_search mit query nutzen.\n",
         "paperless_write": "- Paperless: Einzelne genannte Dokumente einordnen/taggen/umbenennen: "
                            "paperless_suggest_metadata, Vorschlag als kurze Liste zeigen, dann paperless_apply_metadata – "
                            "vorhandene Korrespondenten/Typen/Tags bevorzugen: gibt es einen ähnlichen (z. B. ohne „GmbH“, "
@@ -141,7 +143,10 @@ HINTS = {
         "paperless": "- The user's documents (invoices, contracts, letters, notices, insurance …) are stored in "
                      "Paperless. For questions about them: first paperless_search, then paperless_ask with the "
                      "document ID – answer from the returned passages and name the document's title and date. "
-                     "'Show/open the document' → paperless_open. Remember the ID for follow-up questions.\n",
+                     "'Show/open the document' → paperless_open. Remember the ID for follow-up questions. Documents "
+                     "without correspondent/type/tags: paperless_search with missing. NEVER query Paperless with "
+                     "run_shell/curl – always the paperless_ tools; if none fits exactly, paperless_search with "
+                     "query.\n",
         "paperless_write": "- Paperless: To classify/tag/rename specific documents: paperless_suggest_metadata, show "
                            "your proposal as a short list, then paperless_apply_metadata – prefer existing "
                            "correspondents/types/tags: if a similar one exists (e.g. without “GmbH”, other spelling), "

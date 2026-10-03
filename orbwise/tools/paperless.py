@@ -82,6 +82,14 @@ def similar_existing(kind: str, name: str, known: list[str]) -> str | None:
     return None
 
 
+# paperless_search(missing=…): Dokumente, denen etwas fehlt
+MISSING_FILTERS = {"correspondent": {"correspondent__isnull": "true"},
+                   "document_type": {"document_type__isnull": "true"}, "tags": {"is_tagged": "false"}}
+MISSING_LABELS = {"correspondent": "Korrespondent", "document_type": "Dokumenttyp", "tags": "Tags"}
+_MISSING_ALIASES = {"korrespondent": "correspondent", "typ": "document_type", "type": "document_type",
+                    "dokumenttyp": "document_type", "tag": "tags", "alles": "any", "all": "any"}
+_NONE_WORDS = {"-", "keiner", "keine", "kein", "ohne", "none", "null", "leer", "empty", "missing", "fehlt"}
+
 # Zuletzt geladene Namen je Art – damit die (synchrone) Bestätigungsübersicht neue Einträge erkennt
 _KNOWN: dict[str, list[str]] = {}
 
@@ -247,18 +255,30 @@ async def paperless_search(
     date_from: Annotated[str, "Optional: ab Datum YYYY-MM-DD"] = "",
     date_to: Annotated[str, "Optional: bis Datum YYYY-MM-DD"] = "",
     limit: Annotated[int, "Maximale Anzahl Treffer"] = 8,
+    missing: Annotated[str, "Optional: nur Dokumente OHNE 'correspondent', 'document_type', 'tags' oder 'any' "
+                            "(eins davon fehlt)"] = "",
 ) -> str:
     async def run() -> str:
         params: dict[str, Any] = {"page_size": max(1, min(int(limit), 25)), "truncate_content": "true"}
+        lacking = [m for m in re.split(r"[,\s]+", missing.strip().lower()) if m]
+        # „ohne Korrespondent“ schreibt das Modell gern als correspondent="keiner"
+        for field, value in (("correspondent", correspondent), ("tags", tag), ("document_type", document_type)):
+            if value.strip().lower() in _NONE_WORDS:
+                lacking.append(field)
+        lacking = [_MISSING_ALIASES.get(m, m) for m in lacking]
+        unknown = [m for m in lacking if m not in MISSING_FILTERS and m != "any"]
+        if unknown:
+            return (f"Unbekannt bei missing: {', '.join(unknown)} – möglich: correspondent, document_type, tags, "
+                    "any.")
         if query.strip():
             params["query"] = query.strip()
         else:
-            params["ordering"] = "-created"
-        if correspondent.strip():
+            params["ordering"] = "-added" if lacking else "-created"
+        if correspondent.strip() and "correspondent" not in lacking:
             params["correspondent__name__icontains"] = correspondent.strip()
-        if tag.strip():
+        if tag.strip() and "tags" not in lacking:
             params["tags__name__iexact"] = tag.strip()
-        if document_type.strip():
+        if document_type.strip() and "document_type" not in lacking:
             params["document_type__name__icontains"] = document_type.strip()
         for key, val in (("created__gte", date_from), ("created__lte", date_to)):
             if val.strip():
@@ -266,11 +286,22 @@ async def paperless_search(
                     return f"Datum bitte als YYYY-MM-DD angeben (nicht '{val}')."
                 params[key] = val.strip()
         async with PaperlessClient(ctx.cfg) as pc:
-            data = await pc.json("/documents/", **params) or {}
+            fields = list(MISSING_FILTERS) if "any" in lacking else list(dict.fromkeys(lacking))
+            if "any" in lacking:  # eins fehlt: Treffer der einzelnen Abfragen zusammenführen
+                docs = []
+                for flt in MISSING_FILTERS.values():
+                    part = await pc.json("/documents/", **params, **flt) or {}
+                    docs += [d for d in part.get("results", []) if d["id"] not in {x["id"] for x in docs}]
+                data = {"results": docs[:params["page_size"]], "count": len(docs)}
+            else:
+                flt = {k: v for m in fields for k, v in MISSING_FILTERS[m].items()}
+                data = await pc.json("/documents/", **params, **flt) or {}
             docs = data.get("results", [])
+            label = " ohne " + (" oder " if "any" in lacking else " und ").join(MISSING_LABELS[f] for f in fields) \
+                if fields else ""
             if not docs:
-                return "Keine passenden Dokumente in Paperless gefunden."
-            lines = [f"{data.get('count', len(docs))} Treffer in Paperless" +
+                return f"Keine passenden Dokumente{label} in Paperless gefunden."
+            lines = [f"{data.get('count', len(docs))} Dokumente{label} in Paperless" +
                      (f" (zeige {len(docs)})" if data.get("count", 0) > len(docs) else "") + ":"]
             for d in docs:
                 line = await pc.describe(d)
@@ -279,7 +310,8 @@ async def paperless_search(
                 if snippet:
                     line += f"\n    „{snippet[:220]}“"
                 lines.append(line)
-            lines.append("Inhalt befragen: paperless_ask(document_id, question) · Öffnen: paperless_open(document_id)")
+            lines.append("Inhalt befragen: paperless_ask(document_id, question) · Öffnen: paperless_open(document_id)"
+                         + (" · Einordnen: paperless_review_next(scope='incomplete')" if lacking else ""))
             return "\n".join(lines)
 
     return await _guard(run())

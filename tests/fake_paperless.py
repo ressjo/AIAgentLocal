@@ -96,6 +96,8 @@ class FakePaperless:
             for field in ("correspondent", "document_type"):
                 if q.get(f"{field}__isnull") == "true":
                     docs = [d for d in docs if not d.get(field)]
+            if q.get("is_tagged") == "false":
+                docs = [d for d in docs if not d.get("tags")]
             if q.get("created__gte"):
                 docs = [d for d in docs if d["created"] >= q["created__gte"]]
             if q.get("ordering") == "-created":
