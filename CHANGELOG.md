@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Bonsai 2 27B compact** in the model selection (`orbwise model add bonsai-kompakt`): the 1.75-bit
+  `Ternary-Bonsai-2-27B-PTQ1_0.gguf` (5.9 instead of 7.2 GB) with 16k context on 8 GB cards; only its own file is
+  downloaded, and it lives next to the normal variant.
 - **Paperless: no more duplicate names** – if a similar correspondent, document type or tag exists ("Möbelhaus
   Mustermann GmbH" vs. "Möbelhaus Mustermann", another spelling, singular/plural), that one is used instead of
   creating a new one; the confirmation already shows "Möbelhaus Mustermann (existing, instead of …)". Tags are not

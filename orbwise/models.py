@@ -52,6 +52,10 @@ PRESETS: list[Preset] = [
     Preset("bonsai", "Bonsai 2 27B (llama.cpp)", 7.2, 8,
            "27B-Klasse in ~7 GB: sehr klug, denkt gründlich – eigener Server, Einrichtung automatisch",
            "27B class in ~7 GB: very smart, reasons thoroughly – own server, set up automatically", kind="bonsai"),
+    Preset("bonsai-kompakt", "Bonsai 2 27B kompakt (1,75 Bit)", 5.9, 7,
+           "dieselben 27B, 1,3 GB kleiner – auf 8-GB-Karten mit 16k Kontext; liest Prompts etwas langsamer ein",
+           "the same 27B, 1.3 GB smaller – 16k context on 8 GB cards; reads prompts a little slower",
+           kind="bonsai"),
 ]
 BY_TAG = {p.tag: p for p in PRESETS}
 TAG_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]*(:[a-z0-9._-]+)?$")
@@ -129,9 +133,9 @@ def installed_models(base_url: str = "http://localhost:11434") -> set[str]:
 
 
 def is_installed(tag: str, installed: set[str]) -> bool:
-    if tag == "bonsai":
+    if tag in ("bonsai", "bonsai-kompakt"):
         from .bonsai import is_set_up
-        return is_set_up()
+        return is_set_up(variant=tag)
     return tag in installed or (":" not in tag and f"{tag}:latest" in installed)
 
 

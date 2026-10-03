@@ -182,3 +182,38 @@ def test_router_error_names_missing_library(tmp_path, monkeypatch):
     assert "libcudart.so.12" in hint and "orbwise model add bonsai" in hint and "libold" not in hint
     log.write_text("\n===== Starte: x\nall good\n")
     assert llm_router.library_hint("x") == ""
+
+
+def test_compact_variant_downloads_only_its_file_and_gets_16k_on_8gb(tmp_path, monkeypatch):
+    """Ternary-Bonsai-2-27B-PTQ1_0 (5,9 statt 7,2 GB): auf 8-GB-Karten bleibt Platz für 16k Kontext."""
+    monkeypatch.setattr(bonsai.shutil, "which", lambda n: "/usr/bin/" + n)
+    target, state = tmp_path / "bonsai", tmp_path / "state.json"
+    base_run, calls = fake_run(target)
+
+    def run(cmd, **kw):
+        if cmd == ["sh", "./setup.sh"]:
+            assert kw["env"]["BONSAI_SKIP_GGUF"] == "1"  # nicht zusätzlich die 7,2-GB-Datei laden
+            (target / bonsai.START_SCRIPT).write_text("#!/bin/sh\n")
+            return subprocess.CompletedProcess(cmd, 0)
+        if len(cmd) > 2 and cmd[1] == "-c" and bonsai.COMPACT_FILE in cmd:
+            calls.append(cmd)
+            assert bonsai.COMPACT_REPO in cmd
+            (target / bonsai.COMPACT_DIR / bonsai.COMPACT_FILE).write_text("x")
+            return subprocess.CompletedProcess(cmd, 0)
+        return base_run(cmd, **kw)
+
+    assert bonsai.install(state, gpu=AMD_8GB, directory=target, run=run, out=lambda *_: None,
+                          variant=bonsai.COMPACT_NAME) == "bonsai-kompakt"
+    assert bonsai.is_set_up(target, bonsai.COMPACT_NAME) and not bonsai.is_set_up(target)
+    p = mdl.added_profiles(state)["bonsai-kompakt"]
+    env = p["server"]["env"]
+    assert env["BONSAI_GGUF"] == f"{bonsai.COMPACT_DIR}/{bonsai.COMPACT_FILE}" and env["BONSAI_CTX"] == "16384"
+    assert env["BONSAI_KV4"] == "1" and p["label"] == "Bonsai 2 27B kompakt"
+    # Varianten getrennt: Löschen der kompakten lässt die normale in Ruhe
+    (target / "models" / "bonsai2-gguf" / "27B").mkdir(parents=True)
+    (target / "models" / "bonsai2-gguf" / "27B" / "Ternary-Bonsai-2-27B-PQ2_0.gguf").write_text("y")
+    assert [f.name for f in bonsai.model_files(target)] == ["Ternary-Bonsai-2-27B-PQ2_0.gguf"]
+    assert bonsai.remove_model_files(target, bonsai.COMPACT_NAME) == 1
+    assert bonsai.model_files(target) and not bonsai.model_files(target, bonsai.COMPACT_NAME)
+    assert mdl.BY_TAG["bonsai-kompakt"].kind == "bonsai" and mdl.BY_TAG["bonsai-kompakt"].download_gb == 5.9
+    assert bonsai.make_profile(AMD_8GB, target)["server"]["env"]["BONSAI_CTX"] == "8192"  # normale: weiter 8k

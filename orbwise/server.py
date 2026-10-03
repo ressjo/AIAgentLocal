@@ -808,8 +808,8 @@ def create_app(cfg: Config) -> FastAPI:
         for p in profiles:
             p["deletable"] = p["name"] in added or p["name"] in added_slugs
             size = sizes.get(p["model"]) or sizes.get(f"{p['model']}:latest") if p["backend"] == "ollama" else None
-            if p["name"] == bonsai_mod.PROFILE_NAME:
-                size = sum(f.stat().st_size for f in bonsai_mod.model_files())
+            if p["name"] in bonsai_mod.VARIANTS:
+                size = sum(f.stat().st_size for f in bonsai_mod.model_files(variant=p["name"]))
             p["size_gb"] = round(size / 1e9, 1) if size else None
         return {"active": llm.active, "switching": llm.switching, "profiles": profiles,
                 "pulls": [{"tag": t, **pull_state.get(t, {})} for t in sorted(pulls)]}
@@ -918,8 +918,8 @@ def create_app(cfg: Config) -> FastAPI:
         await llm.remove_profile(name)
         mdl.unregister_model(state_file, name)
         freed = 0
-        if name == bonsai_mod.PROFILE_NAME:
-            freed = await asyncio.to_thread(bonsai_mod.remove_model_files)
+        if name in bonsai_mod.VARIANTS:
+            freed = await asyncio.to_thread(bonsai_mod.remove_model_files, None, name)
         elif profile.backend == "ollama" and not any(
                 p.backend == "ollama" and p.model == profile.model for p in llm.profiles.values()):
             try:  # nur löschen, wenn kein anderes Profil dasselbe Ollama-Modell nutzt

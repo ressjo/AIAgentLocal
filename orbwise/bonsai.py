@@ -22,6 +22,13 @@ from .lang import T
 REPO = "https://github.com/PrismML-Eng/Bonsai-demo.git"
 START_SCRIPT = "scripts/start_llama_server.sh"
 PROFILE_NAME = "bonsai"
+# Kompakte Variante: dieselben 27B, aber 1,75 statt 2,13 Bit pro Gewicht (5,9 statt 7,2 GB) – auf 8-GB-Karten bleibt
+# Platz für 16k Kontext. Liest den Prompt etwas langsamer ein. Eigener Ordner, damit sich die Varianten nicht stören.
+COMPACT_NAME = "bonsai-kompakt"
+COMPACT_REPO = "prism-ml/Ternary-Bonsai-2-27B-gguf"
+COMPACT_FILE = "Ternary-Bonsai-2-27B-PTQ1_0.gguf"
+COMPACT_DIR = "models/bonsai2-ptq1"
+VARIANTS = (PROFILE_NAME, COMPACT_NAME)
 CUDA_SERVER = "bin/cuda/llama-server"
 CUDA_LIBS = "cuda-libs"
 _NOT_FOUND = re.compile(r"^\s*(\S+)\s+=>\s+not found", re.M)
@@ -31,25 +38,29 @@ def bonsai_dir() -> Path:
     return Path(setting_env("BONSAI_DIR") or Path.home() / "bonsai").expanduser()
 
 
-def model_files(directory: Path | None = None) -> list[Path]:
-    models = (directory or bonsai_dir()) / "models"
-    return sorted(models.rglob("*.gguf")) if models.is_dir() else []
+def model_files(directory: Path | None = None, variant: str = PROFILE_NAME) -> list[Path]:
+    """Modelldateien einer Variante (Standard: alles außer der kompakten, kompakt: nur deren Ordner)."""
+    d = directory or bonsai_dir()
+    compact = d / COMPACT_DIR
+    if variant == COMPACT_NAME:
+        return sorted(compact.glob("*.gguf")) if compact.is_dir() else []
+    models = d / "models"
+    return sorted(f for f in models.rglob("*.gguf") if compact not in f.parents) if models.is_dir() else []
 
 
-def remove_model_files(directory: Path | None = None) -> int:
-    """Heruntergeladene Modelldateien (*.gguf, ~7 GB) löschen – der Bonsai-Ordner mit dem Server bleibt.
-    Liefert die freigegebenen Bytes."""
+def remove_model_files(directory: Path | None = None, variant: str = PROFILE_NAME) -> int:
+    """Heruntergeladene Modelldateien einer Variante löschen (~7 bzw. ~6 GB) – der Bonsai-Ordner mit dem Server
+    bleibt. Liefert die freigegebenen Bytes."""
     freed = 0
-    for f in model_files(directory):
+    for f in model_files(directory, variant):
         freed += f.stat().st_size
         f.unlink()
     return freed
 
 
-def is_set_up(directory: Path | None = None) -> bool:
+def is_set_up(directory: Path | None = None, variant: str = PROFILE_NAME) -> bool:
     d = directory or bonsai_dir()
-    models = d / "models"
-    return (d / START_SCRIPT).exists() and models.is_dir() and any(models.rglob("*.gguf"))
+    return (d / START_SCRIPT).exists() and bool(model_files(d, variant))
 
 
 def hsa_override(gpu_name: str) -> str:
@@ -61,15 +72,19 @@ def hsa_override(gpu_name: str) -> str:
     return ""
 
 
-def make_profile(gpu: dict, directory: Path, api_key: str | None = None, lib_path: str = "") -> dict:
-    """Profil passend zur Grafikkarte: wenig VRAM → komprimierter KV-Cache, Bildmodul in den RAM, kleiner Kontext."""
+def make_profile(gpu: dict, directory: Path, api_key: str | None = None, lib_path: str = "",
+                 compact: bool = False) -> dict:
+    """Profil passend zur Grafikkarte: wenig VRAM → komprimierter KV-Cache, Bildmodul in den RAM, kleiner Kontext.
+    compact: die 1,75-Bit-Variante (1,3 GB kleiner) – auf 8-GB-Karten mit 16k statt 8k Kontext."""
     vram = float(gpu.get("vram_gb") or 0)
     key = api_key or secrets.token_hex(20)
     env: dict[str, str] = {}
     if gpu.get("vendor") == "amd" and hsa_override(gpu.get("name", "")):
         env["HSA_OVERRIDE_GFX_VERSION"] = hsa_override(gpu["name"])
+    if compact:
+        env["BONSAI_GGUF"] = f"{COMPACT_DIR}/{COMPACT_FILE}"  # relativ zum Bonsai-Ordner; ohne Bildmodul
     if vram <= 9:
-        env.update({"BONSAI_CTX": "8192", "BONSAI_KV4": "1", "BONSAI_MMPROJ_CPU": "1"})
+        env.update({"BONSAI_CTX": "16384" if compact else "8192", "BONSAI_KV4": "1", "BONSAI_MMPROJ_CPU": "1"})
     elif vram <= 13:
         env.update({"BONSAI_CTX": "32768", "BONSAI_MMPROJ_CPU": "1"})
     else:
@@ -82,7 +97,7 @@ def make_profile(gpu: dict, directory: Path, api_key: str | None = None, lib_pat
     if script.startswith(home + "/"):
         script = "~" + script[len(home):]
     return {
-        "label": "Bonsai 2 27B",
+        "label": "Bonsai 2 27B kompakt" if compact else "Bonsai 2 27B",
         "backend": "openai",
         "base_url": "http://127.0.0.1:8080/v1",
         "model": "bonsai",
@@ -96,8 +111,9 @@ def make_profile(gpu: dict, directory: Path, api_key: str | None = None, lib_pat
 Runner = Callable[..., subprocess.CompletedProcess]
 
 
-def setup(directory: Path | None = None, run: Runner = subprocess.run, out=print) -> bool:
-    """Repo holen/aktualisieren und setup.sh ausführen (lädt Binaries und ~7 GB Modell)."""
+def setup(directory: Path | None = None, run: Runner = subprocess.run, out=print, skip_model: bool = False) -> bool:
+    """Repo holen/aktualisieren und setup.sh ausführen (lädt Binaries und ~7 GB Modell – mit skip_model nur die
+    Binaries, z. B. für die kompakte Variante)."""
     d = directory or bonsai_dir()
     if not shutil.which("git"):
         out(T("git fehlt – bitte installieren.", "git is missing – please install it."))
@@ -116,6 +132,8 @@ def setup(directory: Path | None = None, run: Runner = subprocess.run, out=print
     out(T("Richte Bonsai ein (llama.cpp-Binaries + Modell, ~7 GB – dauert eine Weile) …",
           "Setting up Bonsai (llama.cpp binaries + model, ~7 GB – takes a while) …"))
     env = {**os.environ, "BONSAI_OPENWEBUI": "0", "BONSAI_CODE_INTERPRETER": "0"}
+    if skip_model:
+        env["BONSAI_SKIP_GGUF"] = "1"
     result = run(["sh", "./setup.sh"], cwd=str(d), env=env)
     if result.returncode != 0 or not (d / START_SCRIPT).exists():
         out(T("✘ Bonsai-Einrichtung fehlgeschlagen – Details siehe oben (FAQ: ~/bonsai/FAQ.md).",
@@ -206,16 +224,39 @@ def ensure_cuda_libs(directory: Path | None = None, run: Runner = subprocess.run
     return path
 
 
+def download_compact(directory: Path, run: Runner = subprocess.run, out=print) -> bool:
+    """Die kompakte Modelldatei (~5,9 GB) von Hugging Face laden – mit dem Python der Bonsai-Einrichtung
+    (huggingface_hub, setzt abgebrochene Downloads fort)."""
+    target = directory / COMPACT_DIR
+    if (target / COMPACT_FILE).exists():
+        return True
+    out(T(f"Lade {COMPACT_FILE} (~5,9 GB) …", f"Downloading {COMPACT_FILE} (~5.9 GB) …"))
+    target.mkdir(parents=True, exist_ok=True)
+    venv = directory / ".venv" / "bin" / "python"
+    python = str(venv) if venv.exists() else (shutil.which("python3") or sys.executable)
+    code = ("import os, sys; from huggingface_hub import hf_hub_download; "
+            "hf_hub_download(sys.argv[1], sys.argv[2], local_dir=sys.argv[3], token=os.environ.get('BONSAI_TOKEN'))")
+    run([python, "-c", code, COMPACT_REPO, COMPACT_FILE, str(target)], cwd=str(directory))
+    if not (target / COMPACT_FILE).exists():
+        out(T(f"✘ {COMPACT_FILE} konnte nicht geladen werden – Netzwerk prüfen und erneut versuchen.",
+              f"✘ Could not download {COMPACT_FILE} – check the network and try again."))
+        return False
+    return True
+
+
 def install(state_path: Path, gpu: dict | None = None, activate: bool = True, directory: Path | None = None,
-            run: Runner = subprocess.run, out=print) -> str | None:
+            run: Runner = subprocess.run, out=print, variant: str = PROFILE_NAME) -> str | None:
     from .models import added_profiles, detect_gpu, register_profile
     d = directory or bonsai_dir()
-    if not setup(d, run=run, out=out):
+    compact = variant == COMPACT_NAME
+    if not setup(d, run=run, out=out, skip_model=compact):
+        return None
+    if compact and not download_compact(d, run=run, out=out):
         return None
     lib_path = ensure_cuda_libs(d, run=run, out=out)
     if lib_path is None:
         return None
-    old_key = added_profiles(state_path).get(PROFILE_NAME, {}).get("api_key")  # erneutes add = Reparatur
+    old_key = added_profiles(state_path).get(variant, {}).get("api_key")  # erneutes add = Reparatur
     profile = make_profile(gpu or detect_gpu(), d, api_key=old_key if isinstance(old_key, str) and old_key else None,
-                           lib_path=lib_path)
-    return register_profile(state_path, PROFILE_NAME, profile, activate=activate)
+                           lib_path=lib_path, compact=compact)
+    return register_profile(state_path, variant, profile, activate=activate)

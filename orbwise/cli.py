@@ -376,13 +376,13 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
             sys.exit(1)
         print(T(f"✔ '{tag}' aus der Modellliste entfernt.", f"✔ Removed '{tag}' from the model list."))
         from . import bonsai
-        if tag == bonsai.PROFILE_NAME:
-            files = bonsai.model_files()
+        if tag in bonsai.VARIANTS:
+            files = bonsai.model_files(variant=tag)
             size = sum(f.stat().st_size for f in files) / 1e9
             if files and sys.stdin.isatty() and input(
                     T(f"Auch die Modelldateien löschen (~{size:.1f} GB)? [j/N] ",
                       f"Also delete the model files (~{size:.1f} GB)? [y/N] ")).strip().lower() in ("j", "ja", "y", "yes"):
-                bonsai.remove_model_files()
+                bonsai.remove_model_files(variant=tag)
                 print(T("✔ Modelldateien gelöscht.", "✔ Model files deleted."))
             return
         if shutil.which("ollama") and sys.stdin.isatty() and \
@@ -396,9 +396,9 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
     if not tag or not mdl.TAG_RE.match(tag):
         print(T("Ungültiger Modellname.", "Invalid model name."))
         sys.exit(1)
-    if tag == "bonsai":
+    if tag in ("bonsai", "bonsai-kompakt"):
         from . import bonsai
-        name = bonsai.install(state, gpu=gpu, activate=True)
+        name = bonsai.install(state, gpu=gpu, activate=True, variant=tag)
         if not name:
             sys.exit(1)
         print(T("✔ Bonsai eingerichtet und als Modell aktiviert – Orbwise startet den Server bei Bedarf selbst.",

@@ -299,7 +299,7 @@ your GPU – context size by VRAM, compressed KV cache and CPU embeddings on 8 G
 RX 6600/6700/7600 – and a random `api_key`. On NVIDIA cards without a system CUDA toolkit the prebuilt
 llama-server lacks `libcudart`/`libcublas`; Orbwise then downloads NVIDIA's runtime packages from PyPI into
 `~/bonsai/cuda-libs` (no root, matched to your driver) and sets `LD_LIBRARY_PATH` in the profile. Running it again
-updates the checkout and repairs an existing setup (the `api_key` is kept); `orbwise doctor` shows missing libraries. In the web UI Bonsai is listed
+updates the checkout and repairs an existing setup (the `api_key` is kept); `orbwise doctor` shows missing libraries. **Bonsai 2 27B compact** (`orbwise model add bonsai-kompakt`) is the same model in the 1.75-bit `PTQ1_0` packing (`Ternary-Bonsai-2-27B-PTQ1_0.gguf`, 5.9 instead of 7.2 GB, in `~/bonsai/models/bonsai2-ptq1`): on 8 GB cards it gets 16k context instead of 8k – enough for Paperless & co. without lean mode – but reads prompts a little slower. Both variants can be installed side by side; deleting one keeps the other. In the web UI Bonsai is listed
 under **+ ADD MODEL** with a pointer to the terminal command, because the setup is interactive.
 
 The same profile written by hand, e.g. **Bonsai 2 27B on an RX 6650 XT (8 GB, ROCm)**:
