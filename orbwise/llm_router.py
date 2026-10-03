@@ -24,6 +24,34 @@ log = logging.getLogger(__name__)
 Progress = Callable[[str], Awaitable[None]]
 
 
+def listening_pids(port: int) -> list[int]:
+    """Prozesse, die auf diesem TCP-Port lauschen (aus /proc, ohne ss/lsof)."""
+    inodes = set()
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            lines = Path(table).read_text().splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            parts = line.split()
+            if len(parts) > 9 and parts[3] == "0A" and int(parts[1].rsplit(":", 1)[1], 16) == port:
+                inodes.add(parts[9])
+    pids = []
+    if not inodes:
+        return pids
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            for fd in (proc / "fd").iterdir():
+                if os.readlink(fd).removeprefix("socket:[").removesuffix("]") in inodes:
+                    pids.append(int(proc.name))
+                    break
+        except OSError:
+            continue
+    return pids
+
+
 def _log_path() -> Path:
     state = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
     state.mkdir(parents=True, exist_ok=True)
@@ -95,6 +123,34 @@ class ManagedServer:
                 await progress(f"Modell wird geladen … {int(waited)} s")
         await self.stop()
         raise LLMError(f"Modell-Server nicht rechtzeitig bereit ({int(self.cfg.startup_timeout)} s).\n" + tail_log())
+
+    def port(self) -> int | None:
+        m = re.search(r":(\d+)(?:/|$)", self.base_url)
+        return int(m.group(1)) if m else None
+
+    async def stop_foreign(self) -> bool:
+        """Einen llama-server beenden, der schon vor Orbwise lief (z. B. aus einer früheren Sitzung) – sonst würde
+        ein Neustart mit neuer Kontextgröße einfach den alten Server weiterverwenden. Nur Prozesse, deren
+        Befehlszeile nach llama-server aussieht."""
+        pids = listening_pids(self.port()) if self.port() else []
+        killed = False
+        for pid in pids:
+            try:
+                cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+            except OSError:
+                continue
+            if "llama" not in cmd.lower():
+                continue
+            try:
+                os.kill(pid, signal.SIGTERM)
+                killed = True
+            except (ProcessLookupError, PermissionError):
+                pass
+        for _ in range(100):  # warten, bis der Port frei ist
+            if not killed or not await self.port_in_use():
+                break
+            await asyncio.sleep(0.1)
+        return killed
 
     async def stop(self) -> None:
         if not self.running():
@@ -367,9 +423,11 @@ class LLMRouter:
         if not 1024 <= n <= 262144:
             raise LLMError("Kontextfenster bitte zwischen 1.024 und 262.144 Token")
         async with self._lock:
-            running = self.servers.get(name)
+            running = self.servers.get(name) or (self.server_for(name) if name == self.active else None)
             if running:
                 await running.stop()  # gibt den Grafikspeicher frei, bevor mit neuer Größe gestartet wird
+                if name == self.active:
+                    await running.stop_foreign()  # lief schon vor Orbwise → sonst bliebe die alte Größe
             self._apply_context(name, n)
             self.detected_ctx.pop(name, None)
             if self.state_path:
@@ -384,6 +442,10 @@ class LLMRouter:
                 if old_client is not None and old_client is not self.ollama:
                     await old_client.close()
                 await self.detect_context()
+                got = self.detected_ctx.get(name)
+                if got and got != n:
+                    raise LLMError(f"Der Modell-Server meldet weiterhin {got} Token Kontext statt {n} – er wurde "
+                                   "nicht neu gestartet oder übernimmt die Größe nicht (Startbefehl prüfen).")
 
     async def memory_info(self) -> tuple[dict | None, str]:
         """Speicher des aktiven Modells samt Kontext (VRAM/RAM) → (Werte, Grund falls keine).

@@ -8,7 +8,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from orbwise.prompts import strip_context_note
 
 PORT = int(sys.argv[1])
-DELAY = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
+DELAY = float(sys.argv[2]) if len(sys.argv) > 2 and not sys.argv[2].startswith("-") else 0.0
+CTX = int(sys.argv[sys.argv.index("-c") + 1]) if "-c" in sys.argv else 12288  # wie llama-server -c
 STARTED = time.time()
 
 
@@ -29,7 +30,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             return self._json(503 if loading else 200, {"status": "loading" if loading else "ok"})
         if self.path == "/props":
-            return self._json(200, {"default_generation_settings": {"n_ctx": 12288}})
+            return self._json(200, {"default_generation_settings": {"n_ctx": CTX}})
         if self.path == "/v1/models":
             return self._json(200, {"data": [{"id": "bonsai"}]})
         self._json(404, {})

@@ -1000,6 +1000,8 @@ def create_app(cfg: Config) -> FastAPI:
         if active:
             await hub.broadcast({"type": "model_active", "name": name})
             agent._cache_owner = None  # neu geladen = leerer Cache
+            agent.build_messages()  # Kontext-Kachel: neue Fenstergröße und Komprimierungspunkt sofort zeigen
+            await hub.broadcast({"type": "context", **(agent.last_context or {})})
             hub.prewarm_soon()
         await hub.broadcast({"type": "models_changed"})
         return {"ok": True, "ctx": llm.context_size if active else ctx}

@@ -146,3 +146,36 @@ def test_llama_server_memory_falls_back_and_explains(tmp_path, monkeypatch):
     assert info["source"] == "estimate" and info["ctx"] == 8192 and info["kv_per_token"] == 32 * 8 * 256 * 2
     (tmp_path / "orbwise-llm.log").write_text("===== Starte: neu\n" + LOG)  # Log mit Angaben: genau
     assert run(router.memory_info())[0]["source"] == "log"
+
+
+def test_new_context_restarts_a_server_that_ran_before_orbwise(tmp_path, monkeypatch):
+    """Gemeldet: Kontext umgestellt, oben blieb die alte Größe – der Server lief schon vor Orbwise und wurde nie
+    neu gestartet."""
+    import socket
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from orbwise.llm_router import listening_pids
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    fake = Path(__file__).parent / "fake_llama_server.py"
+    command = f"{sys.executable} {fake} {port} -c 8192"
+    foreign = subprocess.Popen(command.split())  # „aus einer früheren Sitzung“
+    try:
+        cfg = LLMConfig(profiles={"bonsai": ProfileConfig(
+            backend="openai", base_url=f"http://127.0.0.1:{port}/v1", model="bonsai",
+            server=ServerConfig(command=command, startup_timeout=20))}, active="bonsai")
+        router = LLMRouter(cfg, state_path=tmp_path / "state.json")
+        run(router.start())
+        assert router.context_size == 8192 and foreign.pid in listening_pids(port)
+        run(router.set_context("bonsai", 16384))
+        assert router.context_size == 16384  # neu gestartet mit der neuen Größe
+        assert foreign.wait(timeout=5) is not None  # der alte Server ist beendet
+    finally:
+        foreign.kill() if foreign.poll() is None else None
+        run(router.close())
