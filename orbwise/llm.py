@@ -166,6 +166,33 @@ class OllamaLLM:
         except (httpx.HTTPError, ValueError, KeyError):
             return []
 
+    async def memory_info(self) -> dict | None:
+        """Wie viel des geladenen Modells (samt Kontext) im Grafikspeicher liegt – aus /api/ps und /api/show.
+        Der KV-Cache wird aus der Architektur geschätzt (f16). None, wenn das Modell gerade nicht geladen ist."""
+        from .llm_memory import kv_per_token_from_info
+        try:
+            models = (await self._client.get("/api/ps", timeout=5)).json().get("models", [])
+            want = self.cfg.model if ":" in self.cfg.model else f"{self.cfg.model}:latest"
+            entry = next((m for m in models if m.get("name") in (self.cfg.model, want)
+                          or m.get("model") in (self.cfg.model, want)), None)
+            if not entry:
+                return None
+            show = (await self._client.post("/api/show", json={"model": self.cfg.model}, timeout=10)).json()
+        except (httpx.HTTPError, ValueError):
+            return None
+        info_ = show.get("model_info") or {}
+        size, in_vram = int(entry.get("size") or 0), int(entry.get("size_vram") or 0)
+        ctx = int(entry.get("context_length") or self.cfg.num_ctx)
+        per_token = kv_per_token_from_info(info_)
+        kv = per_token * ctx if per_token else 0
+        share = in_vram / size if size else 1.0
+        train = next((int(v) for k, v in info_.items() if k.endswith(".context_length") and isinstance(v, int)), None)
+        model = max(0, size - kv)
+        return {"ctx": ctx, "ctx_train": train, "kv_per_token": per_token, "source": "estimate",
+                "kv_vram": int(kv * share), "kv_ram": int(kv * (1 - share)),
+                "model_vram": int(model * share), "model_ram": int(model * (1 - share)),
+                "model_ram_offload": int(model * (1 - share))}
+
     async def unload_all(self) -> list[str]:
         """Alle geladenen Ollama-Modelle aus dem (Grafik-)Speicher entfernen."""
         names = await self.loaded_models()

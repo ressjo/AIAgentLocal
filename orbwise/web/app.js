@@ -260,6 +260,7 @@
       refresh();
       loadStatus();
       getJSON("/api/metrics").then(showMetrics).catch(() => {});
+      loadCtxMemory();
       if (!S.historyLoaded) loadHistory();
       loadChats();  // Seitenleiste gleich füllen (vorher erst nach NEU oder der ersten Antwort)
       renderBoot();
@@ -473,6 +474,7 @@
         S.modelDoneAt = Date.now();
         S.substate = "";
         loadStatus();
+        setTimeout(loadCtxMemory, 1500);
         break;
       case "models_changed":
         if (!modelMenu.classList.contains("hidden") && !modelMenu.querySelector(".fit-ok, .fit-tight, .fit-big")) openModelMenu();
@@ -1520,7 +1522,7 @@
   function showSection(section) {
     document.querySelectorAll(".set-tab").forEach((t) => t.classList.toggle("active", t.dataset.section === section));
     document.querySelectorAll(".set-section").forEach((el) => el.classList.toggle("hidden", el.id !== "set-" + section));
-    if (section === "models") openModelMenu();
+    if (section === "models") { openModelMenu(); loadCtxMemory().then(renderCtxSettings); }
     if (section === "voice") openVoiceMenu();
     if (section === "status") loadStatus();
   }
@@ -1945,6 +1947,97 @@
     }
   }, 500);
   setTile("tps", null, { sub: L("wartet auf Antwort", "waiting for an answer") });
+
+  // ---------------------------------------------------------------- Kontext im Speicher (VRAM/RAM) + Größe einstellen
+  // Zeigt, wie viel der KV-Cache belegt und ob er im Grafikspeicher liegt – und wie groß das Kontextfenster werden
+  // darf (llama-server: genau aus seinem Log, Ollama: geschätzt).
+  const gbs = (b) => `${(b / 1024 ** 3).toLocaleString(LOCALE, { maximumFractionDigits: b < 1024 ** 3 ? 2 : 1 })} GB`;
+  let lastMem = null;
+  const ctxLabel = (n) => (n % 1024 === 0 ? `${n / 1024}k` : kTok(n));
+  async function loadCtxMemory() {
+    try { lastMem = await getJSON("/api/llm/memory"); } catch { return; }
+    showMemory(lastMem);
+    if (!$("set-models").classList.contains("hidden")) renderCtxSettings();
+  }
+  function memText(m) {
+    const share = m.kv_vram_share ?? 1;
+    const where = share >= 0.99 ? L("komplett im Grafikspeicher", "fully in VRAM")
+      : L(`${Math.round(share * 100)} % im Grafikspeicher, ${gbs(m.kv_ram)} im RAM (langsam)`,
+          `${Math.round(share * 100)} % in VRAM, ${gbs(m.kv_ram)} in RAM (slow)`);
+    const model = m.model_ram_offload > 64 * 1024 ** 2
+      ? L(` · Modell ${Math.round((m.model_vram_share ?? 1) * 100)} % im VRAM`, ` · model ${Math.round((m.model_vram_share ?? 1) * 100)} % in VRAM`) : "";
+    return where + model;
+  }
+  function recText(m) {
+    const r = m.recommend || {};
+    if (r.verdict === "increase") return L(`bis ~${ctxLabel(r.max_ctx)} möglich`, `up to ~${ctxLabel(r.max_ctx)} possible`);
+    if (r.verdict === "reduce") return L(`besser ${ctxLabel(r.max_ctx)} – dann passt alles in den VRAM`, `better ${ctxLabel(r.max_ctx)} – then everything fits in VRAM`);
+    return r.verdict ? L("passt", "fits") : "";
+  }
+  function showMemory(m) {
+    const box = $("tele-mem");
+    if (!m || !m.available) { box.hidden = true; return; }
+    box.hidden = false;
+    const share = m.kv_vram_share ?? 1;
+    $("tm-val").textContent = `${ctxLabel(m.ctx)} · KV ${gbs(m.kv_bytes)}`;
+    box.querySelector(".tm-bar .vram").style.width = `${share * 100}%`;
+    box.querySelector(".tm-bar .ram").style.width = `${(1 - share) * 100}%`;
+    const rec = recText(m);
+    $("tm-sub").textContent = memText(m) + (rec ? ` · ${rec}` : "");
+    box.classList.toggle("warn", (m.recommend || {}).verdict === "reduce");
+    box.title = [
+      L(`Kontextfenster ${num(m.ctx)} Token · KV-Cache ${gbs(m.kv_bytes)} (${gbs(m.kv_per_token * 1000)} pro 1.000 Token)`,
+        `Context window ${num(m.ctx)} tokens · KV cache ${gbs(m.kv_bytes)} (${gbs(m.kv_per_token * 1000)} per 1,000 tokens)`),
+      L(`Modell ${gbs(m.model_bytes)}`, `Model ${gbs(m.model_bytes)}`) + memText(m).replace(/^[^·]*/, ""),
+      m.source === "estimate" ? L("Ollama: KV-Cache aus der Modell-Architektur geschätzt (f16).", "Ollama: KV cache estimated from the model architecture (f16).")
+        : L("Genau laut llama-server-Log.", "Exact, from the llama-server log."),
+      L("Ändern: Einstellungen → Modelle → Kontextfenster.", "Change it: Settings → Models → Context window."),
+    ].join("\n");
+  }
+  setInterval(() => { if (S.connected && (app.classList.contains("drawer-open") || !$("set-models").classList.contains("hidden"))) loadCtxMemory(); }, 10000);
+
+  async function renderCtxSettings() {
+    const box = $("ctx-set");
+    let models;
+    try { models = await getJSON("/api/models"); } catch { return; }
+    const p = models.profiles.find((x) => x.active);
+    if (!p || models.active === "demo") { box.innerHTML = ""; return; }
+    const m = lastMem && lastMem.available && lastMem.profile === p.name ? lastMem : null;
+    const opts = (m && m.recommend && m.recommend.options) || [4096, 8192, 12288, 16384, 24576, 32768, 49152, 65536].map((c) => ({ ctx: c }));
+    box.innerHTML = `<div class="mm-title"></div><div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p>`;
+    box.querySelector(".mm-title").textContent = L(`KONTEXTFENSTER · ${p.label}`, `CONTEXT WINDOW · ${p.label}`);
+    box.querySelector(".ctx-now").textContent = L(`Aktuell ${num(p.num_ctx)} Token`, `Currently ${num(p.num_ctx)} tokens`)
+      + (m ? ` · KV-Cache ${gbs(m.kv_bytes)}, ${memText(m)}` + (recText(m) ? ` · ${recText(m)}` : "") : "");
+    for (const o of opts) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "ctx-opt" + (o.ctx === p.num_ctx ? " on" : "") + (o.fits === false ? " big" : "");
+      b.innerHTML = "<span></span><small></small>";
+      b.querySelector("span").textContent = ctxLabel(o.ctx);
+      b.querySelector("small").textContent = o.kv_bytes ? `KV ${gbs(o.kv_bytes)}` + (o.fits === false ? L(" · zu groß", " · too big") : "") : "";
+      b.disabled = !!models.switching;
+      b.onclick = async () => {
+        if (o.ctx === p.num_ctx) return;
+        if (o.fits === false && !confirm(L(`${ctxLabel(o.ctx)} passt voraussichtlich nicht in den Grafikspeicher – Teile landen im RAM und alles wird deutlich langsamer. Trotzdem?`,
+                                          `${ctxLabel(o.ctx)} probably doesn't fit in VRAM – parts move to RAM and everything gets much slower. Continue?`))) return;
+        box.querySelectorAll(".ctx-opt").forEach((x) => { x.disabled = true; });
+        toast(p.managed ? L("Modell-Server startet mit neuem Kontextfenster neu …", "Restarting the model server with the new context window …")
+                        : L("Modell wird mit neuem Kontextfenster geladen …", "Reloading the model with the new context window …"));
+        const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/context`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ctx: o.ctx }) });
+        if (!r.ok) toast(L("Ändern fehlgeschlagen: ", "Change failed: ") + ((await r.json().catch(() => ({}))).detail || r.status));
+        else toast(L(`Kontextfenster jetzt ${num(o.ctx)} Token.`, `Context window now ${num(o.ctx)} tokens.`));
+        await loadCtxMemory();
+        renderCtxSettings();
+      };
+      box.querySelector(".ctx-opts").appendChild(b);
+    }
+    box.querySelector(".set-hint").textContent = (p.managed
+      ? L("Zum Ändern startet der Modell-Server neu (dauert etwas). ", "Changing it restarts the model server (takes a while). ")
+      : L("Zum Ändern lädt Ollama das Modell neu. ", "Changing it makes Ollama reload the model. "))
+      + L("Größeres Fenster = längere Chats bis zum Zusammenfassen, braucht aber mehr Grafikspeicher. Liegt der KV-Cache im RAM, wird alles deutlich langsamer.",
+          "A bigger window means longer chats before summarising but needs more VRAM. If the KV cache lands in RAM, everything gets much slower.");
+  }
 
   // ---------------------------------------------------------------- Modellauswahl
   const modelMenu = $("model-menu");

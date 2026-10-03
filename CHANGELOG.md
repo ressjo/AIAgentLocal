@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Context in memory and context window in the UI:** a telemetry tile shows the KV cache size and how much of it
+  is in VRAM or RAM (exact from the llama-server log, estimated for Ollama) with a recommendation to raise or lower
+  the window; Settings → Models → Context window changes it per model (server restart or Ollama reload, remembered
+  in state.json, Bonsai via BONSAI_CTX, other llama-servers via `-c`).
 - **Dates worked out instead of guessed:** `date_info` answers weekday, "next Tuesday", "in 3 weeks", calendar week,
   days between two dates and German public holidays (`holiday_region`, e.g. `BW`); reminders, calendar, `recall` and
   routines understand phrases like "next Tuesday 9:00" or "last Friday" directly, and a reminder's confirmation

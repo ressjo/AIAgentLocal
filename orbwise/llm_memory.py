@@ -1,0 +1,105 @@
+"""Wo liegt der Kontext (KV-Cache) des Sprachmodells – im Grafikspeicher oder im RAM – und wie groß darf er sein?
+
+- llama-server (z. B. Bonsai): genaue Werte aus seinem Startlog („ROCm0 KV buffer size = 512.00 MiB“,
+  „CPU_Mapped model buffer size = …“).
+- Ollama: /api/ps (wie viel vom Modell im VRAM liegt) und /api/show (Architektur) – der KV-Cache wird daraus
+  geschätzt (f16, wie Ollama ihn standardmäßig anlegt).
+
+Daraus eine Empfehlung: Wie groß kann das Kontextfenster werden, ohne in den RAM auszuweichen (langsam), bzw. wie
+weit sollte es herunter, wenn es schon ausweicht.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+MIB = 1024 ** 2
+RESERVE = 600 * MIB  # Rest im Grafikspeicher lassen (Desktop, Rechenpuffer)
+STEPS = (2048, 4096, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072)
+
+_BUF = re.compile(r"(\S+)\s+(KV|model|compute) buffer size\s*=\s*([\d.]+)\s*MiB")
+_CTX = re.compile(r"\bn_ctx\s*=\s*(\d+)")
+
+
+def _is_ram(device: str) -> bool:
+    d = device.lower()
+    return d.startswith("cpu") or "host" in d
+
+
+def parse_llama_log(text: str) -> dict | None:
+    """Speicherbelegung des letzten Starts aus dem llama-server-Log; None, wenn nichts zu finden ist."""
+    start = text.rfind("llama_model_loader: loaded meta data")  # nur der letzte Start zählt
+    block = text[start:] if start >= 0 else text
+    out = {"kv_vram": 0, "kv_ram": 0, "model_vram": 0, "model_ram": 0, "compute_vram": 0, "compute_ram": 0}
+    found = False
+    for device, kind, mib in _BUF.findall(block):
+        key = f"{kind.lower()}_{'ram' if _is_ram(device) else 'vram'}"
+        out[key] += int(float(mib) * MIB)
+        found = True
+    ctx = _CTX.findall(block)
+    if not found:
+        return None
+    out["ctx"] = int(ctx[-1]) if ctx else None
+    layers = re.findall(r"offloaded (\d+)/(\d+) layers to GPU", block)
+    # nur wenn Schichten des Modells im RAM liegen, ist der RAM-Anteil ein Problem (Einbettungen liegen immer dort)
+    out["model_ram_offload"] = out["model_ram"] if layers and int(layers[-1][0]) < int(layers[-1][1]) else 0
+    ctx_n = out["ctx"]
+    kv = out["kv_vram"] + out["kv_ram"]
+    out["kv_per_token"] = int(kv / ctx_n) if ctx_n and kv else None
+    train = re.findall(r"\bn_ctx_train\s*=\s*(\d+)", block)
+    out["ctx_train"] = int(train[-1]) if train else None
+    out["source"] = "log"
+    return out
+
+
+def kv_per_token_from_info(model_info: dict, bytes_per: float = 2.0) -> int | None:
+    """KV-Cache pro Token aus den GGUF-Metadaten von Ollama (/api/show → model_info)."""
+    def find(suffix: str) -> int | None:
+        for key, value in model_info.items():
+            if key.endswith(suffix) and isinstance(value, (int, float)):
+                return int(value)
+        return None
+    layers = find(".block_count")
+    heads = find(".attention.head_count")
+    kv_heads = find(".attention.head_count_kv") or heads
+    key_len = find(".attention.key_length")
+    value_len = find(".attention.value_length")
+    if not key_len and heads and find(".embedding_length"):
+        key_len = find(".embedding_length") // heads
+    value_len = value_len or key_len
+    if not (layers and kv_heads and key_len):
+        return None
+    return int(layers * kv_heads * (key_len + value_len) * bytes_per)
+
+
+def recommend(info: dict, gpu: dict | None) -> dict:
+    """Empfohlenes Kontextfenster: so groß, wie der freie Grafikspeicher erlaubt – oder kleiner, wenn schon etwas
+    in den RAM ausweicht."""
+    ctx, per_token = info.get("ctx"), info.get("kv_per_token")
+    if not ctx or not per_token:
+        return {}
+    spill = info.get("kv_ram", 0) + info.get("model_ram_offload", 0)
+    if spill > 64 * MIB:  # Kontext oder Modell weichen in den RAM aus → kleiner
+        target = ctx - int(spill / per_token)
+        verdict = "reduce"
+    else:
+        free = (gpu or {}).get("vram_total", 0) - (gpu or {}).get("vram_used", 0) - RESERVE \
+            if gpu and gpu.get("vram_total") else 0
+        target = ctx + int(max(0, free) / per_token)
+        verdict = "increase" if target >= ctx * 1.25 else "ok"
+    if info.get("ctx_train"):  # mehr als trainiert bringt nichts (das Modell versteht es nicht)
+        target = min(target, info["ctx_train"])
+    fitting = [s for s in STEPS if s <= max(target, STEPS[0])]
+    return {"verdict": verdict, "max_ctx": fitting[-1], "options": [
+        {"ctx": s, "kv_bytes": s * per_token, "fits": s <= max(target, 0)} for s in STEPS
+        if not info.get("ctx_train") or s <= info["ctx_train"]]}
+
+
+def summary(info: dict[str, Any]) -> dict:
+    """Zusammenfassung für die Oberfläche (Bytes)."""
+    kv = info.get("kv_vram", 0) + info.get("kv_ram", 0)
+    model = info.get("model_vram", 0) + info.get("model_ram", 0)
+    return {**info, "kv_bytes": kv, "model_bytes": model,
+            "kv_vram_share": round(info.get("kv_vram", 0) / kv, 3) if kv else None,
+            "model_vram_share": round(info.get("model_vram", 0) / model, 3) if model else None}

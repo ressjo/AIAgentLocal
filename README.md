@@ -630,6 +630,13 @@ size vs. the model's context window, with a breakdown and the compaction point i
 **GPU** load and temperature, **VRAM**, **RAM**/CPU and **POWER** draw. NVIDIA is read via `nvidia-smi`, AMD directly
 from the `amdgpu` driver.
 
+**Context in memory** shows how big the model's KV cache is and where it lives – green in VRAM, orange in RAM (slow) –
+plus a recommendation: "up to ~32k possible" when VRAM is free, or "better 12k" when parts already spill into RAM.
+For a llama-server started by Orbwise (Bonsai) the numbers come straight from its log; for Ollama they are estimated
+from the model architecture. **Settings → Models → Context window** changes the size per model (4k … 128k, each
+with its KV-cache size and a warning if it won't fit); Orbwise restarts the model server or makes Ollama reload the
+model and remembers the choice.
+
 ## Security
 
 Orbwise can run commands on your system, so:

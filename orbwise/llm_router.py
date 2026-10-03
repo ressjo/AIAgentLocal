@@ -156,6 +156,9 @@ class LLMRouter:
         self.switching: str | None = None
         self._lock = asyncio.Lock()
         self.detected_ctx: dict[str, int] = {}  # vom Server gemeldete Kontextgröße je Profil
+        for name, n in (self._read_state().get("context") or {}).items():  # in der Oberfläche eingestellt
+            if name in self.profiles and isinstance(n, int):
+                self._apply_context(name, n)
         self._build_client()
 
     def add_downloaded_models(self) -> list[str]:
@@ -338,9 +341,68 @@ class LLMRouter:
                    "model": p.model})
         return st
 
+    # ---------- Kontextgröße (Einstellungen → Modelle) ----------
+    def _apply_context(self, name: str, n: int) -> None:
+        """Kontextfenster eines Profils setzen: Ollama über num_ctx, ein eigener llama-server über BONSAI_CTX bzw.
+        -c im Startbefehl (wirkt beim nächsten Start)."""
+        p = self.profiles[name]
+        p.num_ctx = n
+        if p.server:
+            env = dict(p.server.env or {})
+            command = p.server.command
+            if "BONSAI_CTX" in env:
+                env["BONSAI_CTX"] = str(n)
+            elif re.search(r"(^|\s)(-c|--ctx-size)\s+\d+", command):
+                command = re.sub(r"(^|\s)(-c|--ctx-size)\s+\d+", rf"\1\2 {n}", command)
+            else:
+                command = f"{command} -c {n}"
+            p.server = p.server.model_copy(update={"env": env, "command": command})
+            self.servers.pop(name, None)  # neuer Startbefehl
+
+    async def set_context(self, name: str, n: int, progress: Progress | None = None) -> None:
+        """Kontextfenster ändern und merken (state.json). Beim aktiven Profil wird ein eigener Server neu gestartet,
+        Ollama lädt das Modell bei der nächsten Anfrage mit der neuen Größe."""
+        if name not in self.profiles:
+            raise LLMError(f"Unbekanntes Profil '{name}'")
+        if not 1024 <= n <= 262144:
+            raise LLMError("Kontextfenster bitte zwischen 1.024 und 262.144 Token")
+        async with self._lock:
+            running = self.servers.get(name)
+            if running:
+                await running.stop()  # gibt den Grafikspeicher frei, bevor mit neuer Größe gestartet wird
+            self._apply_context(name, n)
+            self.detected_ctx.pop(name, None)
+            if self.state_path:
+                data = self._read_state()
+                data.setdefault("context", {})[name] = n
+                self.state_path.parent.mkdir(parents=True, exist_ok=True)
+                self.state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+            if name == self.active:
+                await self._prepare(name, progress)
+                old_client = self.client
+                self._build_client()
+                if old_client is not None and old_client is not self.ollama:
+                    await old_client.close()
+                await self.detect_context()
+
+    async def memory_info(self) -> dict | None:
+        """Speicher des aktiven Modells samt Kontext (VRAM/RAM) – llama-server aus seinem Log, Ollama aus der API."""
+        from .llm_memory import parse_llama_log
+        if isinstance(self.client, OllamaLLM):
+            return await self.client.memory_info()
+        if not self.profile.server:
+            return None  # fremder Server: Log nicht zugänglich
+        try:
+            text = _log_path().read_text(encoding="utf-8", errors="replace")[-500_000:]
+        except OSError:
+            return None
+        return parse_llama_log(text)
+
     def describe(self) -> list[dict]:
         return [{"name": n, "label": p.label, "backend": p.backend, "model": p.model, "base_url": p.base_url,
-                 "managed": p.server is not None, "active": n == self.active} for n, p in self.profiles.items()]
+                 "managed": p.server is not None, "active": n == self.active,
+                 "num_ctx": self.detected_ctx.get(n) or p.num_ctx or self.cfg.num_ctx}
+                for n, p in self.profiles.items()]
 
     async def close(self) -> None:
         for server in self.servers.values():

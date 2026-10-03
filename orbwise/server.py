@@ -958,6 +958,52 @@ def create_app(cfg: Config) -> FastAPI:
         hub.prewarm_soon()
         return {"ok": True, "active": llm.active}
 
+    @app.get("/api/llm/memory")
+    async def llm_memory():
+        """Wo liegt der Kontext (VRAM/RAM), und wie groß darf das Kontextfenster werden?"""
+        from . import llm_memory
+        gpu = (await asyncio.to_thread(metrics.collect)).get("gpu")
+        if not isinstance(llm, LLMRouter):
+            return {"available": False}
+        info = await llm.memory_info()
+        if not info:
+            return {"available": False, "profile": llm.active, "ctx": llm.context_size,
+                    "managed": llm.profile.server is not None, "backend": llm.profile.backend}
+        return {"available": True, "profile": llm.active, "backend": llm.profile.backend,
+                **llm_memory.summary(info), "recommend": llm_memory.recommend(info, gpu), "gpu": gpu}
+
+    @app.post("/api/models/{name}/context")
+    async def set_model_context(name: str, request: Request):
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        if name not in llm.profiles:
+            raise HTTPException(404, "Unbekanntes Profil")
+        try:
+            ctx = int((await request.json()).get("ctx", 0))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "ctx fehlt") from None
+        active = name == llm.active
+        if active:
+            await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profiles[name].label})
+            llm.switching = name
+        try:
+            async with agent.lock:  # wartet, bis eine laufende Antwort fertig ist
+                await llm.set_context(name, ctx, model_progress)
+                if active:
+                    await llm.warm()  # Ollama: gleich mit der neuen Größe laden
+        except LLMError as e:
+            await hub.broadcast({"type": "model_error", "name": name, "text": str(e)})
+            raise HTTPException(400 if "zwischen" in str(e) else 502, str(e)) from e
+        finally:
+            llm.switching = None
+            await idle_if_free()
+        if active:
+            await hub.broadcast({"type": "model_active", "name": name})
+            agent._cache_owner = None  # neu geladen = leerer Cache
+            hub.prewarm_soon()
+        await hub.broadcast({"type": "models_changed"})
+        return {"ok": True, "ctx": llm.context_size if active else ctx}
+
     @app.get("/api/reminders")
     async def get_reminders():
         return [{"id": r.id, "text": r.text, "due": r.due, "kind": r.kind} for r in reminders.upcoming()]

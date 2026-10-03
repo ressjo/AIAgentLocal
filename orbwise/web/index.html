@@ -195,6 +195,11 @@
           <div class="tele-bar"><i></i></div>
           <canvas class="tele-spark" width="120" height="22"></canvas>
         </div>
+        <div class="tele tele-mem" id="tele-mem" hidden>
+          <div class="tm-head"><span class="tele-label">Kontext im Speicher</span><span class="tm-val" id="tm-val"></span></div>
+          <div class="tm-bar"><i class="vram"></i><i class="ram"></i></div>
+          <div class="tele-sub" id="tm-sub"></div>
+        </div>
       </div>
       <div class="drawer-body" id="tab-activity">
         <div class="activity" id="activity">
@@ -289,6 +294,7 @@
         <div class="set-section" id="set-models">
           <p class="set-hint">Wähle das Sprachmodell, lade neue herunter oder lösche nicht mehr benötigte.</p>
           <div class="model-menu inline" id="model-menu" role="list"></div>
+          <div class="ctx-set" id="ctx-set"></div>
         </div>
         <div class="set-section hidden" id="set-voice">
           <div class="model-menu voice-menu inline" id="voice-menu" role="list">
