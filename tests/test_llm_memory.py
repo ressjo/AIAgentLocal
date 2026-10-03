@@ -179,3 +179,32 @@ def test_new_context_restarts_a_server_that_ran_before_orbwise(tmp_path, monkeyp
     finally:
         foreign.kill() if foreign.poll() is None else None
         run(router.close())
+
+
+def test_hybrid_models_only_count_attention_layers(tmp_path):
+    """Bonsai 2 (Qwen 3.5): nur jede 4. Schicht hat einen KV-Cache – vorher zeigte die Anzeige bei 64k 4,5 GB statt
+    ~1,2 GB und warnte „zu groß“."""
+    import struct
+
+    from orbwise.llm_memory import estimate_from_gguf, gguf_metadata, kv_per_token_from_info
+    base = {"qwen35.block_count": 64, "qwen35.attention.head_count": 24, "qwen35.attention.head_count_kv": 4,
+            "qwen35.attention.key_length": 256, "qwen35.attention.value_length": 256}
+    model = tmp_path / "bonsai2.gguf"
+    write_gguf(model, {**base, "qwen35.full_attention_interval": 4})
+    est = estimate_from_gguf(str(model), 65536, "start_llama_server.sh", {"BONSAI_KV4": "1"})
+    assert est["kv_per_token"] == int(16 * 4 * 512 * 18 / 32)  # 18 KiB pro Token wie in der Bonsai-Doku
+    assert 1.0e9 < est["kv_vram"] < 1.3e9
+
+    # je Schicht angegeben (0 = rekurrente Schicht)
+    def s(text):
+        b = text.encode()
+        return struct.pack("<Q", len(b)) + b
+    per_layer = [0, 0, 0, 4] * 16
+    kvs = [s(k) + struct.pack("<II", 4, v) for k, v in base.items() if not k.endswith("head_count_kv")]
+    kvs.append(s("qwen35.attention.head_count_kv") + struct.pack("<IIQ", 9, 4, len(per_layer))
+               + b"".join(struct.pack("<I", x) for x in per_layer))
+    arr = tmp_path / "array.gguf"
+    arr.write_bytes(b"GGUF" + struct.pack("<IQQ", 3, 0, len(kvs)) + b"".join(kvs) + b"\0" * 100)
+    assert gguf_metadata(str(arr))["qwen35.attention.head_count_kv"] == per_layer
+    assert kv_per_token_from_info(gguf_metadata(str(arr))) == 16 * 4 * 512 * 2  # 64 KiB pro Token bei f16
+    assert kv_per_token_from_info(base) == 64 * 4 * 512 * 2  # ohne Hinweis: alle Schichten (wie bisher)

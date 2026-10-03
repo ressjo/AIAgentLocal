@@ -217,3 +217,73 @@ def test_compact_variant_downloads_only_its_file_and_gets_16k_on_8gb(tmp_path, m
     assert bonsai.model_files(target) and not bonsai.model_files(target, bonsai.COMPACT_NAME)
     assert mdl.BY_TAG["bonsai-kompakt"].kind == "bonsai" and mdl.BY_TAG["bonsai-kompakt"].download_gb == 5.9
     assert bonsai.make_profile(AMD_8GB, target)["server"]["env"]["BONSAI_CTX"] == "8192"  # normale: weiter 8k
+
+
+def test_cache_flags_for_the_hybrid_model(tmp_path):
+    """Bonsai 2 ist ein Hybrid-Modell: früheren Prompt nur über Checkpoints weiterverwenden – Orbwise hängt die
+    passenden llama-server-Optionen an den Bonsai-Starter, aber nur, was der vorhandene Server kennt."""
+    d = tmp_path / "bonsai"
+    (d / "bin" / "vulkan").mkdir(parents=True)
+    (d / "bin" / "vulkan" / "llama-server").write_text("")
+    script = f"{d}/scripts/start_llama_server.sh -np 1 --api-key k"
+    full_help = "-c, --ctx-size N\n--ctx-checkpoints N\n--cache-ram N\n--cache-idle-slots\n"
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout=full_help, stderr="")
+
+    flags = bonsai.cache_flags(script, run=run, mem_mib=31 * 1024)
+    assert flags == "--ctx-checkpoints 32 --cache-ram 4096 --cache-idle-slots"
+    assert calls == [[str(d / "bin" / "vulkan" / "llama-server"), "--help"]]
+    bonsai.cache_flags(script, run=run, mem_mib=8 * 1024)
+    assert len(calls) == 1  # Hilfetext nur einmal je Ordner
+    assert "--cache-ram 1228" in bonsai.cache_flags(script, run=run, mem_mib=8 * 1024)  # 15 % von 8 GB
+    own = bonsai.cache_flags(script + " --ctx-checkpoints 8", run=run, mem_mib=31 * 1024)
+    assert "--ctx-checkpoints" not in own and "--cache-ram 4096" in own  # vom Nutzer gesetzt – bleibt
+    assert bonsai.cache_flags("llama-server -m x.gguf", run=run) == ""  # kein Bonsai-Starter
+
+    old = tmp_path / "alt"
+    (old / "bin" / "cpu").mkdir(parents=True)
+    (old / "bin" / "cpu" / "llama-server").write_text("")
+    older = bonsai.cache_flags(f"{old}/scripts/start_llama_server.sh", mem_mib=16384,
+                               run=lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout="-c, --ctx-size N\n"))
+    assert older == ""  # ältere Version kennt die Optionen nicht – nichts anhängen
+
+    def broken(cmd, **kw):
+        raise OSError("libvulkan fehlt")
+    gone = tmp_path / "kaputt"
+    (gone / "bin" / "x").mkdir(parents=True)
+    (gone / "bin" / "x" / "llama-server").write_text("")
+    assert bonsai.cache_flags(f"{gone}/scripts/start_llama_server.sh", run=broken) == ""
+
+
+def test_managed_server_starts_with_cache_flags(tmp_path, monkeypatch):
+    import asyncio
+    import socket
+    import sys
+
+    from orbwise.config import ServerConfig
+    from orbwise.llm_router import ManagedServer
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    seen = []
+
+    def flags(command, env=None, **kw):
+        seen.append(command)
+        return "--ctx-checkpoints 32"
+
+    monkeypatch.setattr(bonsai, "cache_flags", flags)
+    fake = Path(__file__).parent / "fake_llama_server.py"
+    server = ManagedServer(ServerConfig(command=f"{sys.executable} {fake} {port}", startup_timeout=20),
+                           f"http://127.0.0.1:{port}/v1")
+    try:
+        assert asyncio.run(server.ensure_running())
+        log = (tmp_path / "orbwise-llm.log").read_text()
+        assert f"{fake} {port} --ctx-checkpoints 32" in log and seen
+    finally:
+        asyncio.run(server.stop())

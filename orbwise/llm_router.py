@@ -101,6 +101,13 @@ class ManagedServer:
         if not self.running() and not await self.port_in_use():
             command = os.path.expanduser(self.cfg.command)
             env = {**os.environ, **{k: str(v) for k, v in self.cfg.env.items()}}
+            try:  # Bonsai (Hybrid-Modell): Prompt-Cache über Checkpoints – sonst liest er nach Änderungen viel neu ein
+                from .bonsai import cache_flags
+                extra = await asyncio.to_thread(cache_flags, command, {k: str(v) for k, v in self.cfg.env.items()})
+            except Exception:  # noqa: BLE001 – nur eine Beschleunigung, der Start darf nicht daran scheitern
+                extra = ""
+            if extra:
+                command = f"{command} {extra}"
             cwd = os.path.expanduser(self.cfg.cwd) if self.cfg.cwd else str(Path.home())
             log_file = _log_path().open("ab")
             log_file.write(f"\n===== Starte: {command}\n".encode())

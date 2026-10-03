@@ -448,3 +448,23 @@ def test_paperless_hint_says_never_curl(cfg):
     from orbwise import prompts
     hint = prompts.hints(cfg, {"paperless_search", "paperless_ask"})
     assert "missing" in hint and "NIE per run_shell/curl" in hint
+
+
+def test_suggestion_package_lists_only_matching_names_when_there_are_many(cfg, fake):
+    """Gemeldet: ein Paket listete alle Namen (bis 3×150) – zu lang, Jarvis musste es stückweise nachlesen."""
+    fake.correspondents += [{"id": 200 + i, "name": f"Firma Nummer {i}"} for i in range(60)]
+    fake.correspondents.append({"id": 300, "name": "Mobilfunk Service GmbH"})
+    out = run(pl.paperless_suggest_metadata(ctx(cfg), [7, 8]))
+    line = next(x for x in out.splitlines() if "Korrespondenten" in x)
+    assert line.startswith("Passende vorhandene Korrespondenten:")
+    assert "Telekom" in line and "Stadtwerke" in line  # eingetragen bzw. von Paperless vorgeschlagen
+    assert "Firma Nummer 1" not in line and "weitere" in line and "automatisch zugeordnet" in line
+    assert "Vorhandene Tags (3): Posteingang, Steuer, Vertrag" in out  # wenige: alle
+    assert len(line) < 400
+
+
+def test_relevant_names_find_correspondents_in_the_text():
+    names = ["Telekom", "Möbelhaus Mustermann", "Stadtwerke Köln", "Vodafone"]
+    found = pl._relevant_names("correspondents", names, "Rechnung der Moebelhaus Mustermann GmbH, Stadtwerke …", [])
+    assert found == ["Möbelhaus Mustermann", "Stadtwerke Köln"]  # Umlaut-Schreibweise und markantes erstes Wort
+    assert pl._relevant_names("correspondents", names, "nichts", ["Vodafone"]) == ["Vodafone"]

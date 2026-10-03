@@ -473,6 +473,7 @@ async def paperless_upload(
 # ---------------------------------------------------------------- Metadaten vorschlagen und übernehmen
 
 MAX_SUGGEST, MAX_APPLY, MAX_LISTED = 5, 25, 150
+LIST_ALL_UP_TO, LIST_RELEVANT = 30, 15  # so viele vorhandene Namen je Art zeigt ein Vorschlags-Paket
 REVIEW_BATCH = 3  # Dokumente pro Paket beim Sortieren – danach Pause
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
@@ -580,6 +581,9 @@ async def _suggest_material(pc: "PaperlessClient", ids: list[int], limit: int | 
     known = {kind: await pc.names(kind) for kind in ("correspondents", "document_types", "tags")}
     budget = max(300, (limit or pc.max_chars) // len(ids))
     blocks = []
+    # für die Liste vorhandener Namen: was Paperless vorschlägt, was schon eingetragen ist, was im Text vorkommt
+    preset: dict[str, list[str]] = {kind: [] for kind in known}
+    texts: list[str] = []
     for doc_id in ids:
         try:
             doc = await pc.document(doc_id)
@@ -592,8 +596,11 @@ async def _suggest_material(pc: "PaperlessClient", ids: list[int], limit: int | 
         except PaperlessError:
             sug = {}  # ältere Paperless-Versionen / Klassifikator noch nicht trainiert
         hints = []
+        current = {"correspondents": [doc.get("correspondent")], "document_types": [doc.get("document_type")],
+                   "tags": list(doc.get("tags") or [])}
         for key, label in (("correspondents", "Korrespondent"), ("document_types", "Typ"), ("tags", "Tags")):
             names = [known[key][x] for x in sug.get(key) or [] if x in known[key]]
+            preset[key] += names + [known[key][x] for x in current[key] if x in known[key]]
             if names:
                 hints.append(f"{label}: {', '.join(names)}")
         if sug.get("dates"):
@@ -601,6 +608,7 @@ async def _suggest_material(pc: "PaperlessClient", ids: list[int], limit: int | 
         if hints:
             lines.append("  Paperless schlägt vor – " + " · ".join(hints))
         text = re.sub(r"\s+", " ", doc.get("content") or "").strip()
+        texts.append(" ".join([doc.get("title") or "", doc.get("original_file_name") or "", text[:6000]]))
         lines.append(f"  Text: „{text[:budget]}{'…' if len(text) > budget else ''}“" if text
                      else "  (kein erkannter Text – Vorschlag nur aus Titel/Dateiname möglich: "
                           f"{doc.get('original_file_name') or '?'})")
@@ -609,9 +617,34 @@ async def _suggest_material(pc: "PaperlessClient", ids: list[int], limit: int | 
     for kind, label in (("correspondents", "Korrespondenten"), ("document_types", "Dokumenttypen"),
                         ("tags", "Tags")):
         names = sorted(known[kind].values(), key=str.casefold)
-        more = f" … (+{len(names) - MAX_LISTED})" if len(names) > MAX_LISTED else ""
-        listing.append(f"Vorhandene {label} ({len(names)}): " + (", ".join(names[:MAX_LISTED]) or "–") + more)
+        if len(names) <= LIST_ALL_UP_TO:
+            listing.append(f"Vorhandene {label} ({len(names)}): " + (", ".join(names) or "–"))
+            continue
+        shown = _relevant_names(kind, names, " ".join(texts), preset[kind])
+        rest = len(names) - len(shown)
+        listing.append(f"Passende vorhandene {label}: " + (", ".join(shown) or "–") +
+                       f" (+{rest} weitere – ein ähnlicher Name wird beim Übernehmen automatisch zugeordnet)")
     return "\n\n".join(blocks) + "\n\n" + "\n".join(listing)
+
+
+def _relevant_names(kind: str, names: list[str], text: str, preset: list[str]) -> list[str]:
+    """Vorhandene Namen, die zu den Dokumenten passen: Vorschläge von Paperless und schon eingetragene zuerst, dann
+    Namen, die im Text vorkommen (Vergleichsform, bei Korrespondenten reicht ein markantes erstes Wort) – höchstens
+    LIST_RELEVANT. So bleibt ein Paket klein, auch bei Hunderten Korrespondenten."""
+    canon = f" {_canonical(kind, text)} "
+    out = list(dict.fromkeys(n for n in preset if n in names))
+
+    def found(name: str) -> bool:
+        form = _canonical(kind, name)
+        if len(form) < 3:
+            return False
+        if f" {form} " in canon:
+            return True
+        first = form.split()[0]
+        return kind == "correspondents" and len(first) >= 5 and f" {first} " in canon
+
+    out += [n for n in names if n not in out and found(n)]
+    return out[:LIST_RELEVANT]
 
 
 @tool("Sammelt alles, um Korrespondent, Dokumenttyp, Tags, Titel und Datum für Paperless-Dokumente vorzuschlagen: "

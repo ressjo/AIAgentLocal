@@ -68,6 +68,15 @@ def kv_per_token_from_info(model_info: dict, bytes_per: float = 2.0) -> int | No
     if not key_len and heads and find(".embedding_length"):
         key_len = find(".embedding_length") // heads
     value_len = value_len or key_len
+    # Hybrid-Modelle (Bonsai 2/Qwen 3.5, Qwen3-Next …): nur ein Teil der Schichten hat Attention und damit einen
+    # KV-Cache – je Schicht angegeben (0 = rekurrente Schicht) oder als „jede n-te Schicht“
+    per_layer = next((v for k, v in model_info.items() if k.endswith(".attention.head_count_kv")
+                      and isinstance(v, list)), None)
+    if per_layer and key_len:
+        return int(sum(int(x) for x in per_layer if isinstance(x, (int, float))) * (key_len + value_len) * bytes_per)
+    interval = find(".full_attention_interval")
+    if layers and interval and interval > 1:
+        layers = max(1, layers // interval)
     if not (layers and kv_heads and key_len):
         return None
     return int(layers * kv_heads * (key_len + value_len) * bytes_per)
@@ -116,7 +125,7 @@ CACHE_BYTES = {"f32": 4.0, "f16": 2.0, "bf16": 2.0, "q8_0": 34 / 32, "q5_1": 24 
 def gguf_metadata(path: str, wanted: tuple[str, ...] = (".block_count", ".attention.head_count",
                                                          ".attention.head_count_kv", ".attention.key_length",
                                                          ".attention.value_length", ".embedding_length",
-                                                         ".context_length")) -> dict:
+                                                         ".context_length", ".full_attention_interval")) -> dict:
     """Ausgewählte Zahlen-Metadaten aus dem Kopf einer GGUF-Datei (liest nur so weit wie nötig)."""
     import struct
 
@@ -149,6 +158,14 @@ def gguf_metadata(path: str, wanted: tuple[str, ...] = (".block_count", ".attent
             (kind,) = struct.unpack("<I", f.read(4))
             if kind in _GGUF_SCALARS and kind not in (6, 7, 12) and key.endswith(wanted):
                 (out[key],) = struct.unpack(_GGUF_SCALARS[kind], f.read(struct.calcsize(_GGUF_SCALARS[kind])))
+            elif kind == 9 and key.endswith(".attention.head_count_kv"):  # je Schicht (Hybrid-Modelle)
+                elem, count = struct.unpack("<IQ", f.read(12))
+                if elem in _GGUF_SCALARS and elem not in (6, 7, 12) and count <= 4096:
+                    fmt = _GGUF_SCALARS[elem]
+                    out[key] = [struct.unpack(fmt, f.read(struct.calcsize(fmt)))[0] for _ in range(count)]
+                else:
+                    f.seek(-12, 1)
+                    skip(kind)
             else:
                 skip(kind)
             if len(out) >= len(wanted):

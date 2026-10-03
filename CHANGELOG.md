@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Faster Bonsai:** Bonsai 2 is a hybrid model that can only reuse an earlier prompt through checkpoints; Orbwise now
+  starts its launcher with `--ctx-checkpoints 32`, a RAM prompt cache (`--cache-ram`, 15 % of RAM, ≤ 4 GB) and
+  `--cache-idle-slots` – only what the installed llama-server knows. Much less re-reading after hidden results, a
+  summary, Telegram or a chat switch.
+- **Leaner Paperless packages:** with many correspondents/types/tags only the matching ones are listed (Paperless'
+  suggestions, the current ones, names found in the text – up to 15) instead of up to 3×150, so a package fits in one
+  result even at 8k.
+- **No detour via curl:** `run_shell` refuses commands aimed at a configured Paperless, Trilium, Home Assistant or
+  calendar address and names the right tools instead.
+- **Correct KV size for hybrid models:** only attention layers count (`full_attention_interval` or per-layer
+  `head_count_kv` from the GGUF) – Bonsai 2 at 64k is ~1.2 GB, not 4.5 GB, and no longer flagged as too big.
 - **Bonsai 2 27B compact** in the model selection (`orbwise model add bonsai-kompakt`): the 1.75-bit
   `Ternary-Bonsai-2-27B-PTQ1_0.gguf` (5.9 instead of 7.2 GB) with 16k context on 8 GB cards; only its own file is
   downloaded, and it lives next to the normal variant.

@@ -224,6 +224,68 @@ def ensure_cuda_libs(directory: Path | None = None, run: Runner = subprocess.run
     return path
 
 
+# ---------------------------------------------------------------- Prompt-Cache für Hybrid-Modelle
+# Bonsai 2 ist ein Hybrid-Modell (Attention + rekurrente Schichten): Einen früheren Prompt kann llama-server nur über
+# gespeicherte Zwischenstände (Checkpoints) weiterverwenden – sonst liest er nach jeder Änderung (Ausblenden,
+# Zusammenfassen, Telegram dazwischen) viel neu ein. Der Bonsai-Starter setzt dafür nichts, reicht zusätzliche
+# Argumente aber an llama-server durch (siehe Bonsai-demo PROMPT-CACHE.md).
+CACHE_CHECKPOINTS = 32
+_HELP: dict[str, str] = {}
+
+
+def _mem_mib() -> int:
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0
+
+
+def _server_help(directory: Path, env: dict | None, run: Runner) -> str:
+    """Hilfetext eines llama-server aus dem Bonsai-Ordner (einmal je Ordner) – leer, wenn keiner startet."""
+    key = str(directory)
+    if key not in _HELP:
+        text = ""
+        for binary in sorted((directory / "bin").glob("*/llama-server")):
+            try:
+                result = run([str(binary), "--help"], capture_output=True, text=True, timeout=30,
+                             env={**os.environ, **(env or {})})
+            except (OSError, subprocess.SubprocessError):
+                continue
+            text = (result.stdout or "") + (result.stderr or "")
+            if "--ctx-size" in text or "-c," in text:
+                break
+            text = ""
+        _HELP[key] = text
+    return _HELP[key]
+
+
+def cache_flags(command: str, env: dict | None = None, run: Runner = subprocess.run, mem_mib: int | None = None) -> str:
+    """Zusätzliche Argumente für den Bonsai-Starter: mehr Checkpoints, ein Prompt-Cache im RAM (höchstens 4 GB bzw.
+    15 % des Arbeitsspeichers) und das Sichern ruhender Slots. Nur Optionen, die der vorhandene llama-server kennt,
+    und nur, wenn der Befehl sie nicht schon selbst setzt – sonst leer."""
+    m = re.search(r"(\S*start_llama_server\.sh)\b", command)
+    if not m:
+        return ""
+    directory = Path(os.path.expanduser(m.group(1))).parent.parent
+    help_text = _server_help(directory, env, run)
+    if not help_text:
+        return ""
+    ram = mem_mib if mem_mib is not None else _mem_mib()
+    wanted = [("--ctx-checkpoints", str(CACHE_CHECKPOINTS)),
+              ("--cache-ram", str(min(4096, int(ram * 0.15)) if ram else 4096)),
+              ("--cache-idle-slots", "")]
+    parts = []
+    for flag, value in wanted:
+        if re.search(rf"(^|\s){re.escape(flag)}(\s|=|$)", command) or flag not in help_text:
+            continue
+        parts.append(f"{flag} {value}".strip())
+    return " ".join(parts)
+
+
 def download_compact(directory: Path, run: Runner = subprocess.run, out=print) -> bool:
     """Die kompakte Modelldatei (~5,9 GB) von Hugging Face laden – mit dem Python der Bonsai-Einrichtung
     (huggingface_hub, setzt abgebrochene Downloads fort)."""

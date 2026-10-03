@@ -350,6 +350,13 @@ How long the model reads before it answers depends mostly on how much of the pro
 activity panel shows it for every step ("1,240 tokens read in 4 s (+11,980 cached)") – after the first question in
 a chat only the new part should be read.
 
+**Bonsai 2 is a hybrid model** (attention plus recurrent layers): llama-server can only reuse an earlier prompt by
+restoring a saved checkpoint. Orbwise therefore starts the Bonsai launcher with `--ctx-checkpoints 32`, a prompt cache
+in RAM (`--cache-ram`, 15 % of your RAM, at most 4 GB) and `--cache-idle-slots` – only the options your llama-server
+knows (checked with `--help`) and only those you did not set yourself. After hiding old results, a summary, a
+Telegram message or a chat switch, far less has to be read again. The start line in `~/.local/state/orbwise-llm.log`
+shows the full command; restored checkpoints appear in the same log.
+
 - **llama-server:** start it with **one slot** (`-np 1` – the Bonsai profile does that); with several slots requests
   can land in different caches, `orbwise doctor` points this out. Optionally `--cache-reuse 256` lets the server reuse
   matching blocks even after a change further up (e.g. when a tool group is added).

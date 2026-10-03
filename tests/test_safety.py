@@ -138,3 +138,20 @@ def test_extended_read_only_commands_are_safe(cmd):
 ])
 def test_extended_list_keeps_changes_confirmed(cmd):
     assert classify_command(cmd)[0] != SAFE, cmd
+
+
+def test_shell_does_not_go_around_service_tools(cfg):
+    """Gemeldet: Jarvis fragte Paperless per curl ab (erfundene API, Token-Datei) – das blockiert jetzt mit Verweis
+    auf die passenden Werkzeuge."""
+    from orbwise.tools.registry import BLOCKED, ToolContext, get_tool, load_all_tools
+    load_all_tools()
+    cfg.paperless.url = "http://127.0.0.1:8000"
+    cfg.homeassistant.url = "https://ha.example.org"
+    spec, ctx = get_tool("run_shell"), ToolContext(cfg=cfg, memory=None)
+    for command in ('curl -sS -H "Authorization: x" "http://127.0.0.1:8000/documents.json?correspondent__isnull=true"',
+                    "wget -qO- localhost:8000/api/documents/", "curl https://ha.example.org/api/states"):
+        risk, reason = spec.assess(ctx, {"command": command})
+        assert risk == BLOCKED and "eigene Werkzeuge" in reason, command
+    assert "paperless_search" in spec.assess(ctx, {"command": "curl localhost:8000"})[1]
+    assert spec.assess(ctx, {"command": "curl https://example.org"})[0] != BLOCKED
+    assert spec.assess(ctx, {"command": "curl localhost:8080/health"})[0] != BLOCKED  # anderer Port
