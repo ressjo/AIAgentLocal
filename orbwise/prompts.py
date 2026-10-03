@@ -84,7 +84,8 @@ HINTS = {
                      "Einzelne genannte Dokumente einordnen/taggen/umbenennen: paperless_suggest_metadata, Vorschlag "
                      "als kurze Liste zeigen, dann paperless_apply_metadata – vorhandene Korrespondenten/Typen/Tags "
                      "bevorzugen. Viele Dokumente bzw. den Posteingang sortieren (auch „weiter“, „mach weiter“): "
-                     "paperless_review_next – je 3 Dokumente, nach dem Übernehmen ANHALTEN und fragen, ob es weitergeht; "
+                     "paperless_review_next – je 3 Dokumente: Vorschlag zeigen, auf die Antwort warten, dann übernehmen und "
+                     "ANHALTEN. „weiter“/„ja“ → paperless_review_next ohne scope (setzt den laufenden Durchgang fort); "
                      "der Fortschritt wird gespeichert.\n",
         "trilium": "- Die persönlichen Notizen des Nutzers liegen in Trilium. Fragen zu seinen Notizen, Aufschrieben oder "
                    "Anleitungen beantwortest du mit trilium_search und trilium_read. Bei 'notier/schreib auf/leg eine "
@@ -126,8 +127,9 @@ HINTS = {
                      "'Show/open the document' → paperless_open. Remember the ID for follow-up questions. "
                      "To classify/tag/rename specific documents: paperless_suggest_metadata, show your proposal as a "
                      "short list, then paperless_apply_metadata – prefer existing correspondents/types/tags. To sort "
-                     "many documents or the inbox (also \"continue\"): paperless_review_next – 3 documents at a time, "
-                     "after applying STOP and ask whether to continue; progress is saved.\n",
+                     "many documents or the inbox: paperless_review_next – 3 documents at a time: show the proposal, wait "
+                     "for the answer, then apply and STOP. \"Continue\"/\"yes\" → paperless_review_next without scope "
+                     "(continues the running review); progress is saved.\n",
         "trilium": "- The user's personal notes live in Trilium. Answer questions about notes or how-tos with "
                    "trilium_search and trilium_read. For 'note down / write down / create a note' use "
                    "trilium_create_note (goes to the inbox), to extend a note use trilium_append.\n",

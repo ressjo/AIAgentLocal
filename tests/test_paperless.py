@@ -285,28 +285,67 @@ def test_review_goes_package_by_package_and_pauses(cfg, fake, memory):
     inbox(fake)
     c = ctx(cfg, memory)
     new_turn(memory, "Sortier meinen Posteingang")
-    first = run(pl.paperless_review_next(c))
-    assert first.startswith("Paket: Dok 30, 31, 32 · Stand: 0 von 7 erledigt, 7 offen")
-    assert "[30] Scan 0" in first and "Vorhandene Korrespondenten" in first
+    first = run(pl.paperless_review_next(c, "inbox"))
+    assert first.startswith("Paket (inbox): Dok 30, 31, 32 · Stand: 0 von 7 erledigt, 7 offen")
+    assert "[30] Scan 0" in first and "Vorhandene Korrespondenten" in first and "WARTEN" in first
     again = run(pl.paperless_review_next(c))  # dieselbe Nachricht: kein zweites Paket
     assert again.startswith("PAUSE") and "frag" in again
     changes = [{"document_id": i, "correspondent": "Telekom", "remove_tags": ["Posteingang"]} for i in (30, 31)]
+    early = run(pl.paperless_apply_metadata(c, changes))  # noch in derselben Runde: erst zeigen und warten
+    assert "WARTE" in early and not fake.patches
+
+    new_turn(memory, "passt, trag ein")
     out = run(pl.paperless_apply_metadata(c, changes))
-    assert "2 erledigt" in out and "NICHT selbst weitermachen" in out
+    assert "2 erledigt" in out and "NICHT selbst weitermachen" in out and len(fake.patches) == 2
     assert "Übersprungen: 32" in run(pl.paperless_review_skip(c, [32], "unleserlich"))
 
-    new_turn(memory)  # Nutzer sagt „weiter“
+    new_turn(memory, "ja")  # „weiter“ ohne Angabe → derselbe Durchgang
     second = run(pl.paperless_review_next(c))
-    assert second.startswith("Paket: Dok 33, 34, 35 · Stand: 2 von 7 erledigt, 1 übersprungen, 4 offen")
+    assert second.startswith("Paket (inbox): Dok 33, 34, 35 · Stand: 2 von 7 erledigt, 1 übersprungen, 4 offen")
+    new_turn(memory, "ok")
     run(pl.paperless_apply_metadata(c, [{"document_id": i, "title": f"Rechnung {i}"} for i in (33, 34, 35)]))
 
-    new_turn(memory)
+    new_turn(memory, "weiter")
     # Fortschritt steht in der Datei – auch nach einem Neustart (neuer Kontext) geht es dort weiter
     third = run(pl.paperless_review_next(ctx(cfg, memory)))
-    assert third.startswith("Paket: Dok 36 ·") and "5 von 7 erledigt" in third
+    assert third.startswith("Paket (inbox): Dok 36 ·") and "5 von 7 erledigt" in third
+    new_turn(memory, "ja")
     run(pl.paperless_apply_metadata(c, [{"document_id": 36, "title": "Letzte"}]))
-    new_turn(memory)
-    assert "Fertig – alle 7 Dokumente" in run(pl.paperless_review_next(c))
+    new_turn(memory, "weiter")
+    assert "Fertig – alle 7 Dokumente im Posteingang" in run(pl.paperless_review_next(c))
+
+
+def test_continue_without_scope_keeps_the_running_review(cfg, fake, memory):
+    """Gemeldet: „ja“ startete den Posteingang statt weiterzumachen – und löschte dabei den Fortschritt."""
+    inbox(fake, 5)
+    for d in fake.docs:
+        d["tags"] = [t for t in d["tags"] if t != 12]  # Posteingang leer
+    c = ctx(cfg, memory)
+    new_turn(memory, "Ordne Dokumente ohne Korrespondent ein")
+    assert run(pl.paperless_review_next(c, "incomplete")).startswith("Paket (incomplete): Dok 30, 31, 32")
+    new_turn(memory, "trage ein")
+    run(pl.paperless_apply_metadata(c, [{"document_id": i, "correspondent": "Telekom", "document_type": "Rechnung"}
+                                         for i in (30, 31, 32)]))
+    assert "Nichts zu tun – keine Dokumente im Posteingang" in run(pl.paperless_review_next(c, "inbox"))
+    new_turn(memory, "ja")
+    nxt = run(pl.paperless_review_next(c))  # ohne Angabe → der unfertige Durchgang „incomplete“
+    assert nxt.startswith("Paket (incomplete): Dok 33, 34") and "3 von 5 erledigt" in nxt  # nichts doppelt
+
+
+def test_apply_only_for_the_current_package(cfg, fake, memory):
+    inbox(fake, 6)
+    c = ctx(cfg, memory)
+    new_turn(memory, "Sortier meinen Posteingang")
+    run(pl.paperless_review_next(c, "inbox"))  # Paket 30, 31, 32
+    new_turn(memory, "ja")
+    out = run(pl.paperless_apply_metadata(c, [{"document_id": 7, "title": "aus dem Gedächtnis"}]))
+    assert "gehört nicht zum aktuellen Paket" in out and not fake.patches
+    tool = get_tool("paperless_apply_metadata")
+    risk, _ = tool.assess(c, {"changes": [{"document_id": 7, "title": "x"}]})
+    assert risk == SAFE  # abgelehnt – dafür kein Bestätigungsfenster
+    run(pl.paperless_apply_metadata(c, [{"document_id": 30, "title": "A"}]))
+    again = run(pl.paperless_apply_metadata(c, [{"document_id": 30, "title": "B"}]))
+    assert "schon erledigt" in again and fake.patches[-1][1] == {"title": "A"}
 
 
 def test_review_incomplete_scope(cfg, fake, memory):
@@ -314,7 +353,7 @@ def test_review_incomplete_scope(cfg, fake, memory):
     fake.docs[0]["correspondent"] = None  # Dok 7 ohne Korrespondent
     new_turn(memory, "Ordne Dokumente ohne Korrespondent ein")
     out = run(pl.paperless_review_next(ctx(cfg, memory), "incomplete"))
-    assert out.startswith("Paket: Dok 7, 30, 31") and "3 offen" in out
+    assert out.startswith("Paket (incomplete): Dok 7, 30, 31") and "3 offen" in out
 
 
 def test_agent_cannot_run_away_with_the_review(cfg, fake, memory):
@@ -342,4 +381,15 @@ def test_agent_cannot_run_away_with_the_review(cfg, fake, memory):
     agent = Agent(cfg, Eager(), memory)
     answer = run(agent.run("Sortier meinen Posteingang", emit, confirm))
     results = [m["content"] for m in memory.conversation.history if m["role"] == "tool"]
-    assert sum(r.startswith("Paket:") for r in results) == 1 and "weiter?" in answer
+    assert sum(r.startswith("Paket") for r in results) == 1 and "weiter?" in answer
+
+
+def test_old_progress_file_is_taken_over(cfg, fake, memory):
+    import json as _json
+    inbox(fake, 4)
+    path = cfg.memory.dir / "paperless-review.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_json.dumps({"scope": "inbox", "done": [30, 31], "skipped": [], "batch": [30, 31]}))
+    new_turn(memory, "weiter")
+    out = run(pl.paperless_review_next(ctx(cfg, memory)))
+    assert out.startswith("Paket (inbox): Dok 32, 33 · Stand: 2 von 4 erledigt")

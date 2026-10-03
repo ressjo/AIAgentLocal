@@ -460,6 +460,8 @@ def _new_entry(kind: str, name: str) -> str:
 
 def _apply_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     changes = _changes(args.get("changes"))
+    if review_guard(ctx, _ids([c.get("document_id") for c in changes])):
+        return SAFE, ""  # wird ohnehin abgelehnt (nichts geändert) – kein Bestätigungsfenster dafür
     lines = [f"Dok {c.get('document_id')}: {_summary(c)}" for c in changes[:MAX_APPLY]]
     new: list[str] = []
     for c in changes:
@@ -606,6 +608,9 @@ async def paperless_apply_metadata(
             return "Keine Änderungen übergeben (changes = Liste mit {document_id, …})."
         if len(items) > MAX_APPLY:
             return f"Höchstens {MAX_APPLY} Dokumente auf einmal – bitte aufteilen."
+        blocked = review_guard(ctx, _ids([c.get("document_id") for c in items]))
+        if blocked:
+            return blocked
         results, created = [], []
         async with PaperlessClient(ctx.cfg) as pc:
             for c in items:
@@ -635,21 +640,33 @@ def _ledger_path(cfg: Any) -> Path:
     return Path(cfg.memory.dir) / "paperless-review.json"
 
 
-def _ledger_load(cfg: Any) -> dict:
+def _store_load(cfg: Any) -> dict:
+    """{"active": scope, "runs": {scope: {done, skipped, batch, batch_turn, finished}}} – je Durchgang ein Stand,
+    damit ein Wechsel (z. B. „weiter“ ohne Angabe) nie den Fortschritt eines anderen Durchgangs löscht."""
     try:
         data = json.loads(_ledger_path(cfg).read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
-        return {}
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    if "scope" in data and "runs" not in data:  # Format der ersten Version
+        data = {"active": data["scope"], "runs": {data["scope"]: data}}
+    data.setdefault("runs", {})
+    return data
 
 
-def _ledger_save(cfg: Any, data: dict) -> None:
+def _store_save(cfg: Any, data: dict) -> None:
     path = _ledger_path(cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
     data["updated"] = time.time()
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
+
+
+def _active_run(data: dict) -> dict | None:
+    run = data.get("runs", {}).get(data.get("active") or "")
+    return run if run and not run.get("finished") else None
 
 
 def _turn_key(ctx: ToolContext) -> list | None:
@@ -697,18 +714,41 @@ def _progress(ledger: dict, open_ids: list[int]) -> str:
 
 
 def mark_reviewed(cfg: Any, ids: list[int], key: str = "done") -> dict | None:
-    """Dokumente im laufenden Durchgang als erledigt/übersprungen vermerken; liefert das Ledger (oder None)."""
-    ledger = _ledger_load(cfg)
-    if not ledger or not ids:
+    """Dokumente im laufenden Durchgang als erledigt/übersprungen vermerken; liefert den Durchgang (oder None)."""
+    data = _store_load(cfg)
+    run = _active_run(data)
+    if not run or not ids:
         return None
     for i in ids:
         for k in ("done", "skipped"):
-            if i in ledger.get(k, []) and k != key:
-                ledger[k].remove(i)
-        if i not in ledger.setdefault(key, []):
-            ledger[key].append(i)
-    _ledger_save(cfg, ledger)
-    return ledger
+            if i in run.get(k, []) and k != key:
+                run[k].remove(i)
+        if i not in run.setdefault(key, []):
+            run[key].append(i)
+    _store_save(cfg, data)
+    return run
+
+
+def review_guard(ctx: ToolContext, ids: list[int]) -> str | None:
+    """Übernahme im Sortier-Durchgang: nur für das aktuelle Paket und erst, nachdem der Nutzer den Vorschlag
+    gesehen und geantwortet hat (nicht in derselben Runde) – sonst eine Erklärung für das Modell."""
+    run = _active_run(_store_load(ctx.cfg))
+    batch = [i for i in (run or {}).get("batch") or [] if i not in (run or {}).get("done", [])]
+    if not run or not batch:
+        return None
+    done = [i for i in ids if i in run.get("done", [])]
+    if done:
+        return (f"Dok {', '.join(map(str, done))} ist in diesem Durchgang schon erledigt – nichts geändert. "
+                f"Aktuelles Paket: Dok {', '.join(map(str, batch))}.")
+    outside = [i for i in ids if i not in run["batch"]]
+    if outside:
+        return (f"Dok {', '.join(map(str, outside))} gehört nicht zum aktuellen Paket (Dok {', '.join(map(str, batch))}) "
+                "– nur dessen Vorschläge übernehmen, und nur aus dem gelieferten Material, nichts aus dem Gedächtnis.")
+    turn = _turn_key(ctx)
+    if turn is not None and run.get("batch_turn") == turn:
+        return ("Noch nicht übernehmen: Zeig dem Nutzer zuerst den Vorschlag für das Paket und WARTE auf seine Antwort "
+                "– erst in seiner nächsten Nachricht paperless_apply_metadata aufrufen.")
+    return None
 
 
 @tool("Sortier-Durchgang für viele Dokumente (Posteingang oder Dokumente ohne Korrespondent/Typ): liefert das "
@@ -717,37 +757,62 @@ def mark_reviewed(cfg: Any, ids: list[int], key: str = "done") -> dict | None:
       enabled=_enabled)
 async def paperless_review_next(
     ctx: ToolContext,
-    scope: Annotated[str, "inbox = Posteingang (Standard), incomplete = ohne Korrespondent oder Dokumenttyp"] = "inbox",
+    scope: Annotated[str, "leer = laufenden Durchgang fortsetzen; inbox = Posteingang, incomplete = ohne "
+                          "Korrespondent oder Dokumenttyp"] = "",
 ) -> str:
     async def run() -> str:
-        scope_ = "incomplete" if "incomplete" in (scope or "").lower() else "inbox"
-        ledger = _ledger_load(ctx.cfg)
-        if ledger.get("scope") != scope_:
-            ledger = {"scope": scope_, "done": [], "skipped": [], "batch": [], "started": time.time()}
+        data = _store_load(ctx.cfg)
+        wanted = (scope or "").lower()
+        if "incomplete" in wanted or "ohne" in wanted:
+            scope_ = "incomplete"
+        elif "inbox" in wanted or "posteingang" in wanted:
+            scope_ = "inbox"
+        else:  # „weiter“: den laufenden (oder einen anderen unfertigen) Durchgang fortsetzen
+            unfinished = [k for k, r in data["runs"].items() if not r.get("finished")]
+            scope_ = data.get("active") if _active_run(data) else (unfinished[0] if unfinished else "inbox")
+        cur = data["runs"].get(scope_)
+        if not cur or cur.get("finished"):
+            cur = data["runs"][scope_] = {"done": [], "skipped": [], "batch": [], "started": time.time()}
+        data["active"] = scope_
         turn = _turn_key(ctx)
-        if turn is not None and ledger.get("batch_turn") == turn and ledger.get("batch"):
+        open_batch = [i for i in cur.get("batch") or [] if i not in cur["done"] and i not in cur["skipped"]]
+        if turn is not None and cur.get("batch_turn") == turn and cur.get("batch"):
             return ("PAUSE: Für diese Nachricht gab es schon ein Paket (Dok "
-                    f"{', '.join(map(str, ledger['batch']))}). Nicht selbst weitermachen – zeig dem Nutzer den Stand "
-                    "und frag, ob es weitergehen soll.")
+                    f"{', '.join(map(str, cur['batch']))}). Nicht selbst weitermachen – zeig dem Nutzer den Stand "
+                    "bzw. den Vorschlag und frag, ob es weitergehen soll.")
         async with PaperlessClient(ctx.cfg) as pc:
             queue = await _queue(pc, ctx.cfg, scope_)
             if isinstance(queue, str):
                 return f"Paperless-Posteingang: {queue}."
-            seen = set(ledger.get("done", [])) | set(ledger.get("skipped", []))
+            seen = set(cur["done"]) | set(cur["skipped"])
             open_ids = [i for i in queue if i not in seen]
+            # ein noch nicht übernommenes Paket zuerst fertig machen (z. B. nach einer Unterbrechung)
+            open_ids = [i for i in open_batch if i in open_ids] + [i for i in open_ids if i not in open_batch]
             if not open_ids:
-                total = len(ledger.get("done", [])) + len(ledger.get("skipped", []))
-                _ledger_path(ctx.cfg).unlink(missing_ok=True)
-                return (f"Fertig – alle {total} Dokumente des Durchgangs bearbeitet." if total
-                        else "Nichts zu tun – keine passenden Dokumente.")
+                total = len(cur["done"]) + len(cur["skipped"])
+                cur.update(finished=True, batch=[])
+                other = next((k for k, r in data["runs"].items() if k != scope_ and not r.get("finished")), None)
+                if other:
+                    data["active"] = other  # „weiter“ landet wieder im unfertigen Durchgang
+                _store_save(ctx.cfg, data)
+                label = "ohne Korrespondent/Dokumenttyp" if scope_ == "incomplete" else "im Posteingang"
+                out = (f"Fertig – alle {total} Dokumente {label} bearbeitet." if total
+                       else f"Nichts zu tun – keine Dokumente {label}.")
+                if other:
+                    out += (f" Der Durchgang „{other}“ ist noch nicht fertig – mit paperless_review_next (ohne scope) "
+                            "geht es dort weiter.")
+                return out
             batch = open_ids[:REVIEW_BATCH]
             material = await _suggest_material(pc, batch)
-        ledger.update(batch=batch, batch_turn=turn)
-        _ledger_save(ctx.cfg, ledger)
-        head = f"Paket: Dok {', '.join(map(str, batch))} · Stand: {_progress(ledger, open_ids)}"
-        return (f"{head}\n\n{material}\n\nSo weiter: Vorschlag pro Dokument als kurze Liste zeigen (vorhandene Namen "
-                "exakt so schreiben, neue nur wenn nichts passt), dann paperless_apply_metadata für genau diese "
-                f"{len(batch)} Dokumente – Unklares mit paperless_review_skip überspringen. Danach anhalten.")
+        cur.update(batch=batch, batch_turn=turn)
+        _store_save(ctx.cfg, data)
+        head = f"Paket ({scope_}): Dok {', '.join(map(str, batch))} · Stand: {_progress(cur, open_ids)}"
+        return (f"{head}\n\n{material}\n\nSo weiter: Vorschlag pro Dokument als kurze nummerierte Liste zeigen – nur "
+                "aus dem Material oben. Vorhandene Namen exakt übernehmen, wenn sie wirklich passen; passt keiner "
+                "(z. B. Depotauszug ist kein Kontoauszug), einen neuen, treffenden vorschlagen und als „neu“ "
+                "kennzeichnen. Tags nur, wenn sie inhaltlich stimmen. Dann WARTEN: erst in der nächsten Nachricht des "
+                f"Nutzers paperless_apply_metadata für genau diese {len(batch)} Dokumente (Unklares mit "
+                "paperless_review_skip überspringen).")
 
     return await _guard(run())
 

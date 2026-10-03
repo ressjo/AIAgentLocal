@@ -579,7 +579,11 @@
       const out = [];
       let list = null, text = [];
       const flushText = () => { if (text.length) out.push(`<p>${text.join("<br>")}</p>`); text = []; };
-      const flushList = () => { if (list) out.push(`<${list.tag}>${list.items.join("")}</${list.tag}>`); list = null; };
+      // nummerierte Listen behalten ihre Nummer – auch wenn Leerzeilen sie in mehrere Absätze teilen („1. … 2. …“)
+      const flushList = () => {
+        if (list) out.push(`<${list.tag}${list.start > 1 ? ` start="${list.start}"` : ""}>${list.items.join("")}</${list.tag}>`);
+        list = null;
+      };
       for (const l of para.split("\n")) {
         const h = /^\s*#{1,4}\s+(.+)$/.exec(l);
         const li = /^\s*([-*•]|\d+[.)])\s+(.*)$/.exec(l);
@@ -588,7 +592,7 @@
           const tag = /\d/.test(li[1]) ? "ol" : "ul";
           flushText();
           if (list && list.tag !== tag) flushList();
-          list = list || { tag, items: [] };
+          list = list || { tag, items: [], start: tag === "ol" ? parseInt(li[1], 10) : 1 };
           list.items.push(`<li>${li[2]}</li>`);
         } else if (l.trim()) { flushList(); text.push(l); }
       }
