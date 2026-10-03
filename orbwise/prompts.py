@@ -61,6 +61,8 @@ Behaviour:
 
 HINTS = {
     "de": {
+        "tool_loader": "- Fehlt dir für eine Bitte ein Werkzeug (z. B. Mail, Dokumente, Kalender, System), lade die "
+                       "Gruppe mit load_tools nach, statt aufzugeben oder es mit run_shell zu versuchen.\n",
         "sysadmin": "- Prozesse, Dienste, Netzwerk und Speicherplatz: die speziellen Tools (top_processes, "
                     "service_status, service_control, service_logs, network_info, ping_host, open_ports, disk_usage, "
                     "cleanup_system) statt run_shell.\n",
@@ -100,6 +102,8 @@ HINTS = {
                          "Nutze die entity_id aus ha_find.\n",
     },
     "en": {
+        "tool_loader": "- If a tool for a request is missing (e.g. mail, documents, calendar, system), load its group with "
+                       "load_tools instead of giving up or trying run_shell.\n",
         "sysadmin": "- Processes, services, network and disk space: use the dedicated tools (top_processes, "
                     "service_status, service_control, service_logs, network_info, ping_host, open_ports, disk_usage, "
                     "cleanup_system) instead of run_shell.\n",
@@ -302,7 +306,7 @@ def base_prompt(cfg, **values) -> str:
 
 # Hinweis → Werkzeuggruppe: der Hinweis steht nur im Prompt, wenn die Gruppe geladen ist (kleine Fenster laden
 # Paperless & Co. nur bei Bedarf – vorher standen ihre Hinweise trotzdem immer da)
-HINT_GROUPS = {"sysadmin": "sysadmin", "packages": "packages", "routines": "routine_tools",
+HINT_GROUPS = {"tool_loader": "tool_loader", "sysadmin": "sysadmin", "packages": "packages", "routines": "routine_tools",
                "calendar": "calendar_tools", "paperless": "paperless", "trilium": "trilium", "obsidian": "obsidian",
                "homeassistant": "homeassistant", "mail": "mail"}
 SERVICE_GROUPS = {"paperless", "trilium", "calendar_tools", "homeassistant"}
@@ -315,7 +319,7 @@ def hints(cfg, groups: set[str] | None = None) -> str:
     ha = getattr(cfg, "homeassistant", None)
     obs = getattr(cfg, "obsidian", None)
     mail = getattr(cfg, "mail", None)
-    configured = {"sysadmin": True, "packages": True, "routine_tools": True,
+    configured = {"tool_loader": groups is not None, "sysadmin": True, "packages": True, "routine_tools": True,
                   "calendar_tools": cfg.calendar.enabled, "paperless": cfg.paperless.enabled,
                   "trilium": cfg.trilium.enabled, "obsidian": bool(obs is not None and obs.enabled),
                   "homeassistant": bool(ha and ha.enabled), "mail": bool(mail is not None and mail.enabled)}
@@ -324,7 +328,7 @@ def hints(cfg, groups: set[str] | None = None) -> str:
         return configured.get(group, False) and group not in disabled and (groups is None or group in groups)
 
     out = ""
-    for key in ("sysadmin", "packages", "routines", "calendar"):
+    for key in ("tool_loader", "sysadmin", "packages", "routines", "calendar"):
         if on(HINT_GROUPS[key]):
             out += h[key]
     if any(on(g) for g in SERVICE_GROUPS):

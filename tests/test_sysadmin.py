@@ -143,4 +143,5 @@ def test_small_context_sends_only_relevant_tool_groups(cfg, memory):
 
     big = Agent(cfg, type("Big", (Small,), {"context_size": 65536})(), memory)
     big.choose_tools()
-    assert big.schemas == big.all_schemas and json.dumps(big.schemas)
+    everything = [s for s in big.all_schemas if s["function"]["name"] != "load_tools"]  # nichts nachzuladen
+    assert big.schemas == everything and json.dumps(big.schemas)

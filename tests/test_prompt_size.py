@@ -37,7 +37,7 @@ def test_new_chat_starts_lean_with_all_integrations(cfg, llm, memory, tmp_path):
     all_integrations(cfg, tmp_path)
     system, names, tool_tokens = first_request(cfg, llm, memory, "Hallo")
     # vorher ~5.550 (Hinweise zu allen Diensten standen immer im Systemprompt) – nicht wieder wachsen lassen
-    assert est_tokens(system) + tool_tokens <= 4350  # inkl. edit_file und todo_write
+    assert est_tokens(system) + tool_tokens <= 4700  # inkl. edit_file, todo_write und load_tools
     assert "paperless_search" not in names and "telegram_send_file" not in names and "search_nas" not in names
     assert "Paperless" not in system and "mail_list" not in system and "top_processes" not in system
     assert "Gemountetes NAS" not in system  # kein NAS eingerichtet
@@ -57,3 +57,26 @@ def test_all_hints_when_every_tool_fits(cfg, llm, memory, tmp_path):
     system, names, _ = first_request(cfg, llm, memory, "Hallo")
     assert "paperless_search" in names and "mail_list" in names
     assert "paperless_ask" in system and "mail_list" in system and "top_processes" in system
+
+
+def test_missing_tools_can_be_loaded_on_demand(cfg, llm, memory, tmp_path):
+    all_integrations(cfg, tmp_path)
+    agent = Agent(cfg, llm, memory)
+    # Frage ohne Stichwort für Smart Home – erst load_tools lädt die Gruppe
+    run(agent.run('/tool load_tools {"groups": "homeassistant, quatsch"}', _noop, _noop))
+    first = llm.opts[0]["tools"]
+    loader = next(t for t in first if t["function"]["name"] == "load_tools")["function"]["description"]
+    assert "paperless (Dokumente" in loader and "mail (" in loader  # das Modell weiß, was es gibt
+    assert "ha_control" not in [t["function"]["name"] for t in first]
+    assert "load_tools" in llm.calls[0][0]["content"]  # Hinweis im Systemprompt
+    result = [m for m in memory.conversation.history if m["role"] == "tool"][-1]["content"]
+    assert "ha_control" in result and "Unbekannt: quatsch" in result
+    after = [t["function"]["name"] for t in llm.opts[-1]["tools"]]
+    assert "ha_control" in after and "ha_find" in llm.calls[-1][0]["content"]  # Werkzeuge + Hinweis
+
+
+def test_no_loader_when_every_tool_fits(cfg, llm, memory, tmp_path):
+    all_integrations(cfg, tmp_path)
+    cfg.llm.num_ctx = 131072
+    system, names, _ = first_request(cfg, llm, memory, "Hallo")
+    assert "load_tools" not in names and "load_tools" not in system

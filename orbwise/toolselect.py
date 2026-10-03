@@ -11,7 +11,31 @@ import re
 
 # Immer dabei (zusammen ca. 3k Token)
 CORE_GROUPS = {"files", "shell", "web", "apps", "memory_tools", "reminder_tools", "power", "weather", "briefing",
-               "system", "todo_tools"}
+               "system", "todo_tools", "tool_loader"}
+
+# Kurzbeschreibung je nachladbarer Gruppe (für load_tools – das Modell weiß so, was es gibt)
+GROUP_LABELS = {
+    "de": {"packages": "Pakete installieren/entfernen, Systemupdates",
+           "sysadmin": "Prozesse, Dienste, Logs, Netzwerk, Ports, Speicherplatz",
+           "homeassistant": "Smart Home: Licht, Heizung, Rollos, Geräte",
+           "mail": "E-Mails lesen, suchen, sortieren, senden",
+           "routine_tools": "wiederkehrende, zeitgesteuerte Aufgaben",
+           "paperless": "Dokumente: Rechnungen, Verträge, Briefe",
+           "trilium": "Notizen in Trilium", "obsidian": "Notizen in Obsidian",
+           "vision": "Bildschirm und Bilder ansehen",
+           "telegram_tools": "Dateien aufs Handy schicken",
+           "calendar_tools": "Kalender: Termine, freie Zeit"},
+    "en": {"packages": "install/remove packages, system updates",
+           "sysadmin": "processes, services, logs, network, ports, disk space",
+           "homeassistant": "smart home: lights, heating, covers, devices",
+           "mail": "read, search, sort, send e-mail",
+           "routine_tools": "recurring, scheduled tasks",
+           "paperless": "documents: invoices, contracts, letters",
+           "trilium": "notes in Trilium", "obsidian": "notes in Obsidian",
+           "vision": "look at the screen and images",
+           "telegram_tools": "send files to the phone",
+           "calendar_tools": "calendar: events, free time"},
+}
 
 KEYWORDS = {
     "packages": r"update|upgrade|paket|package|install|deinstall|uninstall|entfern|pacman|\bapt\b|\baur\b|yay|paru",

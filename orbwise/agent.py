@@ -359,7 +359,9 @@ class Agent:
         conv = self.memory.conversation
         ep = conv.epoch
         if base_tokens <= 0.3 * self.context_budget():
-            self.schemas, self.schema_tokens = base, base_tokens
+            # alles passt: alle Werkzeuge, ohne load_tools (es gibt nichts nachzuladen)
+            self.schemas = [s for s in base if s["function"]["name"] != "load_tools"]
+            self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
             ep["groups"] = None  # alle Werkzeuge – und alle Hinweise
             return set()
         question = conv.history[conv.turn_start()].get("content", "") if conv.history else ""

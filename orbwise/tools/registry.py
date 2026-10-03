@@ -61,6 +61,8 @@ class ToolSpec:
     group: str = ""  # Modulname, z. B. "sysadmin" – ganze Gruppen lassen sich per tools.disabled abschalten
     # Parameter, die der Nutzer im Bestätigungsfenster noch ändern darf (z. B. Empfänger/Betreff/Text einer Mail)
     editable: tuple[str, ...] = ()
+    # Beschreibung, die von der Konfiguration abhängt (z. B. welche Gruppen load_tools nachladen kann)
+    describe: Callable[[Any], str] | None = None
 
     def is_enabled(self, cfg: Any) -> bool:
         if cfg is None:
@@ -70,9 +72,10 @@ class ToolSpec:
             return False
         return self.enabled is None or bool(self.enabled(cfg))
 
-    def schema(self) -> dict:
+    def schema(self, cfg: Any = None) -> dict:
+        description = self.describe(cfg) if self.describe and cfg is not None else self.description
         return {"type": "function",
-                "function": {"name": self.name, "description": self.description,
+                "function": {"name": self.name, "description": description,
                              "parameters": lean_parameters(self.parameters)}}
 
     def assess(self, ctx: ToolContext, args: dict) -> tuple[str, str]:
@@ -114,7 +117,8 @@ def _json_type(tp: Any) -> tuple[str, type]:
 
 
 def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None,
-         enabled: Callable[[Any], bool] | None = None, editable: tuple[str, ...] = ()):
+         enabled: Callable[[Any], bool] | None = None, editable: tuple[str, ...] = (),
+         describe: Callable[[Any], str] | None = None):
     def deco(func):
         sig = inspect.signature(func)
         hints = typing.get_type_hints(func, include_extras=True)
@@ -146,6 +150,7 @@ def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None,
             enabled=enabled,
             group=func.__module__.rsplit(".", 1)[-1],
             editable=tuple(editable),
+            describe=describe,
         )
         REGISTRY[spec.name] = spec
         return func
@@ -183,7 +188,7 @@ def missing_args(spec: ToolSpec, args: dict) -> list[str]:
 
 def tool_schemas(cfg: Any = None) -> list[dict]:
     """Schemas aller Tools; mit cfg nur die aktivierten (z. B. Trilium nur, wenn konfiguriert)."""
-    return [s.schema() for s in REGISTRY.values() if s.is_enabled(cfg)]
+    return [s.schema(cfg) for s in REGISTRY.values() if s.is_enabled(cfg)]
 
 
 def get_tool(name: str) -> ToolSpec | None:
@@ -211,6 +216,7 @@ def load_all_tools() -> dict[str, ToolSpec]:
         system,
         telegram_tools,
         todo_tools,
+        toolload,
         trilium,
         vision,
         weather,
