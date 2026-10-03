@@ -85,7 +85,8 @@ HINTS = {
                      "'Zeig/öffne das Dokument' → paperless_open. Merke dir die ID für Folgefragen.\n",
         "paperless_write": "- Paperless: Einzelne genannte Dokumente einordnen/taggen/umbenennen: "
                            "paperless_suggest_metadata, Vorschlag als kurze Liste zeigen, dann paperless_apply_metadata – "
-                           "vorhandene Korrespondenten/Typen/Tags bevorzugen. Viele Dokumente bzw. den Posteingang "
+                           "vorhandene Korrespondenten/Typen/Tags bevorzugen: gibt es einen ähnlichen (z. B. ohne „GmbH“, "
+                           "andere Schreibweise), genau diesen Namen nehmen, nur wenn nichts passt einen neuen. Viele Dokumente bzw. den Posteingang "
                            "sortieren (auch „weiter“, „mach weiter“): paperless_review_next – je 3 Dokumente: Vorschlag "
                            "zeigen, auf die Antwort warten, dann übernehmen und ANHALTEN. „weiter“/„ja“ → "
                            "paperless_review_next ohne scope (setzt den laufenden Durchgang fort); der Fortschritt wird "
@@ -143,7 +144,8 @@ HINTS = {
                      "'Show/open the document' → paperless_open. Remember the ID for follow-up questions.\n",
         "paperless_write": "- Paperless: To classify/tag/rename specific documents: paperless_suggest_metadata, show "
                            "your proposal as a short list, then paperless_apply_metadata – prefer existing "
-                           "correspondents/types/tags. To sort many documents or the inbox: paperless_review_next – 3 "
+                           "correspondents/types/tags: if a similar one exists (e.g. without “GmbH”, other spelling), "
+                           "use exactly that name, a new one only if nothing fits. To sort many documents or the inbox: paperless_review_next – 3 "
                            "documents at a time: show the proposal, wait for the answer, then apply and STOP. "
                            "\"Continue\"/\"yes\" → paperless_review_next without scope (continues the running review); "
                            "progress is saved.\n",

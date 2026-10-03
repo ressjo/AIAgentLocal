@@ -33,6 +33,55 @@ TRANSPORT: httpx.AsyncBaseTransport | None = None
 
 KINDS = {"correspondent": "correspondents", "document_type": "document_types", "tag": "tags"}
 KIND_LABEL = {"correspondents": "Korrespondent", "document_types": "Dokumenttyp", "tags": "Tag"}
+# Rechtsformen am Ende eines Firmennamens: „Möbelhaus Mustermann GmbH“ ist derselbe Korrespondent wie
+# „Möbelhaus Mustermann“
+_LEGAL_FORM = re.compile(r"(\s+(gmbh\s*(&|und)\s*co\.?\s*kg|gmbh|mbh|ag|kgaa|kg|ohg|gbr|ug(\s*\(?haftungsbeschränkt\)?)?|"
+                         r"e\.?\s?v\.?|e\.?\s?k\.?|se|inc\.?|ltd\.?|llc|plc|co\.?|&\s*co\.?))+\s*$", re.I)
+_UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
+
+
+def _canonical(kind: str, name: str) -> str:
+    """Vergleichsform: klein, Umlaute ausgeschrieben, ohne Satzzeichen – bei Korrespondenten ohne Rechtsform."""
+    text = " ".join(name.split())
+    if kind == "correspondents":
+        text = _LEGAL_FORM.sub("", text)
+    text = text.casefold().translate(_UMLAUTS)
+    return " ".join(re.sub(r"[^\w\s]|_", " ", text).split())
+
+
+def similar_existing(kind: str, name: str, known: list[str]) -> str | None:
+    """Der vorhandene Name, der mit name gemeint ist – oder None. Gleich bis auf Groß-/Kleinschreibung, Satzzeichen,
+    Umlaut-Schreibweise und (bei Korrespondenten) Rechtsform; bei Korrespondenten auch „Telekom Deutschland“ →
+    „Telekom“ (wortweiser Anfang); sonst eine sehr ähnliche Schreibweise (Tippfehler, Einzahl/Mehrzahl). Nur, wenn
+    genau ein Kandidat passt – Tags wie „Steuer 2025“ werden bewusst nicht zu „Steuer“."""
+    wanted = name.strip()
+    for k in known:
+        if k.casefold() == wanted.casefold():
+            return k
+    canon = _canonical(kind, wanted)
+    if not canon:
+        return None
+    forms = {k: _canonical(kind, k) for k in known}
+    same = [k for k, f in forms.items() if f == canon]
+    if len(same) == 1:
+        return same[0]
+    if same:
+        return None  # mehrdeutig
+    if kind == "correspondents":
+        def starts(long: str, short: str) -> bool:
+            return len(short) >= 4 and (long + " ").startswith(short + " ")
+        prefix = [k for k, f in forms.items() if starts(canon, f) or starts(f, canon)]
+        if len(prefix) == 1:
+            return prefix[0]
+        if prefix:
+            return None
+    scored = sorted(((difflib.SequenceMatcher(None, canon, f).ratio(), k) for k, f in forms.items() if f),
+                    reverse=True)
+    if scored and scored[0][0] >= 0.88 and (len(scored) == 1 or scored[1][0] < scored[0][0] - 0.03):
+        return scored[0][1]
+    return None
+
+
 # Zuletzt geladene Namen je Art – damit die (synchrone) Bestätigungsübersicht neue Einträge erkennt
 _KNOWN: dict[str, list[str]] = {}
 
@@ -126,13 +175,17 @@ class PaperlessClient:
         except ValueError:
             return r.text.strip().strip('"')
 
-    async def resolve(self, kind: str, name: str, created: list[str]) -> int:
-        """ID zu einem Namen (Groß-/Kleinschreibung egal); fehlt er, wird er angelegt (Bestätigung liegt vor)."""
+    async def resolve(self, kind: str, name: str, created: list[str], mapped: list[str] | None = None) -> int:
+        """ID zu einem Namen – auch zu einem ähnlichen vorhandenen („… GmbH“, andere Schreibweise; siehe
+        similar_existing, gesammelt in mapped). Gibt es keinen, wird er angelegt (Bestätigung liegt vor)."""
         names = await self.names(kind)
-        wanted = name.strip().casefold()
-        for id_, existing in names.items():
-            if existing.casefold() == wanted:
-                return id_
+        match = similar_existing(kind, name, list(names.values()))
+        if match is not None:
+            if match != name.strip() and mapped is not None:
+                note = f"{KIND_LABEL[kind]} „{name.strip()}“ → „{match}“"
+                if note not in mapped:
+                    mapped.append(note)
+            return next(id_ for id_, existing in names.items() if existing == match)
         new = await self.write("POST", f"/{kind}/", {"name": name.strip()})
         names[new["id"]] = new.get("name", name.strip())
         _KNOWN[kind] = list(names.values())
@@ -436,21 +489,27 @@ def _summary(c: dict) -> str:
     if str(c.get("created") or "").strip():
         parts.append(f"Datum → {str(c['created']).strip()}")
     if str(c.get("correspondent") or "").strip():
-        parts.append(f"Korrespondent → {str(c['correspondent']).strip()}")
+        parts.append(f"Korrespondent → {_shown('correspondents', str(c['correspondent']).strip())}")
     if str(c.get("document_type") or "").strip():
-        parts.append(f"Typ → {str(c['document_type']).strip()}")
-    parts += [f"+Tag {t}" for t in _names_list(c.get("add_tags"))]
+        parts.append(f"Typ → {_shown('document_types', str(c['document_type']).strip())}")
+    parts += [f"+Tag {_shown('tags', t)}" for t in _names_list(c.get("add_tags"))]
     parts += [f"−Tag {t}" for t in _names_list(c.get("remove_tags"))]
     return " · ".join(parts) or "keine Änderung"
 
 
+def _shown(kind: str, name: str) -> str:
+    """Name für Übersicht und Ergebnis – wird ein ähnlicher vorhandener verwendet, steht dieser da."""
+    match = similar_existing(kind, name, _KNOWN.get(kind) or [])
+    return name if match is None or match == name else f"{match} (vorhanden, statt „{name}“)"
+
+
 def _new_entry(kind: str, name: str) -> str:
-    """„Korrespondent ‚X‘ (ähnlich: ‚Y‘)“, wenn der Name noch nicht existiert – sonst ''."""
+    """„Korrespondent ‚X‘ (ähnlich: ‚Y‘)“, wenn der Name noch nicht existiert (auch nicht ähnlich) – sonst ''."""
     known = _KNOWN.get(kind)
     label = KIND_LABEL[kind]
     if known is None:
         return "?"  # Namen noch nicht geladen
-    if any(k.casefold() == name.casefold() for k in known):
+    if similar_existing(kind, name, known) is not None:
         return ""
     lower = {k.casefold(): k for k in known}
     close = difflib.get_close_matches(name.casefold(), list(lower), n=1, cutoff=0.6)
@@ -541,13 +600,14 @@ async def paperless_suggest_metadata(
         if skipped:
             out += f"\n(Nur die ersten {MAX_SUGGEST} Dokumente – danach mit {skipped[:MAX_SUGGEST]} weitermachen.)"
         return out + ("\nNächster Schritt: Vorschlag pro Dokument als kurze Liste zeigen (vorhandene Namen exakt so "
-                      "schreiben, neue nur wenn nichts passt), dann paperless_apply_metadata mit allen Dokumenten "
+                      "schreiben – auch wenn das Dokument sie etwas anders schreibt, z. B. mit „GmbH“ –, neue nur wenn "
+                      "nichts passt), dann paperless_apply_metadata mit allen Dokumenten "
                       "aufrufen – der Nutzer bestätigt dort.")
 
     return await _guard(run())
 
 
-async def _apply_one(pc: PaperlessClient, c: dict, created: list[str]) -> str:
+async def _apply_one(pc: PaperlessClient, c: dict, created: list[str], mapped: list[str] | None = None) -> str:
     try:
         doc_id = int(c.get("document_id"))
     except (TypeError, ValueError):
@@ -565,17 +625,18 @@ async def _apply_one(pc: PaperlessClient, c: dict, created: list[str]) -> str:
     for key, kind in (("correspondent", "correspondents"), ("document_type", "document_types")):
         name = str(c.get(key) or "").strip()
         if name:
-            new_id = await pc.resolve(kind, name, created)
+            new_id = await pc.resolve(kind, name, created, mapped)
             if new_id != doc.get(key):
                 fields[key] = new_id
     tags = list(doc.get("tags") or [])
     for name in _names_list(c.get("add_tags")):
-        tag_id = await pc.resolve("tags", name, created)
+        tag_id = await pc.resolve("tags", name, created, mapped)
         if tag_id not in tags:
             tags.append(tag_id)
-    known_tags = {v.casefold(): k for k, v in (await pc.names("tags")).items()}
+    known_tags = await pc.names("tags")
     for name in _names_list(c.get("remove_tags")):
-        tag_id = known_tags.get(name.casefold())
+        match = similar_existing("tags", name, list(known_tags.values()))
+        tag_id = next((k for k, v in known_tags.items() if v == match), None)
         if tag_id in tags:
             tags.remove(tag_id)
     if tags != list(doc.get("tags") or []):
@@ -595,8 +656,8 @@ async def _apply_one(pc: PaperlessClient, c: dict, created: list[str]) -> str:
 
 
 @tool("Übernimmt Metadaten für ein oder mehrere Paperless-Dokumente nach Bestätigung durch den Nutzer: "
-      "Korrespondent, Dokumenttyp, Tags hinzufügen/entfernen, Titel, Datum. Fehlende Korrespondenten/Typen/Tags "
-      "werden angelegt. Vorher paperless_suggest_metadata nutzen.", risk=_apply_risk, enabled=_enabled)
+      "Korrespondent, Dokumenttyp, Tags hinzufügen/entfernen, Titel, Datum. Ähnliche vorhandene Namen (z. B. ohne "
+      "„GmbH“) werden automatisch verwendet, nur wirklich fehlende angelegt. Vorher paperless_suggest_metadata nutzen.", risk=_apply_risk, enabled=_enabled)
 async def paperless_apply_metadata(
     ctx: ToolContext,
     changes: Annotated[list[dict], "Eine Änderung pro Dokument: {document_id, title?, created? (YYYY-MM-DD), "
@@ -612,13 +673,15 @@ async def paperless_apply_metadata(
         blocked = review_guard(ctx, _ids([c.get("document_id") for c in items]))
         if blocked:
             return blocked
-        results, created = [], []
+        results, created, mapped = [], [], []
         async with PaperlessClient(ctx.cfg) as pc:
             for c in items:
                 try:
-                    results.append(await _apply_one(pc, c, created))
+                    results.append(await _apply_one(pc, c, created, mapped))
                 except PaperlessError as e:
                     results.append(f"✘ {e}")
+        if mapped:
+            results.append("Vorhandene Namen verwendet: " + ", ".join(mapped))
         if created:
             results.append("Neu angelegt: " + ", ".join(created))
         ok = [int(c["document_id"]) for c, r in zip(items, results) if r.startswith(("✔", "–"))]
@@ -809,7 +872,8 @@ async def paperless_review_next(
         _store_save(ctx.cfg, data)
         head = f"Paket ({scope_}): Dok {', '.join(map(str, batch))} · Stand: {_progress(cur, open_ids)}"
         return (f"{head}\n\n{material}\n\nSo weiter: Vorschlag pro Dokument als kurze nummerierte Liste zeigen – nur "
-                "aus dem Material oben. Vorhandene Namen exakt übernehmen, wenn sie wirklich passen; passt keiner "
+                "aus dem Material oben. Vorhandene Namen exakt übernehmen, wenn sie wirklich passen – auch wenn der "
+                "Brief sie etwas anders schreibt (z. B. mit „GmbH“, andere Schreibweise, Einzahl/Mehrzahl); passt keiner "
                 "(z. B. Depotauszug ist kein Kontoauszug), einen neuen, treffenden vorschlagen und als „neu“ "
                 "kennzeichnen. Tags nur, wenn sie inhaltlich stimmen. Dann WARTEN: erst in der nächsten Nachricht des "
                 f"Nutzers paperless_apply_metadata für genau diese {len(batch)} Dokumente (Unklares mit "

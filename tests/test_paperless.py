@@ -264,9 +264,10 @@ def test_apply_confirmation_lists_changes_and_new_entries(cfg, fake):
     run(pl.paperless_suggest_metadata(ctx(cfg), [7]))  # lädt die vorhandenen Namen
     risk, reason = spec.assess(ctx(cfg), args)
     assert "Paperless-Metadaten ändern (2 Dokumente)" in reason
-    assert "Dok 7: Korrespondent → Telekom Deutschland · +Tag Vertrag · +Tag Handy · −Tag Posteingang" in reason
+    assert ("Dok 7: Korrespondent → Telekom (vorhanden, statt „Telekom Deutschland“) · +Tag Vertrag · +Tag Handy · "
+            "−Tag Posteingang") in reason  # ähnlicher vorhandener Korrespondent wird verwendet
     assert "Dok 8: Titel → „Strom 09/2026“ · Typ → Rechnung" in reason
-    assert "NEU anlegen: Korrespondent „Telekom Deutschland“ (ähnlich vorhanden: „Telekom“); Tag „Handy“" in reason
+    assert "NEU anlegen: Tag „Handy“" in reason and "Korrespondent „Telekom Deutschland“" not in reason
     assert "Rechnung“" not in reason.split("NEU")[1] and "„Vertrag“" not in reason.split("NEU")[1]
 
 
@@ -393,3 +394,31 @@ def test_old_progress_file_is_taken_over(cfg, fake, memory):
     new_turn(memory, "weiter")
     out = run(pl.paperless_review_next(ctx(cfg, memory)))
     assert out.startswith("Paket (inbox): Dok 32, 33 · Stand: 2 von 4 erledigt")
+
+
+@pytest.mark.parametrize("kind,name,expected", [
+    ("correspondents", "Möbelhaus Mustermann GmbH", "Möbelhaus Mustermann"),
+    ("correspondents", "moebelhaus mustermann", "Möbelhaus Mustermann"),
+    ("correspondents", "Möbelhaus Mustermann GmbH & Co. KG", "Möbelhaus Mustermann"),
+    ("correspondents", "Telekom Deutschland GmbH", "Telekom"),
+    ("correspondents", "Stadtwerke München", None),  # zwei Stadtwerke – mehrdeutig, nichts automatisch
+    ("correspondents", "Vodafone", None),
+    ("document_types", "Rechnungen", "Rechnung"),
+    ("tags", "Steuer 2025", None),  # Tags nicht über den Anfang zuordnen
+    ("tags", "steuer", "Steuer"),
+])
+def test_similar_existing_names(kind, name, expected):
+    known = {"correspondents": ["Möbelhaus Mustermann", "Telekom", "Stadtwerke Köln", "Stadtwerke Bonn"],
+             "document_types": ["Rechnung", "Vertrag"], "tags": ["Steuer", "Vertrag"]}[kind]
+    assert pl.similar_existing(kind, name, known) == expected
+
+
+def test_apply_uses_similar_existing_names_instead_of_creating(cfg, fake):
+    changes = [{"document_id": 8, "correspondent": "Stadtwerke GmbH", "document_type": "Rechnungen",
+                "add_tags": ["Steuer 2025"]}]
+    out = run(pl.paperless_apply_metadata(ctx(cfg), changes))
+    assert "Vorhandene Namen verwendet: Korrespondent „Stadtwerke GmbH“ → „Stadtwerke“, " \
+           "Dokumenttyp „Rechnungen“ → „Rechnung“" in out
+    assert "Neu angelegt: Tag „Steuer 2025“" in out
+    assert [c["name"] for c in fake.correspondents] == ["Telekom", "Stadtwerke"]  # keine Dublette
+    assert [t["name"] for t in fake.types] == ["Vertrag", "Rechnung"]

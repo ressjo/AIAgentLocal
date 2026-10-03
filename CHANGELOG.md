@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Paperless: no more duplicate names** – if a similar correspondent, document type or tag exists ("Möbelhaus
+  Mustermann GmbH" vs. "Möbelhaus Mustermann", another spelling, singular/plural), that one is used instead of
+  creating a new one; the confirmation already shows "Möbelhaus Mustermann (existing, instead of …)". Tags are not
+  matched by their beginning ("Steuer 2025" stays its own tag), and when several existing names fit equally, nothing
+  is chosen automatically.
 - **Context in two stages – below 16k and from 16k** (`orbwise/context_plan.py`), as close to Claude Code as a local
   model allows:
   - **Lean mode below 16k** (e.g. Bonsai with 8k): only 9 core tools up front, everything else by keyword or
