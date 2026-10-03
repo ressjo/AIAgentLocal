@@ -81,9 +81,11 @@ HINTS = {
                      "Paperless. Fragen dazu: erst paperless_search, dann mit der Dokument-ID paperless_ask (Frage zum "
                      "Inhalt) – antworte aus den gelieferten Textstellen und nenne Titel und Datum des Dokuments. "
                      "'Zeig/öffne das Dokument' → paperless_open. Merke dir die ID für Folgefragen. "
-                     "Einordnen/taggen/umbenennen (auch mehrere, z. B. den Posteingang): paperless_suggest_metadata, "
-                     "dann deinen Vorschlag als kurze Liste zeigen und mit paperless_apply_metadata für alle Dokumente "
-                     "übernehmen – vorhandene Korrespondenten/Typen/Tags bevorzugen.\n",
+                     "Einzelne genannte Dokumente einordnen/taggen/umbenennen: paperless_suggest_metadata, Vorschlag "
+                     "als kurze Liste zeigen, dann paperless_apply_metadata – vorhandene Korrespondenten/Typen/Tags "
+                     "bevorzugen. Viele Dokumente bzw. den Posteingang sortieren (auch „weiter“, „mach weiter“): "
+                     "paperless_review_next – je 3 Dokumente, nach dem Übernehmen ANHALTEN und fragen, ob es weitergeht; "
+                     "der Fortschritt wird gespeichert.\n",
         "trilium": "- Die persönlichen Notizen des Nutzers liegen in Trilium. Fragen zu seinen Notizen, Aufschrieben oder "
                    "Anleitungen beantwortest du mit trilium_search und trilium_read. Bei 'notier/schreib auf/leg eine "
                    "Notiz an' nutzt du trilium_create_note (landet in der Inbox), zum Ergänzen trilium_append.\n",
@@ -122,9 +124,10 @@ HINTS = {
                      "Paperless. For questions about them: first paperless_search, then paperless_ask with the "
                      "document ID – answer from the returned passages and name the document's title and date. "
                      "'Show/open the document' → paperless_open. Remember the ID for follow-up questions. "
-                     "To classify/tag/rename documents (also several, e.g. the inbox): paperless_suggest_metadata, "
-                     "then show your proposal as a short list and apply it for all documents with "
-                     "paperless_apply_metadata – prefer existing correspondents/types/tags.\n",
+                     "To classify/tag/rename specific documents: paperless_suggest_metadata, show your proposal as a "
+                     "short list, then paperless_apply_metadata – prefer existing correspondents/types/tags. To sort "
+                     "many documents or the inbox (also \"continue\"): paperless_review_next – 3 documents at a time, "
+                     "after applying STOP and ask whether to continue; progress is saved.\n",
         "trilium": "- The user's personal notes live in Trilium. Answer questions about notes or how-tos with "
                    "trilium_search and trilium_read. For 'note down / write down / create a note' use "
                    "trilium_create_note (goes to the inbox), to extend a note use trilium_append.\n",

@@ -93,6 +93,9 @@ class FakePaperless:
             if q.get("tags__name__iexact"):
                 ids = {t["id"] for t in self.tags if t["name"].lower() == q["tags__name__iexact"].lower()}
                 docs = [d for d in docs if ids & set(d["tags"])]
+            for field in ("correspondent", "document_type"):
+                if q.get(f"{field}__isnull") == "true":
+                    docs = [d for d in docs if not d.get(field)]
             if q.get("created__gte"):
                 docs = [d for d in docs if d["created"] >= q["created__gte"]]
             if q.get("ordering") == "-created":

@@ -57,7 +57,7 @@ def test_paperless_inbox(cfg, monkeypatch):
     assert run(briefing.daily_briefing(ctx(cfg))).count("\n") == 0  # nicht eingerichtet → Punkt entfällt
     cfg.paperless.url, cfg.paperless.token = "http://paperless.local", TOKEN
     out = run(briefing.daily_briefing(ctx(cfg)))
-    assert "Paperless-Posteingang: 1 Dokument – „Handyvertrag Telekom“ [7]" in out and "paperless_suggest_metadata" in out
+    assert "Paperless-Posteingang: 1 Dokument – „Handyvertrag Telekom“ [7]" in out and "paperless_review_next" in out
     only(cfg, "paperless_inbox", inbox_tag="steuer")
     assert "„Stromrechnung 2026“ [8]" in run(briefing.daily_briefing(ctx(cfg)))
     fake.tags[2]["is_inbox_tag"] = False

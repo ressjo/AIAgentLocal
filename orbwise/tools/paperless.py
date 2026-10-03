@@ -16,6 +16,7 @@ import mimetypes
 import os
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -386,7 +387,8 @@ async def paperless_upload(
 
 # ---------------------------------------------------------------- Metadaten vorschlagen und übernehmen
 
-MAX_SUGGEST, MAX_APPLY, MAX_LISTED = 10, 25, 150
+MAX_SUGGEST, MAX_APPLY, MAX_LISTED = 5, 25, 150
+REVIEW_BATCH = 3  # Dokumente pro Paket beim Sortieren – danach Pause
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
@@ -479,6 +481,45 @@ def _apply_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     return CONFIRM, reason
 
 
+async def _suggest_material(pc: "PaperlessClient", ids: list[int]) -> str:
+    """Stand, Vorschläge von Paperless und Textauszug je Dokument plus die vorhandenen Namen."""
+    known = {kind: await pc.names(kind) for kind in ("correspondents", "document_types", "tags")}
+    budget = max(300, pc.max_chars // len(ids))
+    blocks = []
+    for doc_id in ids:
+        try:
+            doc = await pc.document(doc_id)
+        except PaperlessError as e:
+            blocks.append(f"[{doc_id}] ✘ {e}")
+            continue
+        lines = [await pc.describe(doc)]
+        try:
+            sug = await pc.json(f"/documents/{doc_id}/suggestions/") or {}
+        except PaperlessError:
+            sug = {}  # ältere Paperless-Versionen / Klassifikator noch nicht trainiert
+        hints = []
+        for key, label in (("correspondents", "Korrespondent"), ("document_types", "Typ"), ("tags", "Tags")):
+            names = [known[key][x] for x in sug.get(key) or [] if x in known[key]]
+            if names:
+                hints.append(f"{label}: {', '.join(names)}")
+        if sug.get("dates"):
+            hints.append("Daten im Text: " + ", ".join(str(d)[:10] for d in sug["dates"][:5]))
+        if hints:
+            lines.append("  Paperless schlägt vor – " + " · ".join(hints))
+        text = re.sub(r"\s+", " ", doc.get("content") or "").strip()
+        lines.append(f"  Text: „{text[:budget]}{'…' if len(text) > budget else ''}“" if text
+                     else "  (kein erkannter Text – Vorschlag nur aus Titel/Dateiname möglich: "
+                          f"{doc.get('original_file_name') or '?'})")
+        blocks.append("\n".join(lines))
+    listing = []
+    for kind, label in (("correspondents", "Korrespondenten"), ("document_types", "Dokumenttypen"),
+                        ("tags", "Tags")):
+        names = sorted(known[kind].values(), key=str.casefold)
+        more = f" … (+{len(names) - MAX_LISTED})" if len(names) > MAX_LISTED else ""
+        listing.append(f"Vorhandene {label} ({len(names)}): " + (", ".join(names[:MAX_LISTED]) or "–") + more)
+    return "\n\n".join(blocks) + "\n\n" + "\n".join(listing)
+
+
 @tool("Sammelt alles, um Korrespondent, Dokumenttyp, Tags, Titel und Datum für Paperless-Dokumente vorzuschlagen: "
       "aktueller Stand, Vorschläge von Paperless, Textauszug und die vorhandenen Korrespondenten/Typen/Tags. "
       "Danach den Vorschlag als Liste zeigen und mit paperless_apply_metadata übernehmen.", enabled=_enabled)
@@ -493,41 +534,7 @@ async def paperless_suggest_metadata(
         skipped = ids[MAX_SUGGEST:]
         ids = ids[:MAX_SUGGEST]
         async with PaperlessClient(ctx.cfg) as pc:
-            known = {kind: await pc.names(kind) for kind in ("correspondents", "document_types", "tags")}
-            budget = max(300, pc.max_chars // len(ids))
-            blocks = []
-            for doc_id in ids:
-                try:
-                    doc = await pc.document(doc_id)
-                except PaperlessError as e:
-                    blocks.append(f"[{doc_id}] ✘ {e}")
-                    continue
-                lines = [await pc.describe(doc)]
-                try:
-                    sug = await pc.json(f"/documents/{doc_id}/suggestions/") or {}
-                except PaperlessError:
-                    sug = {}  # ältere Paperless-Versionen / Klassifikator noch nicht trainiert
-                hints = []
-                for key, label in (("correspondents", "Korrespondent"), ("document_types", "Typ"), ("tags", "Tags")):
-                    names = [known[key][x] for x in sug.get(key) or [] if x in known[key]]
-                    if names:
-                        hints.append(f"{label}: {', '.join(names)}")
-                if sug.get("dates"):
-                    hints.append("Daten im Text: " + ", ".join(str(d)[:10] for d in sug["dates"][:5]))
-                if hints:
-                    lines.append("  Paperless schlägt vor – " + " · ".join(hints))
-                text = re.sub(r"\s+", " ", doc.get("content") or "").strip()
-                lines.append(f"  Text: „{text[:budget]}{'…' if len(text) > budget else ''}“" if text
-                             else "  (kein erkannter Text – Vorschlag nur aus Titel/Dateiname möglich: "
-                                  f"{doc.get('original_file_name') or '?'})")
-                blocks.append("\n".join(lines))
-            listing = []
-            for kind, label in (("correspondents", "Korrespondenten"), ("document_types", "Dokumenttypen"),
-                                ("tags", "Tags")):
-                names = sorted(known[kind].values(), key=str.casefold)
-                more = f" … (+{len(names) - MAX_LISTED})" if len(names) > MAX_LISTED else ""
-                listing.append(f"Vorhandene {label} ({len(names)}): " + (", ".join(names[:MAX_LISTED]) or "–") + more)
-        out = "\n\n".join(blocks) + "\n\n" + "\n".join(listing)
+            out = await _suggest_material(pc, ids)
         if skipped:
             out += f"\n(Nur die ersten {MAX_SUGGEST} Dokumente – danach mit {skipped[:MAX_SUGGEST]} weitermachen.)"
         return out + ("\nNächster Schritt: Vorschlag pro Dokument als kurze Liste zeigen (vorhandene Namen exakt so "
@@ -608,9 +615,155 @@ async def paperless_apply_metadata(
                     results.append(f"✘ {e}")
         if created:
             results.append("Neu angelegt: " + ", ".join(created))
+        ok = [int(c["document_id"]) for c, r in zip(items, results) if r.startswith(("✔", "–"))]
+        ledger = mark_reviewed(ctx.cfg, ok)
+        if ledger and set(ok) & set(ledger.get("batch") or []):
+            done, skipped = len(ledger.get("done", [])), len(ledger.get("skipped", []))
+            results.append(f"Sortier-Durchgang: {done} erledigt" + (f", {skipped} übersprungen" if skipped else "")
+                           + ". Paket beendet – NICHT selbst weitermachen: dem Nutzer kurz den Stand sagen und "
+                             "fragen, ob es mit dem nächsten Paket weitergehen soll.")
         return "\n".join(results)
 
     return await _guard(run())
+
+
+# ---------------------------------------------------------------- Sortier-Durchgang (Paket für Paket)
+# Viele Dokumente einordnen: Der Fortschritt steht in einer Datei statt nur im Chat (überlebt Kürzen, Komprimieren
+# und Neustarts), es gibt immer nur ein kleines Paket pro Nutzernachricht – danach hält Jarvis an und fragt.
+
+def _ledger_path(cfg: Any) -> Path:
+    return Path(cfg.memory.dir) / "paperless-review.json"
+
+
+def _ledger_load(cfg: Any) -> dict:
+    try:
+        data = json.loads(_ledger_path(cfg).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _ledger_save(cfg: Any, data: dict) -> None:
+    path = _ledger_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data["updated"] = time.time()
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _turn_key(ctx: ToolContext) -> list | None:
+    """Welche Nutzernachricht gerade bearbeitet wird – pro Nachricht gibt es nur ein Paket."""
+    conv = ctx.memory.conversation if ctx.memory else None
+    if conv is None:
+        return None
+    return [conv.chat_id, sum(1 for m in conv.history if m.get("role") == "user")]
+
+
+async def _inbox_filter(pc: "PaperlessClient", tag: str) -> dict | str:
+    """Dokument-Filter für den Posteingang (Tag aus der Config, sonst Paperless' Posteingangs-Tags) – oder ein
+    Hinweis, wenn keiner festgelegt ist."""
+    if tag.strip():
+        return {"tags__name__iexact": tag.strip()}
+    inbox = await pc.json("/tags/", is_inbox_tag="true", page_size=100) or {}
+    ids = [str(t["id"]) for t in inbox.get("results", []) if t.get("is_inbox_tag", True)]
+    if not ids:
+        return ("kein Posteingangs-Tag festgelegt (in Paperless beim Tag „Posteingangs-Tag“ anhaken oder "
+                "briefing.inbox_tag setzen) – sonst scope='incomplete' nutzen")
+    return {"tags__id__in": ",".join(ids)}
+
+
+async def _queue(pc: "PaperlessClient", cfg: Any, scope: str) -> list[int] | str:
+    """Alle Dokumente des Durchgangs (älteste zuerst): Posteingang oder ohne Korrespondent/Dokumenttyp."""
+    base = {"page_size": 1000, "ordering": "added", "truncate_content": "true"}
+    if scope == "incomplete":
+        ids: list[int] = []
+        for flt in ({"correspondent__isnull": "true"}, {"document_type__isnull": "true"}):
+            data = await pc.json("/documents/", **base, **flt) or {}
+            ids += [d["id"] for d in data.get("results", []) if d["id"] not in ids]
+        return sorted(ids)
+    flt = await _inbox_filter(pc, getattr(getattr(cfg, "briefing", None), "inbox_tag", "") or "")
+    if isinstance(flt, str):
+        return flt
+    data = await pc.json("/documents/", **base, **flt) or {}
+    return [d["id"] for d in data.get("results", [])]
+
+
+def _progress(ledger: dict, open_ids: list[int]) -> str:
+    done, skipped = len(ledger.get("done", [])), len(ledger.get("skipped", []))
+    total = done + skipped + len(open_ids)
+    return f"{done} von {total} erledigt" + (f", {skipped} übersprungen" if skipped else "") + \
+        f", {len(open_ids)} offen"
+
+
+def mark_reviewed(cfg: Any, ids: list[int], key: str = "done") -> dict | None:
+    """Dokumente im laufenden Durchgang als erledigt/übersprungen vermerken; liefert das Ledger (oder None)."""
+    ledger = _ledger_load(cfg)
+    if not ledger or not ids:
+        return None
+    for i in ids:
+        for k in ("done", "skipped"):
+            if i in ledger.get(k, []) and k != key:
+                ledger[k].remove(i)
+        if i not in ledger.setdefault(key, []):
+            ledger[key].append(i)
+    _ledger_save(cfg, ledger)
+    return ledger
+
+
+@tool("Sortier-Durchgang für viele Dokumente (Posteingang oder Dokumente ohne Korrespondent/Typ): liefert das "
+      f"nächste Paket von {REVIEW_BATCH} Dokumenten mit allem für den Vorschlag und den Fortschritt. Der Fortschritt "
+      "wird gespeichert – „weiter“ macht genau dort weiter. Pro Nutzernachricht nur ein Paket, danach anhalten.",
+      enabled=_enabled)
+async def paperless_review_next(
+    ctx: ToolContext,
+    scope: Annotated[str, "inbox = Posteingang (Standard), incomplete = ohne Korrespondent oder Dokumenttyp"] = "inbox",
+) -> str:
+    async def run() -> str:
+        scope_ = "incomplete" if "incomplete" in (scope or "").lower() else "inbox"
+        ledger = _ledger_load(ctx.cfg)
+        if ledger.get("scope") != scope_:
+            ledger = {"scope": scope_, "done": [], "skipped": [], "batch": [], "started": time.time()}
+        turn = _turn_key(ctx)
+        if turn is not None and ledger.get("batch_turn") == turn and ledger.get("batch"):
+            return ("PAUSE: Für diese Nachricht gab es schon ein Paket (Dok "
+                    f"{', '.join(map(str, ledger['batch']))}). Nicht selbst weitermachen – zeig dem Nutzer den Stand "
+                    "und frag, ob es weitergehen soll.")
+        async with PaperlessClient(ctx.cfg) as pc:
+            queue = await _queue(pc, ctx.cfg, scope_)
+            if isinstance(queue, str):
+                return f"Paperless-Posteingang: {queue}."
+            seen = set(ledger.get("done", [])) | set(ledger.get("skipped", []))
+            open_ids = [i for i in queue if i not in seen]
+            if not open_ids:
+                total = len(ledger.get("done", [])) + len(ledger.get("skipped", []))
+                _ledger_path(ctx.cfg).unlink(missing_ok=True)
+                return (f"Fertig – alle {total} Dokumente des Durchgangs bearbeitet." if total
+                        else "Nichts zu tun – keine passenden Dokumente.")
+            batch = open_ids[:REVIEW_BATCH]
+            material = await _suggest_material(pc, batch)
+        ledger.update(batch=batch, batch_turn=turn)
+        _ledger_save(ctx.cfg, ledger)
+        head = f"Paket: Dok {', '.join(map(str, batch))} · Stand: {_progress(ledger, open_ids)}"
+        return (f"{head}\n\n{material}\n\nSo weiter: Vorschlag pro Dokument als kurze Liste zeigen (vorhandene Namen "
+                "exakt so schreiben, neue nur wenn nichts passt), dann paperless_apply_metadata für genau diese "
+                f"{len(batch)} Dokumente – Unklares mit paperless_review_skip überspringen. Danach anhalten.")
+
+    return await _guard(run())
+
+
+@tool("Überspringt Dokumente im Sortier-Durchgang (z. B. unleserlich oder unklar) – sie kommen nicht wieder.",
+      enabled=_enabled)
+async def paperless_review_skip(
+    ctx: ToolContext,
+    document_ids: Annotated[list[int], "IDs der Dokumente, z. B. [12]"],
+    reason: Annotated[str, "Kurzer Grund"] = "",
+) -> str:
+    ids = _ids(document_ids)
+    ledger = mark_reviewed(ctx.cfg, ids, "skipped")
+    if ledger is None:
+        return "Kein laufender Sortier-Durchgang (erst paperless_review_next)."
+    return f"Übersprungen: {', '.join(map(str, ids))}" + (f" ({reason.strip()})" if reason.strip() else "") + "."
 
 
 async def inbox_summary(cfg, tag: str = "", limit: int = 5) -> str | None:
@@ -638,7 +791,7 @@ async def inbox_summary(cfg, tag: str = "", limit: int = 5) -> str | None:
     titles = ", ".join(f"„{d.get('title') or '?'}“ [{d['id']}]" for d in docs)
     more = f" und {count - len(docs)} weitere" if count > len(docs) else ""
     return (f"Paperless-Posteingang: {count} Dokument{'e' if count != 1 else ''} – {titles}{more}. "
-            "(Auf Wunsch einordnen: paperless_suggest_metadata)")
+            "(Auf Wunsch einordnen: paperless_review_next)")
 
 
 async def paperless_status(cfg) -> dict:

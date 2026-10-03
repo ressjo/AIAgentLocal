@@ -412,6 +412,12 @@ confirmation dialog lists every change and marks correspondents/types/tags that 
 hint if a similar one already exists). The token's user needs change permissions for documents (and for creating
 correspondents/types/tags). To keep Paperless read-only: `tools: {disabled: [paperless_apply_metadata]}`.
 
+**Sorting many documents** ("sort my inbox", "tidy up documents without correspondent") works package by package:
+Orbwise takes the next **3 documents**, shows its proposal, applies it after your confirmation and then **stops**
+with the progress ("5 of 40 done – continue?"). "Continue" picks up exactly there – the progress is saved in
+`~/.local/share/orbwise/memory/paperless-review.json`, so nothing is forgotten when the chat is compacted or Orbwise
+restarts. Unclear documents can be skipped; they don't come back in the same run.
+
 ### E-mail (Proton Mail Bridge or any IMAP mailbox)
 
 Proton Mail is end-to-end encrypted and has no plain IMAP access – the official

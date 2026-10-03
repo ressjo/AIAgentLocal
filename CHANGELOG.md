@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Paperless: sorting many documents package by package** – `paperless_review_next` hands out 3 documents of the
+  inbox (or of the documents without correspondent/type) at a time, with progress saved in a file; after applying
+  Jarvis stops and asks whether to continue, and only one package per message is possible, so it can no longer run
+  on endlessly or forget documents. `paperless_review_skip` skips unclear ones.
 - **edit_file and a task list:** files are changed by replacing an exact snippet (with clear errors and the changed
   lines as result) instead of rewriting them; multi-step work keeps a task list (`todo_write`) that shows as a
   checklist in the answer and survives every compaction.

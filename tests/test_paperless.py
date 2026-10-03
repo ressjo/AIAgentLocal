@@ -218,7 +218,7 @@ def test_suggest_shows_state_paperless_hints_and_known_names(cfg, fake):
     assert "schlägt vor" not in run(pl.paperless_suggest_metadata(ctx(cfg), [7]))
     assert "IDs" in run(pl.paperless_suggest_metadata(ctx(cfg), []))
     many = run(pl.paperless_suggest_metadata(ctx(cfg), list(range(1, 14))))
-    assert "Nur die ersten 10" in many
+    assert "Nur die ersten 5" in many
 
 
 def test_apply_existing_names_tags_title_and_date(cfg, fake):
@@ -268,3 +268,78 @@ def test_apply_confirmation_lists_changes_and_new_entries(cfg, fake):
     assert "Dok 8: Titel → „Strom 09/2026“ · Typ → Rechnung" in reason
     assert "NEU anlegen: Korrespondent „Telekom Deutschland“ (ähnlich vorhanden: „Telekom“); Tag „Handy“" in reason
     assert "Rechnung“" not in reason.split("NEU")[1] and "„Vertrag“" not in reason.split("NEU")[1]
+
+
+def inbox(fake, n=7):
+    for i in range(n):
+        fake.docs.append({"id": 30 + i, "title": f"Scan {i}", "created": "2026-09-0" + str(i % 9 + 1),
+                          "correspondent": None, "document_type": None, "tags": [12],
+                          "content": f"Rechnung Nummer {i} der Telekom", "original_file_name": f"scan_{i}.pdf"})
+
+
+def new_turn(memory, text="weiter"):
+    memory.conversation.add({"role": "user", "content": text})
+
+
+def test_review_goes_package_by_package_and_pauses(cfg, fake, memory):
+    inbox(fake)
+    c = ctx(cfg, memory)
+    new_turn(memory, "Sortier meinen Posteingang")
+    first = run(pl.paperless_review_next(c))
+    assert first.startswith("Paket: Dok 30, 31, 32 · Stand: 0 von 7 erledigt, 7 offen")
+    assert "[30] Scan 0" in first and "Vorhandene Korrespondenten" in first
+    again = run(pl.paperless_review_next(c))  # dieselbe Nachricht: kein zweites Paket
+    assert again.startswith("PAUSE") and "frag" in again
+    changes = [{"document_id": i, "correspondent": "Telekom", "remove_tags": ["Posteingang"]} for i in (30, 31)]
+    out = run(pl.paperless_apply_metadata(c, changes))
+    assert "2 erledigt" in out and "NICHT selbst weitermachen" in out
+    assert "Übersprungen: 32" in run(pl.paperless_review_skip(c, [32], "unleserlich"))
+
+    new_turn(memory)  # Nutzer sagt „weiter“
+    second = run(pl.paperless_review_next(c))
+    assert second.startswith("Paket: Dok 33, 34, 35 · Stand: 2 von 7 erledigt, 1 übersprungen, 4 offen")
+    run(pl.paperless_apply_metadata(c, [{"document_id": i, "title": f"Rechnung {i}"} for i in (33, 34, 35)]))
+
+    new_turn(memory)
+    # Fortschritt steht in der Datei – auch nach einem Neustart (neuer Kontext) geht es dort weiter
+    third = run(pl.paperless_review_next(ctx(cfg, memory)))
+    assert third.startswith("Paket: Dok 36 ·") and "5 von 7 erledigt" in third
+    run(pl.paperless_apply_metadata(c, [{"document_id": 36, "title": "Letzte"}]))
+    new_turn(memory)
+    assert "Fertig – alle 7 Dokumente" in run(pl.paperless_review_next(c))
+
+
+def test_review_incomplete_scope(cfg, fake, memory):
+    inbox(fake, 2)
+    fake.docs[0]["correspondent"] = None  # Dok 7 ohne Korrespondent
+    new_turn(memory, "Ordne Dokumente ohne Korrespondent ein")
+    out = run(pl.paperless_review_next(ctx(cfg, memory), "incomplete"))
+    assert out.startswith("Paket: Dok 7, 30, 31") and "3 offen" in out
+
+
+def test_agent_cannot_run_away_with_the_review(cfg, fake, memory):
+    """Ein Modell, das immer weiter macht, bekommt pro Nutzernachricht nur ein Paket."""
+    from orbwise.agent import Agent
+
+    inbox(fake)
+
+    class Eager:
+        async def chat_stream(self, messages, tools=None, **kw):
+            last = messages[-1]
+            if last["role"] == "tool" and "PAUSE" in last["content"]:
+                msg = {"role": "assistant", "content": "3 Dokumente vorbereitet – weiter?"}
+            else:
+                msg = {"role": "assistant", "content": "",
+                       "tool_calls": [{"function": {"name": "paperless_review_next", "arguments": {}}}]}
+            yield {"type": "done", "message": msg, "stats": {}}
+
+    async def emit(e):
+        pass
+
+    async def confirm(*a):
+        return True
+
+    agent = Agent(cfg, Eager(), memory)
+    answer = run(agent.run("Sortier meinen Posteingang", emit, confirm))
+    results = [m["content"] for m in memory.conversation.history if m["role"] == "tool"]
+    assert sum(r.startswith("Paket:") for r in results) == 1 and "weiter?" in answer
