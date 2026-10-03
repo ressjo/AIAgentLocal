@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **edit_file and a task list:** files are changed by replacing an exact snippet (with clear errors and the changed
+  lines as result) instead of rewriting them; multi-step work keeps a task list (`todo_write`) that shows as a
+  checklist in the answer and survives every compaction.
+- **Tools on demand:** with a small window `load_tools` lists every configured tool group and loads a missing one
+  for the next step, so no tool is out of reach when no keyword matched.
+- **Parallel tool calls:** calls of one step that need no confirmation run at the same time (not with mail or
+  screen content in the same step).
+- **Smarter memory:** memories are only shown when they really match the question
+  (`memory.retrieval_min_similarity`), and `remember` replaces an outdated version of a fact instead of keeping
+  both.
 - **Thinking levels** in the *Think* menu: off, brief (~500 tokens of reasoning), normal (~2,000) and thorough.
   gpt-oss gets real `low`/`medium`/`high`; other models (Qwen 3, Bonsai …) get a reasoning budget – a short hint, and
   if the model still thinks too long the step continues without thinking, with its thoughts so far.
@@ -28,7 +38,8 @@ All notable changes to this project are documented here. The format follows
   - Leaner start: instructions for Paperless, mail, calendar, notes, smart home and system tools are only in the
     prompt together with their tools, tool descriptions lost internal details and "Optional:" prefixes, the NAS
     search only exists with a configured NAS, the Telegram tool loads on demand. A new chat with every integration
-    starts with ~30 % less context (~3.8k instead of ~5.5k tokens with a small window).
+    starts with ~30 % less context (~3.8k instead of ~5.5k tokens with a small window; ~4.7k with the new
+    edit_file, task list and load_tools).
 - **Tools and Coding mode** (switch top left): Coding loads only files, shell, web and memory tools (≈ 2k instead of
   ≈ 10k tokens of tool descriptions), uses a developer prompt, has no voice (no read-aloud, push-to-talk or wake word)
   and a wider chat. Separate chat histories per mode, a project folder per coding chat (working directory for shell

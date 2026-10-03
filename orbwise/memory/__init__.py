@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 import time
 from datetime import datetime
 
@@ -154,10 +155,40 @@ class Memory:
         return days
 
     async def remember(self, fact: str) -> bool:
+        return (await self.remember_fact(fact))[0]
+
+    async def remember_fact(self, fact: str) -> tuple[bool, str | None]:
+        """Merkt sich einen Fakt. Gibt es schon eine fast gleiche, ältere Fassung („NAS unter /mnt/nas“ →
+        „NAS unter /media/nas“), wird diese ersetzt statt einen Widerspruch anzuhängen. → (gespeichert, ersetzt)"""
+        fact = " ".join(fact.split())
+        old = await self._similar_fact(fact)
+        if old is not None and old.lower() != fact.lower():
+            self.facts.replace(old, fact)
+            self.index.delete_source("facts")
+            await self.reindex_facts()
+            return True, old
         added = self.facts.add(fact)
         if added:
             await self.index.add("fact", day_str(), "facts", fact)
-        return added
+        return added, None
+
+    async def _similar_fact(self, fact: str) -> str | None:
+        """Bestehender Fakt, der dasselbe meint: viele gleiche Wörter und (mit Embeddings) sehr ähnlicher Sinn."""
+        def overlap(a: str, b: str) -> float:
+            wa, wb = set(re.findall(r"[\w/.:-]+", a.lower())), set(re.findall(r"[\w/.:-]+", b.lower()))
+            return len(wa & wb) / max(1, len(wa | wb))
+
+        facts = [f for f, _ in self.facts.list()]
+        if not facts or not fact:
+            return None
+        best = max(facts, key=lambda f: overlap(f, fact))
+        score = overlap(best, fact)
+        vecs = await self.index._embed([fact, best])
+        if vecs[0] is not None and vecs[1] is not None:
+            a, b = vecs
+            sim = float(a @ b / ((float((a @ a) ** 0.5) * float((b @ b) ** 0.5)) or 1))
+            return best if sim >= 0.88 and score >= 0.5 else None
+        return best if score >= 0.7 else None
 
     async def forget(self, query: str) -> list[str]:
         removed = self.facts.remove(query)

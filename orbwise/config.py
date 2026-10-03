@@ -91,6 +91,8 @@ class MemoryConfig(BaseModel):
     # Gesamtbudget (geschätzte Tokens) für den Prompt; muss deutlich unter num_ctx liegen
     context_budget_tokens: int | None = None  # None = automatisch: Kontextfenster des Modells minus Antwortreserve
     retrieval_top_k: int = 6
+    # Erinnerungen nur einblenden, wenn sie wirklich passen (Embedding-Ähnlichkeit; ohne Embeddings: ≥ 2 gleiche Wörter)
+    retrieval_min_similarity: float = 0.5
     retrieval_max_tokens: int = 1500  # Erinnerungen in der ersten Frage einer Epoche (danach ⅓, nur neue)
     facts_max_tokens: int = 1200
     # Nach einer Antwort schon in Ruhe komprimieren, wenn der Kontext fast voll ist (die nächste Frage wartet dann

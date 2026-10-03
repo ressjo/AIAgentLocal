@@ -102,3 +102,28 @@ def test_budget_respects_model_context(cfg, memory):
     assert Agent(cfg, Small(), memory).context_budget() == 8192 - 1500
     cfg.memory.context_budget_tokens = 5000
     assert Agent(cfg, Small(), memory).context_budget() == 5000
+
+
+def test_remember_replaces_an_outdated_version_of_a_fact(cfg, llm, memory):
+    run(memory.remember("Das NAS ist unter /mnt/nas gemountet"))
+    run(memory.remember("Der Nutzer heißt Alex"))
+    added, replaced = run(memory.remember_fact("Das NAS ist unter /media/nas gemountet"))
+    assert added and replaced == "Das NAS ist unter /mnt/nas gemountet"
+    facts = [f for f, _ in memory.facts.list()]
+    assert facts == ["Der Nutzer heißt Alex", "Das NAS ist unter /media/nas gemountet"]  # kein Widerspruch
+    added, replaced = run(memory.remember_fact("Der Nutzer mag Pizza"))
+    assert added and replaced is None and len(memory.facts.list()) == 3  # anderer Fakt wird angehängt
+
+
+def test_only_relevant_memories_reach_the_prompt(cfg, llm, memory):
+    from orbwise.agent import Agent
+    from orbwise.memory.index import Hit
+    agent = Agent(cfg, llm, memory)
+    near = Hit(1, "journal", "2026-09-01", "Das NAS heißt Tresor", 0, 0.03, sim=0.71)
+    far = Hit(2, "journal", "2026-09-01", "Pizza bestellt", 0, 0.03, sim=0.31)
+    fact = Hit(3, "fact", "2026-09-01", "Der Nutzer heißt Alex", 0, 0.03, sim=0.9)
+    assert agent._relevant("Wie heißt mein NAS?", near)
+    assert not agent._relevant("Wie heißt mein NAS?", far)
+    assert not agent._relevant("Wie heiße ich?", fact)  # Fakten stehen schon im Systemprompt
+    plain = Hit(4, "journal", "2026-09-01", "Das NAS heißt Tresor", 0, 0.03)  # ohne Embeddings
+    assert agent._relevant("Wie heißt mein NAS?", plain) and not agent._relevant("Hallo", plain)

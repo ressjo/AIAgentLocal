@@ -179,6 +179,16 @@ class Facts:
         self._write(facts)
         return True
 
+    def replace(self, old: str, new: str) -> bool:
+        """Ersetzt einen Fakt durch eine neuere Fassung (z. B. geänderter Pfad) – mit heutigem Datum ans Ende."""
+        new = " ".join(new.split())
+        facts = self.list()
+        keep = [(f, d) for f, d in facts if f != old]
+        if len(keep) == len(facts) or not new:
+            return False
+        self._write(keep + [(new, day_str())])
+        return True
+
     def remove(self, query: str) -> list[str]:
         q = query.lower().strip()
         if not q:

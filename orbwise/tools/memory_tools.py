@@ -12,7 +12,9 @@ from .registry import ToolContext, tool
 @tool("Merkt sich dauerhaft einen wichtigen Fakt über den Nutzer, seine Vorlieben, sein System oder seine "
       "Projekte (z. B. 'Das NAS ist unter /mnt/nas gemountet'). Einen vollständigen Satz formulieren.")
 async def remember(ctx: ToolContext, fact: Annotated[str, "Der Fakt als vollständiger Satz"]) -> str:
-    added = await ctx.memory.remember(fact)
+    added, replaced = await ctx.memory.remember_fact(fact)
+    if replaced:
+        return f"Aktualisiert (vorher: {replaced})."
     return "Gespeichert." if added else "Das war bereits bekannt."
 
 

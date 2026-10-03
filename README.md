@@ -53,7 +53,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation), upload local files or files sent from the phone |
 | **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, list folders, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional **writing and replying** (SMTP) – To, Cc, subject and text are editable in a dialog before anything is sent |
-| **Tools & Coding mode** | Switch top left: **Tools** (assistant – all tools, web, Paperless, mail, smart home, voice) or **Coding** – only files, shell, web search and memory (≈ 2k instead of ≈ 10k tokens of tool descriptions, so far more context for code), a developer prompt, no voice, wider chat. Each mode has its own chat history; a coding chat can have a **project folder** (shell starts there, relative paths refer to it). Pick a model while in a mode and Orbwise remembers it for that mode (e.g. a coder model) – switching then reloads it |
+| **Tools & Coding mode** | Switch top left: **Tools** (assistant – all tools, web, Paperless, mail, smart home, voice) or **Coding** – only files, shell, web search and memory (≈ 2k instead of ≈ 10k tokens of tool descriptions, so far more context for code), a developer prompt, no voice, wider chat. Files are changed with **edit_file** (replace a snippet instead of rewriting the file) and multi-step work gets a **task list** shown as a checklist in the answer. Each mode has its own chat history; a coding chat can have a **project folder** (shell starts there, relative paths refer to it). Pick a model while in a mode and Orbwise remembers it for that mode (e.g. a coder model) – switching then reloads it |
 | **Plan mode** | **Plan** button: Jarvis thinks it through, only looks things up (read-only) and presents a step-by-step plan – **RUN**, **CHANGE** (say what should be different) or **DISCARD**; also by voice ("yes") and via Telegram (`/plan …`) |
 | **Auto mode** | Drop-down button next to *Think*: **Off** – every shell command asks · **Read only** (default) – recognised read-only commands (`ls`, `df`, `docker ps`, `git status`, `nmcli device status`, `apt list --installed`, `journalctl` …) run without asking · **Read + edit files** – also create, write, copy and move files in your own home (`write_file`, `mkdir`, `touch`, `cp`, `mv`, `tee`, `>`), never with root, never deleting, never hidden files (shell start files, autostart, `~/.ssh`, `~/.config` …), launchers (`.desktop`, `~/bin`) or credentials · **Auto** – everything without root runs without asking (`python …`, `cd … && make`, `git commit`, `pip install --user`, `systemctl --user restart` …, plus `write_file`); still asking: deleting (`rm`, `find -delete`, `git clean` …), sudo, shutting down, sending over the network (`git push`, `ssh`, uploads), start-up files/autostart/`~/.ssh`/Orbwise's own config and credentials. Note: a script or `python -c` can do anything you may do – Auto only catches what is visible in the command. Plan mode and untrusted content (mail, screen) still ask. The rules live in code, so they cost no prompt context |
 | **Screen & images** | "What's that error message?", "What does this window say?", "Help me with this dialog" – Orbwise takes a screenshot and asks a **local vision model** (e.g. Qwen2.5-VL); also for image files and photos sent from the phone. Nothing leaves your PC |
@@ -182,6 +182,10 @@ came from the cache.
 - **Memories** (hybrid search: BM25 full text + bge-m3 embeddings, slight preference for recent entries): the first
   question of a chat gets up to `memory.retrieval_max_tokens`, later questions a third of that and only what was not
   shown yet. Coding mode adds none by itself – there the model calls `recall` when it needs something.
+- Only memories that really match the question are shown (`memory.retrieval_min_similarity`, default 0.5; without
+  embeddings at least two shared words); facts are not repeated there because they are in the instructions anyway.
+- **Facts** stay consistent: if `remember` gets a newer version of a known fact ("the NAS is at /media/nas" after
+  "/mnt/nas"), the old line in `facts.md` is replaced instead of keeping both.
 - **Facts** are a snapshot: `remember` saves right away and the model knows the new fact from the tool result, but it
   moves into the instructions only with the next compaction (otherwise the whole prompt would be re-read).
 - **Tools:** if all tool descriptions fit comfortably (≤ 30 % of the budget), all of them are always sent. With small
@@ -299,7 +303,11 @@ The `api_key` keeps websites in your browser from talking to the llama-server.
 request (e.g. Home Assistant tools only when you talk about lights or heating). A group once added stays until the
 next compaction, so the start of the prompt does not change with every question (the activity shows "tools added –
 one-off re-read"). The instructions for a service (Paperless, mail, calendar, notes, smart home, system tools) come
-with its tools – a new chat with every integration set up starts at ~3.8k instead of ~5.5k tokens. You can also switch tools or whole groups off: `tools: {disabled: [sysadmin, paperless]}`.
+with its tools – a new chat with every integration set up starts at ~4.7k instead of ~5.5k tokens, including
+edit_file, the task list and load_tools. If no keyword matched, the model can still get any tool: **load_tools** lists
+the configured groups in one line each and loads the one it needs for the next step. When the model asks for several things at once that
+need no confirmation (e.g. weather and calendar), they run in parallel. You can also switch tools or whole groups off:
+`tools: {disabled: [sysadmin, paperless]}`.
 
 #### Prompt cache tips
 

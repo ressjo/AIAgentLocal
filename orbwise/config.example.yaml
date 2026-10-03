@@ -54,6 +54,7 @@ memory:
   dir: ~/.local/share/orbwise/memory
   # context_budget_tokens: 11000  # only to cap the prompt – default: automatic from the model's context window
   retrieval_top_k: 6
+  # retrieval_min_similarity: 0.5  # only show memories at least this similar to the question (0 = always)
   # retrieval_max_tokens: 1500   # recalled memory snippets in the first question of a context epoch (later: ⅓, only new)
   # facts_max_tokens: 1200       # max. size of the permanent facts (profile) in the prompt
   # compact_idle: true           # if the context is almost at the compaction point after an answer, compress right away instead of before the next question

@@ -57,6 +57,7 @@ class Hit:
     text: str
     created: float
     score: float
+    sim: float | None = None  # Embedding-Ähnlichkeit zur Anfrage (None ohne Embeddings)
 
 
 def split_text(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
@@ -104,6 +105,12 @@ def check_file(path: Path) -> bool:
         return "locked" in str(e) or "busy" in str(e)
     except sqlite3.DatabaseError:
         return False
+
+
+def shared_words(query: str, text: str) -> int:
+    """Wie viele Wörter (ab 3 Zeichen) der Anfrage im Text vorkommen."""
+    have = set(re.findall(r"\w{3,}", text.lower()))
+    return sum(1 for w in dict.fromkeys(re.findall(r"\w{3,}", query.lower())) if w in have)
 
 
 def fts_query(text: str) -> str:
@@ -303,6 +310,7 @@ class MemoryIndex:
                 log.debug("FTS-Fehler: %s", e)
 
         (qvec,) = await self._embed([query])
+        sim_of: dict[int, float] = {}
         if qvec is not None:
             if self._matrix is None:
                 self._load_matrix()
@@ -315,6 +323,11 @@ class MemoryIndex:
                         break
                     rid = self._matrix_ids[idx]
                     ranks[rid] = ranks.get(rid, 0) + 1 / (RRF_K + rank)
+                # Ähnlichkeit auch für reine Volltext-Treffer – damit lässt sich die Relevanz prüfen
+                wanted = set(ranks)
+                for idx, rid in enumerate(self._matrix_ids):
+                    if rid in wanted:
+                        sim_of[rid] = float(sims[idx])
 
         if not ranks:
             return []
@@ -333,6 +346,6 @@ class MemoryIndex:
             age_days = max(0.0, (now - created) / 86400)
             recency = 0.004 * math.exp(-age_days / 30)  # leichte Bevorzugung frischer Erinnerungen
             bonus = 0.003 if kind in ("fact", "summary") else 0.0
-            hits.append(Hit(rid, kind, day, text, created, ranks[rid] + recency + bonus))
+            hits.append(Hit(rid, kind, day, text, created, ranks[rid] + recency + bonus, sim_of.get(rid)))
         hits.sort(key=lambda h: h.score, reverse=True)
         return hits[:k]

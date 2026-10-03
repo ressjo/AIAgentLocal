@@ -29,6 +29,7 @@ from .config import Config
 from .llm import ContextOverflow, LLMError, strip_think
 from .memory import Memory, est_tokens
 from .memory.context import TRIM_NOTE, msg_tokens, render_transcript, shrink_tool_results
+from .memory.index import shared_words
 from .tools.proc import clip
 from .tools.registry import (
     BLOCKED,
@@ -426,13 +427,22 @@ class Agent:
         async with self.lock:
             return await self.compact_epoch(emit, reason="manual", focus=focus)
 
+    def _relevant(self, question: str, hit) -> bool:
+        """Passt die Erinnerung wirklich zur Frage? Fakten stehen ohnehin im Systemprompt."""
+        if hit.kind == "fact":
+            return False
+        if hit.sim is not None:
+            return hit.sim >= self.cfg.memory.retrieval_min_similarity
+        return shared_words(question, hit.text) >= 2  # ohne Embeddings: mindestens zwei gleiche Wörter
+
     async def _memories_for(self, user_text: str) -> str:
         """Erinnerungen für die Kontext-Notiz: in der ersten Frage einer Epoche bis retrieval_max_tokens, danach ein
         Drittel und nur noch Neues (sie bleiben ja im Verlauf stehen); im Coding-Modus keine – dort holt recall."""
         if self.mode == "coding":
             return ""
         conv = self.memory.conversation
-        hits = await self.memory.retrieve(user_text, exclude_after=conv.window_start())
+        hits = [h for h in await self.memory.retrieve(user_text, exclude_after=conv.window_start())
+                if self._relevant(user_text, h)]
         ep = conv.epoch
         first = not any(conv.history[i]["role"] == "user" for i in conv.epoch_indices())
         budget = self.cfg.memory.retrieval_max_tokens if first else self.cfg.memory.retrieval_max_tokens // 3
