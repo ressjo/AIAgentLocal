@@ -301,3 +301,24 @@ def test_overflow_hides_old_results_when_that_covers_it(cfg, llm, memory):
     small = ContextOverflow("zu groß", n_ctx=16384, n_prompt=16384 - 1500 + 500)  # 500 Token Überhang
     assert run(agent._make_room(_noop, "", overflow=small))
     assert memory.conversation.epoch["cleared"] >= 1 and not llm.calls  # ohne Modellaufruf
+
+
+def test_small_window_keeps_used_tools_for_follow_ups_and_across_compaction(cfg, llm, memory, tmp_path):
+    """Gemeldet: bei unter 16k fehlten bei der zweiten Paperless-Frage die Paperless-Werkzeuge (Jarvis wich auf curl
+    aus) – nach einer Komprimierung bzw. wenn eine neue Gruppe dazukam."""
+    all_integrations(cfg, tmp_path)
+    cfg.llm.num_ctx = 8192
+    agent = Agent(cfg, llm, memory)
+
+    def sent() -> set[str]:
+        return tool_names(llm.opts[-1]["tools"])
+
+    run(agent.run('/tool paperless_search {"query": "Rechnung"}', _noop, _noop))
+    run(agent.run("Zeig mir die vom Mai und erinnere mich morgen an die Überweisung", _noop, _noop))
+    assert {"paperless_search", "set_reminder"} <= sent()  # neue Gruppe – Paperless bleibt trotzdem
+    for i in range(8):
+        memory.conversation.add({"role": "user", "content": f"Frage {i} " + "x" * 1200})
+        memory.conversation.add({"role": "assistant", "content": f"Antwort {i}"})
+    assert run(agent.compact_now(_noop))
+    run(agent.run("Und welche davon ist die neueste?", _noop, _noop))
+    assert "paperless_search" in sent()  # auch nach dem Zusammenfassen

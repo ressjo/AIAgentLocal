@@ -160,6 +160,7 @@ class Agent:
         self.all_schema_tokens = self.schema_tokens
         self._tools_dropped: set[str] = set()  # beim letzten Wechsel weggefallene Werkzeug-Einheiten
         self._turn_units: set[str] = set()  # Einheiten, die die laufende Runde braucht (für „zuletzt gebraucht“)
+        self._turn_used: set[str] = set()  # Einheiten der in dieser Runde aufgerufenen Werkzeuge
         self.lock = asyncio.Lock()
         self.services: dict = {}
 
@@ -412,7 +413,13 @@ class Agent:
         if not small:  # ab 16k zählt immer die ganze Gruppe
             pinned = {u.split(":")[0] for u in pinned}
         recent = [set(r) for r in ep.get("recent") or []]
-        must = matched | pinned | ({self._unit(n, small) for n in used or ()} - {""})
+        self._turn_used = {self._unit(n, small) for n in used or ()} - {""}
+        # was in den letzten Runden wirklich aufgerufen wurde, bleibt Pflicht – Folgefragen („und die vom Mai?“)
+        # nennen die Gruppe meist nicht noch einmal
+        used_before = set().union(*(set(u) for u in ep.get("used") or []))
+        if not small:
+            used_before = {u.split(":")[0] for u in used_before}
+        must = matched | pinned | self._turn_used | used_before
         if toolselect.is_follow_up(question):
             must |= suggested  # „ja“, „mach das“: gemeint ist der letzte Vorschlag des Modells
         if small and toolselect.wants_change([question]):  # z. B. „weiter“ im Paperless-Durchgang
@@ -511,6 +518,7 @@ class Agent:
         ep = self.memory.conversation.epoch
         if ep.get("groups") is not None:
             ep["recent"] = [*(ep.get("recent") or [])[-1:], sorted(getattr(self, "_turn_units", set()))]
+            ep["used"] = [*(ep.get("used") or [])[-1:], sorted(getattr(self, "_turn_used", set()))]
 
     def _call_llm(self, messages: list[dict], tools: list[dict] | None, **opts):
         """chat_stream mit Zusatzoptionen (think, max_tokens, tool_choice) – nur die, die das LLM-Objekt kennt."""
@@ -996,8 +1004,13 @@ class Agent:
         inherit = conv.epoch.get("groups") if not plan.small else None
         files = self._recent_files(summarized, int(plan.window * 0.08)) \
             if self.mode == "coding" and not plan.small else ""
+        # was zuletzt gebraucht wurde, gilt auch nach dem Zusammenfassen (sonst fehlen z. B. bei der nächsten
+        # Paperless-Frage die Paperless-Werkzeuge)
+        old = conv.epoch
+        used_units = sorted(set().union(*(set(u) for u in old.get("used") or []), self._turn_used))
         conv.start_epoch(carry, summary, reason=reason, before=before, carried=len(carry), mode=self.mode,
-                         inherit=inherit, files=files)
+                         inherit=inherit, files=files, recent=old.get("recent") or [], used=[used_units] if used_units
+                         else [], pinned=old.get("pinned") or [])
         # Werkzeuge (und ihre Hinweise) der neuen Epoche gleich festlegen – samt denen dieser Runde, damit der
         # nächste Schritt nichts „dazuladen“ muss und Anzeige wie Vorwärmen den echten Prompt sehen
         self.choose_tools(turn_tools)
