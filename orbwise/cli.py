@@ -185,6 +185,22 @@ def cmd_doctor(args) -> None:
     else:
         line(hs["online"], f"{hs.get('url') or cfg.homeassistant.url}" + (
             f" – {hs['entities']} {T('Entitäten', 'entities')} (Version {hs['version']})" if hs["online"] else ""), hs.get("error", ""))
+    print("Portainer:")
+    from .tools.portainer import portainer_status
+    pt = asyncio.run(portainer_status(cfg))
+    if not pt["enabled"]:
+        print(T("  – nicht konfiguriert", "  – not configured") + " (portainer.url, portainer.token)")
+    else:
+        line(pt["online"], f"{pt.get('url') or cfg.portainer.url}" + (
+            f" – Version {pt['version']}, {T('Umgebungen', 'environments')}: {', '.join(pt['environments']) or '–'}"
+            if pt["online"] else ""), pt.get("error", ""))
+    print("SSH:")
+    from .tools.ssh import ssh_status
+    sh = ssh_status()
+    line(sh["ok"], sh.get("version") or "ssh", sh.get("error", ""))
+    if cfg.ssh.hosts:
+        print("  ℹ " + T("Kurznamen: ", "Short names: ") + ", ".join(
+            f"{k} → {h.host}" + (f":{h.port}" if h.port != 22 else "") for k, h in cfg.ssh.hosts.items()))
     print(T("E-Mail:", "E-mail:"))
     from .tools.mail import mail_status
     ms = asyncio.run(mail_status(cfg))

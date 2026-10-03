@@ -223,6 +223,39 @@ class PaperlessConfig(BaseModel):
         return bool(self.url and self.api_token)
 
 
+class PortainerConfig(BaseModel):
+    # z. B. https://nas.local:9443
+    url: str = ""
+    # Zugriffstoken (Portainer → Benutzer oben rechts → My account → Access tokens); alternativ $ORBWISE_PORTAINER_TOKEN
+    token: str = ""
+    # Umgebung (Name oder ID), wenn Portainer mehrere verwaltet; leer = die erste erreichbare
+    environment: str = ""
+    timeout: float = 60.0
+    verify_ssl: bool | str = True
+
+    @property
+    def api_token(self) -> str:
+        return self.token or env("PORTAINER_TOKEN")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.url and self.api_token)
+
+
+class SshHost(BaseModel):
+    host: str
+    port: int = 22
+    user: str = ""  # nur Vorschlag im Anmeldedialog – gefragt wird trotzdem jedes Mal
+
+
+class SshConfig(BaseModel):
+    # Kurznamen für ssh_connect, z. B. nas: {host: 192.168.1.10, user: admin}; andere Adressen gehen auch direkt
+    hosts: dict[str, SshHost] = Field(default_factory=dict)
+    # so lange bleibt eine Verbindung nach dem letzten Befehl offen (danach wird neu nach dem Passwort gefragt)
+    keep_minutes: int = 15
+    connect_timeout: int = 15
+
+
 class HomeAssistantConfig(BaseModel):
     # z. B. http://homeassistant.local:8123
     url: str = ""
@@ -409,6 +442,8 @@ class Config(BaseModel):
     obsidian: ObsidianConfig = Field(default_factory=ObsidianConfig)
     paperless: PaperlessConfig = Field(default_factory=PaperlessConfig)
     homeassistant: HomeAssistantConfig = Field(default_factory=HomeAssistantConfig)
+    portainer: PortainerConfig = Field(default_factory=PortainerConfig)
+    ssh: SshConfig = Field(default_factory=SshConfig)
     weather: WeatherConfig = Field(default_factory=WeatherConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     briefing: BriefingConfig = Field(default_factory=BriefingConfig)

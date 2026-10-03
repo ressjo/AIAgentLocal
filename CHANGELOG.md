@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Docker via Portainer** (`portainer:` in the config): list containers and stacks, check for newer images without
+  downloading (registry digest vs. running image), update a container or stack to the newest image, start/stop/
+  restart/remove containers and stacks, read logs and install new apps from a docker-compose file. Changes need a
+  confirmation; `orbwise doctor` checks the token and lists the environments.
+- **SSH to other machines** (`ssh_connect`, `ssh_run`, `ssh_disconnect`; optional short names under `ssh.hosts`):
+  Linux commands on a NAS or server like on the PC. User name and password are asked in a dashboard dialog for every
+  new connection and go straight to `ssh` – never to the model, the config or the disk. The connection stays open
+  for 15 minutes after the last command. Commands are classified like local ones (read-only runs directly, the rest
+  after confirmation), `sudo` on the remote machine asks for its password in the dashboard too.
 - **Context self-test** (`orbwise context-test [--quick]`, Settings → Context window → *Test context*): checks with
   the active model whether the server runs with the configured window (and no `context_budget_tokens` caps it), the
   KV cache sits in VRAM, how far the token estimate is off, whether the prompt cache works for the same prompt and a

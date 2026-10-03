@@ -119,6 +119,18 @@ homeassistant:             # Home Assistant: lights, switches, heating, covers, 
   verify_ssl: true
   # timeout: 15
 
+portainer:                 # Docker containers and stacks via the Portainer API (list, update, start/stop, install)
+  url: ""                  # e.g. https://nas.local:9443 – leave empty to disable
+  token: ""                # Portainer → user menu (top right) → My account → Access tokens (or $ORBWISE_PORTAINER_TOKEN)
+  # environment: ""        # name or ID if Portainer manages several Docker hosts (default: the first one that is up)
+  verify_ssl: true         # Portainer's default certificate is self-signed: false (or the path to your CA file)
+  # timeout: 60
+
+ssh:                       # other computers (NAS, server) via SSH – user name and password are asked in the dashboard
+  hosts: {}                # short names, e.g. {nas: {host: 192.168.1.10, user: admin}} (port: 22) – any address works too
+  # keep_minutes: 15       # a connection stays open this long after the last command, then the password is asked again
+  # connect_timeout: 15    # seconds to wait for the device to answer
+
 mail:                      # e-mail via IMAP – Proton Mail through the local Proton Mail Bridge (paid plan)
   host: 127.0.0.1          # Bridge defaults; any other IMAP server works too (then e.g. port 993, security: ssl)
   port: 1143

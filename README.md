@@ -51,6 +51,8 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Everyday** | Weather (Open-Meteo), reminders and timers, **dates worked out instead of guessed** (weekdays, "next Tuesday", "in 3 weeks", calendar weeks, days between dates, German public holidays – `holiday_region` for your state; reminders, calendar, memory and routines understand such phrases directly), a **morning briefing** with the items you choose (incl. news and your Paperless inbox) |
 | **Routines** | Tasks Orbwise does on its own at set times – "every weekday at 8, search Linux news" – each with its own chat |
 | **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
+| **Docker (Portainer)** | List containers and stacks, **check for newer images without downloading**, update a container or a whole stack to the newest image, start/stop/restart/remove, read logs, **install new apps** from a docker-compose file – changes after confirmation |
+| **SSH (NAS, servers)** | Run Linux commands on other machines like on the PC – user name and password are **asked in the dashboard for every new connection** (never stored, never shown to the model); read-only commands run directly, everything else after confirmation, `sudo` there asks again |
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation), upload local files or files sent from the phone |
 | **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, list folders, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional **writing and replying** (SMTP) – To, Cc, subject and text are editable in a dialog before anything is sent |
 | **Tools & Coding mode** | Switch top left: **Tools** (assistant – all tools, web, Paperless, mail, smart home, voice) or **Coding** – only files, shell, web search and memory (≈ 2k instead of ≈ 10k tokens of tool descriptions, so far more context for code), a developer prompt, no voice, wider chat. Files are changed with **edit_file** (replace a snippet instead of rewriting the file) and multi-step work gets a **task list** shown as a checklist in the answer. Each mode has its own chat history; a coding chat can have a **project folder** (shell starts there, relative paths refer to it). Pick a model while in a mode and Orbwise remembers it for that mode (e.g. a coder model) – switching then reloads it |
@@ -433,6 +435,50 @@ Tools: `ha_find` (by name, room or type, with state), `ha_state`, `ha_control` (
 colour, temperature, open/close/position for covers, scenes/scripts/buttons, lock/unlock, set values).
 Locks, alarm panels and garage doors/gates always require confirmation.
 
+### Docker via Portainer
+
+1. Portainer → user menu (top right) → **My account** → **Access tokens** → **Add access token**.
+2. Config:
+   ```yaml
+   portainer:
+     url: https://nas.local:9443
+     token: "ptr_…"              # or $ORBWISE_PORTAINER_TOKEN
+     verify_ssl: false           # Portainer's own certificate is self-signed
+     # environment: nas          # only if Portainer manages several Docker hosts
+   ```
+
+Tools: `portainer_containers`, `portainer_check_updates` (compares the registry digest with the running image –
+nothing is downloaded), `portainer_logs`, `portainer_stacks` (with a name: its compose file), and after
+confirmation `portainer_update` (a container of a Portainer stack → the stack is redeployed with *pull latest
+image*; a single container → Portainer's *recreate* with a fresh pull, Portainer 2.19+), `portainer_container_action`
+(start/stop/restart/kill/pause/unpause/remove), `portainer_stack_action` (start/stop/remove) and
+`portainer_deploy_stack` (install a new app from a docker-compose file – the file is editable in the confirmation
+dialog – or replace the compose file of an existing stack). Removing keeps named volumes. `run_shell` refuses
+`curl` calls to the Portainer address and points to these tools instead.
+
+### SSH (NAS, servers)
+
+Works without configuration – "log in to 192.168.1.10 and show the free space". For short names:
+```yaml
+ssh:
+  hosts:
+    nas: {host: 192.168.1.10, user: admin}   # user is only pre-filled in the login dialog
+    pi:  {host: raspberrypi.local, port: 2222}
+  # keep_minutes: 15
+```
+
+- **Login:** for every new connection Orbwise shows a dialog in the dashboard asking for **user name and password**.
+  They go straight to `ssh` (through Orbwise's askpass helper) – never into the config, onto disk, into the command
+  line or to the model. Key-based login is deliberately not used, so it really asks every time.
+- The connection stays open (`ControlPersist`) for `keep_minutes` after the last command, so follow-up commands
+  don't ask again; afterwards, after `ssh_disconnect` or a restart of Orbwise you log in again.
+- `ssh_run(host, command)` works like `run_shell`: read-only commands run directly, everything else needs a
+  confirmation (also in Auto mode), destructive ones are blocked. **`sudo`** on the remote machine asks for the
+  password in the dashboard (optionally remembered for this connection, in memory only); it is only handed to
+  `sudo -v`, never to the command's input.
+- A new device's host key is stored on first contact; a **changed** key aborts the connection (possible attack).
+- Logging in only works at the computer – not from Telegram or routines. Needs OpenSSH 8.4+ (`orbwise doctor`).
+
 ### Paperless-ngx
 
 1. Paperless → your profile (top right) → **API auth token**.
@@ -701,6 +747,9 @@ Orbwise can run commands on your system, so:
   "remember" ticked it is kept in memory for 15 minutes (`tools.sudo_remember_minutes`) for requests at the
   computer – not for Telegram or routines; Settings → Status shows it and can forget it. Alternatives:
   `pkexec` (desktop polkit dialog) or `sudo` with a NOPASSWD rule.
+- **SSH logins** (NAS, servers): user name and password are asked in the dashboard for every new connection, handed
+  to `ssh` through the same one-time-token helper and never stored, logged or shown to the model; remote commands
+  are classified like local ones and remote `sudo` asks again.
 - **Shutdown, reboot, suspend, lock** go through systemd/logind and need no password for the active session.
 
 See [SECURITY.md](SECURITY.md) for details and how to report vulnerabilities.

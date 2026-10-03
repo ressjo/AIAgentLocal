@@ -112,6 +112,15 @@ HINTS = {
         "homeassistant": "- Das Smart Home des Nutzers läuft über Home Assistant: Geräte finden mit ha_find (nach Name, "
                          "Raum oder Typ), Zustand mit ha_state, schalten/dimmen/Temperatur/Rollos/Szenen mit ha_control. "
                          "Nutze die entity_id aus ha_find.\n",
+        "portainer": "- Docker-Container und Stacks des Nutzers laufen unter Portainer: portainer_containers (Liste), "
+                     "portainer_check_updates (neuere Images?), portainer_logs, portainer_stacks (mit name: Compose-Datei). "
+                     "Nutze dafür die Portainer-Werkzeuge, nicht docker/curl per Shell oder SSH.\n",
+        "portainer_write": "- Ändern: portainer_update (Container oder Stack aufs neueste Image), portainer_container_action "
+                           "(start/stop/restart/remove), portainer_stack_action, neue App installieren mit "
+                           "portainer_deploy_stack (komplette docker-compose.yml; Daten in Volumes/Bind-Mounts).\n",
+        "ssh": "- Andere Rechner (NAS, Server) per SSH: ssh_run(host, command) führt Befehle dort aus wie run_shell hier – "
+               "run_shell ist nur dieser PC. Benutzername und Passwort fragt Orbwise selbst im Dashboard ab: frag NIE "
+               "im Chat danach und schreib sie nie in Befehle. Kurznamen wie 'nas' kommen aus der Config.\n",
     },
     "en": {
         "remember": "- When you learn something lastingly important about the user (name, preferences, devices, paths, "
@@ -171,6 +180,15 @@ HINTS = {
         "homeassistant": "- The user's smart home runs on Home Assistant: find devices with ha_find (by name, room or "
                          "type), read state with ha_state, switch/dim/set temperature/covers/scenes with ha_control. "
                          "Use the entity_id returned by ha_find.\n",
+        "portainer": "- The user's Docker containers and stacks run under Portainer: portainer_containers (list), "
+                     "portainer_check_updates (newer images?), portainer_logs, portainer_stacks (with name: compose "
+                     "file). Use the Portainer tools, not docker/curl via shell or SSH.\n",
+        "portainer_write": "- Changes: portainer_update (container or stack to the newest image), portainer_container_action "
+                           "(start/stop/restart/remove), portainer_stack_action, install a new app with "
+                           "portainer_deploy_stack (complete docker-compose.yml; data in volumes/bind mounts).\n",
+        "ssh": "- Other computers (NAS, server) via SSH: ssh_run(host, command) runs commands there like run_shell here – "
+               "run_shell is only this PC. Orbwise asks for user name and password itself in the dashboard: NEVER ask "
+               "for them in the chat and never put them into commands. Short names like 'nas' come from the config.\n",
     },
 }
 
@@ -361,11 +379,15 @@ HINT_TOOLS = {
     "trilium": ("trilium_search", "trilium_read"), "trilium_write": ("trilium_create_note", "trilium_append"),
     "obsidian": ("obsidian_search", "obsidian_read"), "obsidian_write": ("obsidian_create_note", "obsidian_append"),
     "homeassistant": ("ha_find", "ha_control"),
+    "portainer": ("portainer_containers", "portainer_check_updates"),
+    "portainer_write": ("portainer_update", "portainer_container_action", "portainer_deploy_stack"),
+    "ssh": ("ssh_run", "ssh_connect"),
     "mail": ("mail_list", "mail_search", "mail_read"), "mail_write": ("mail_manage", "mail_to_paperless"),
 }
 HINT_ORDER = ("remember", "recall", "dates", "power", "actions", "tool_loader", "sysadmin", "packages", "routines",
               "calendar", "calendar_write", "services", "paperless", "paperless_write", "trilium", "trilium_write",
-              "obsidian", "obsidian_write", "homeassistant", "mail", "mail_write")
+              "obsidian", "obsidian_write", "homeassistant", "portainer", "portainer_write", "ssh", "mail",
+              "mail_write")
 ACTION_HINTS = (("briefing", "daily_briefing"), ("reminder", "set_reminder"), ("website", "open_website"),
                 ("weather", "weather"))  # eine gemeinsame Zeile für die kurzen Zuordnungen
 

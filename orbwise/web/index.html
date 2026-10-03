@@ -363,13 +363,15 @@
 
   <div class="overlay hidden" id="pw-modal">
     <form class="modal confirm-modal" id="pw-form" autocomplete="off">
-      <div class="modal-title"><span class="warn-dot"></span>Root-Rechte benötigt</div>
+      <div class="modal-title"><span class="warn-dot"></span><span id="pw-title">Root-Rechte benötigt</span></div>
       <p class="confirm-summary" id="pw-prompt">Root-Passwort (sudo)</p>
       <pre class="confirm-cmd" id="pw-cmd"></pre>
+      <input class="pw-input hidden" id="pw-user" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Benutzername" aria-label="Benutzername">
       <input class="pw-input" id="pw-input" type="password" autocomplete="off" spellcheck="false"
              placeholder="Passwort" aria-label="Passwort">
       <label class="pw-remember hidden" id="pw-remember-row"><input type="checkbox" id="pw-remember" checked> <span id="pw-remember-text">15 Minuten merken</span></label>
-      <p class="confirm-reason">Geht direkt an sudo – nie auf die Platte und nie an das Sprachmodell.</p>
+      <p class="confirm-reason" id="pw-note">Geht direkt an sudo – nie auf die Platte und nie an das Sprachmodell.</p>
       <div class="modal-actions">
         <button class="btn deny" type="button" id="pw-cancel">Abbrechen <kbd>Esc</kbd></button>
         <button class="btn approve" type="submit">OK <kbd>Enter</kbd></button>

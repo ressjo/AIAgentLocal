@@ -29,7 +29,8 @@ GROUP_LABELS = {
            "homeassistant": "Smart Home: Licht, Heizung, Geräte", "mail": "E-Mails", "routine_tools": "Routinen",
            "paperless": "Dokumente, Rechnungen, Verträge", "trilium": "Notizen",
            "obsidian": "Notizen", "vision": "Bildschirm, Bilder", "telegram_tools": "Dateien aufs Handy",
-           "calendar_tools": "Kalender, Termine",
+           "calendar_tools": "Kalender, Termine", "portainer": "Docker-Container, Stacks (Portainer)",
+           "ssh": "andere Rechner per SSH (NAS, Server)",
            # nur im kleinen Fenster nachzuladen (ab 16k immer dabei)
            "weather": "Wetter", "power": "Ausschalten, Neustart, Standby, Sperren", "apps": "Programme öffnen",
            "briefing": "Tagesüberblick", "reminder_tools": "Erinnerungen, Timer",
@@ -39,6 +40,7 @@ GROUP_LABELS = {
            "homeassistant": "smart home: lights, heating, devices", "mail": "e-mail", "routine_tools": "routines",
            "paperless": "documents, invoices, contracts", "trilium": "notes", "obsidian": "notes",
            "vision": "screen, images", "telegram_tools": "files to the phone", "calendar_tools": "calendar, events",
+           "portainer": "docker containers, stacks (Portainer)", "ssh": "other computers via SSH (NAS, server)",
            "weather": "weather", "power": "shut down, reboot, suspend, lock", "apps": "open programs",
            "briefing": "daily briefing", "reminder_tools": "reminders, timers", "files": "write/edit/open files",
            "web": "open/read web pages", "system": "system info", "todo_tools": "task list",
@@ -48,10 +50,11 @@ GROUP_LABELS = {
 WRITE_LABELS = {
     "de": {"paperless": "einordnen, sortieren", "mail": "aufräumen, senden", "calendar_tools": "Termine ändern",
            "sysadmin": "Dienste steuern, beenden, aufräumen", "obsidian": "Notizen anlegen",
-           "trilium": "Notizen anlegen", "packages": "installieren, entfernen"},
+           "trilium": "Notizen anlegen", "packages": "installieren, entfernen",
+           "portainer": "aktualisieren, starten/stoppen, installieren"},
     "en": {"paperless": "classify, sort", "mail": "tidy up, send", "calendar_tools": "change events",
            "sysadmin": "control services, kill, clean up", "obsidian": "create notes", "trilium": "create notes",
-           "packages": "install, remove"},
+           "packages": "install, remove", "portainer": "update, start/stop, install"},
 }
 
 KEYWORDS = {
@@ -81,6 +84,9 @@ KEYWORDS = {
               r"screenshot|was steht da|what does it say|look at|anschau",
     "telegram_tools": r"telegram|handy|smartphone|\bphone|aufs? (telefon|mobil)|schick (mir|sie|es|das|die|den)|"
                       r"send (me|it|this|that)",
+    "portainer": r"docker|container|portainer|\bstacks?\b|compose|\bimages?\b|self-?host|watchtower",
+    "ssh": r"\bssh\b|\bnas\b|\bserver\b|synology|unraid|truenas|openmediavault|proxmox|raspberry|\bpi\b|"
+           r"einlogg|anmelden (auf|am|bei)|log ?in (to|on)|remote|auf (dem|meinem) (nas|server|pi)",
     "calendar_tools": r"termin|kalender|calendar|meeting|appointment|\bevent|verabred|besprechung|"
                       r"frei(e zeit)?\b|free time|schedule|wann habe ich|when do i",
 }
@@ -118,6 +124,7 @@ WRITE_TOOLS = {
     "obsidian": {"obsidian_create_note", "obsidian_update_note", "obsidian_append"},
     "trilium": {"trilium_create_note", "trilium_update_note", "trilium_append"},
     "packages": {"install_package", "remove_package", "system_update"},
+    "portainer": {"portainer_container_action", "portainer_update", "portainer_deploy_stack", "portainer_stack_action"},
 }
 WRITE_INTENT = re.compile(
     r"sortier|einordn|ordne\b|klassifizier|verschlagwort|tagge|anleg|\bleg\b.*\ban\b|erstell|\bneue[nmrs]? "

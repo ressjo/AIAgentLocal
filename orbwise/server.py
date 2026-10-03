@@ -529,6 +529,8 @@ def create_app(cfg: Config) -> FastAPI:
         yield
         for t in [*background, *healing, *side_tasks]:
             t.cancel()
+        from .tools.ssh import close_all as close_ssh
+        await close_ssh()  # offene SSH-Verbindungen schließen (sonst bleiben sie bis zum Zeitlimit angemeldet)
         await hub.speaker.close()
         await llm.close()
         memory.close()
@@ -1401,7 +1403,7 @@ def create_app(cfg: Config) -> FastAPI:
                 elif t == "password":
                     # Passwort nur an den wartenden sudo weiterreichen – nie loggen oder speichern
                     broker.answer(str(data.get("id", "")), data.get("password") or None,
-                                  remember=bool(data.get("remember", True)))
+                                  remember=bool(data.get("remember", True)), user=str(data.get("user") or "")[:100])
                 elif t == "password_forget":
                     broker.forget()
                 elif t == "password_cancel":

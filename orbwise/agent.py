@@ -51,8 +51,8 @@ log = logging.getLogger(__name__)
 # eine Mail könnte versteckte Anweisungen enthalten (z. B. Daten per fetch_url nach außen schicken).
 TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_briefing",
                  "look_at_screen", "look_at_image"}  # auch Bildschirm/Bild: eine Webseite kann Anweisungen zeigen
-TAINT_GUARDED = {"shell", "web", "files", "apps", "obsidian", "trilium", "calendar_tools", "homeassistant",
-                 "memory_tools", "reminder_tools", "power", "telegram_tools"}
+TAINT_GUARDED = {"shell", "ssh", "portainer", "web", "files", "apps", "obsidian", "trilium", "calendar_tools",
+                 "homeassistant", "memory_tools", "reminder_tools", "power", "telegram_tools"}
 
 
 def is_taint_source(name: str, result: str) -> bool:
@@ -1339,7 +1339,7 @@ class Agent:
             risk, reason = (SAFE, prompts.text(self.cfg, "auto_full")) if ok else (risk, why or reason)
         if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED:
             risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
-        if risk == SAFE and name == "run_shell" and self.auto_mode == "off":
+        if risk == SAFE and name in ("run_shell", "ssh_run") and self.auto_mode == "off":
             risk, reason = CONFIRM, prompts.text(self.cfg, "auto_read_off")
         return risk, reason
 

@@ -139,6 +139,48 @@ class AskpassBroker:
             if info["candidate"] and info["uses"] < MAX_USES and self.remember_seconds:
                 self._remember(info["candidate"])
 
+    @contextlib.contextmanager
+    def grant_secret(self, secret: str, uses: int = 2):
+        """Umgebung für einen Befehl, dem der Askpass-Helfer ein schon bekanntes Passwort reichen soll (ssh mit dem
+        im Anmeldedialog eingegebenen Passwort) – ohne erneute Nachfrage, höchstens `uses`-mal."""
+        if not self.ready():
+            yield {}
+            return
+        token = secrets.token_urlsafe(32)
+        self.tokens[token] = {"secret": secret, "uses": 0, "max": uses}
+        try:
+            yield {"SSH_ASKPASS": str(self.helper), "SSH_ASKPASS_REQUIRE": "force",
+                   "ORBWISE_ASKPASS_URL": self.url, "ORBWISE_ASKPASS_TOKEN": token}
+        finally:
+            self.tokens.pop(token, None)
+
+    async def ask_login(self, title: str, command: str = "", user: str = "", ask_user: bool = True,
+                        remember_text: str = "") -> tuple[str, str, bool] | None:
+        """Anmeldedialog in der Oberfläche (Benutzername + Passwort, z. B. für SSH) → (Benutzer, Passwort, merken)
+        oder None (abgebrochen, keine Oberfläche, Auftrag vom Handy/aus einer Routine). Die Eingaben gehen nur an
+        den Aufrufer – nie ans Sprachmodell, nie auf die Platte."""
+        if REMOTE.get() or not self.notify or not self.has_ui():
+            return None
+        req_id = uuid.uuid4().hex[:10]
+        fut = asyncio.get_running_loop().create_future()
+        self.pending[req_id] = fut
+        await self.notify({"type": "password_request", "id": req_id, "kind": "login", "title": title,
+                           "command": command, "prompt": title, "user": user, "ask_user": ask_user,
+                           "remember_text": remember_text, "remember": 0})
+        if self.say:
+            self.say(self.say_text)
+        try:
+            password, remember, name = await asyncio.wait_for(fut, timeout=WAIT_SECONDS)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            self.pending.pop(req_id, None)
+            await self.notify({"type": "password_done", "id": req_id})
+        name = (name or user).strip()
+        if not password or (ask_user and not name):
+            return None
+        return name, password, bool(remember)
+
     def _check(self, token: str) -> dict | None:
         for known, info in self.tokens.items():
             if hmac.compare_digest(known, token or ""):
@@ -148,6 +190,11 @@ class AskpassBroker:
     async def request(self, token: str, prompt: str = "") -> str | None:
         """Vom Helfer aufgerufen. None = abgelehnt/abgebrochen."""
         info = self._check(token)
+        if info is not None and "secret" in info:  # schon bekanntes Passwort (grant_secret)
+            if info["uses"] >= info["max"]:
+                return None
+            info["uses"] += 1
+            return info["secret"]
         if info is None or info["uses"] >= MAX_USES:
             return None
         cached = self._cached[0] if info["local"] and self.cached_until() else None
@@ -171,7 +218,7 @@ class AskpassBroker:
         if self.say and not retry:
             self.say(self.say_text)
         try:
-            password, remember = await asyncio.wait_for(fut, timeout=WAIT_SECONDS)
+            password, remember, _ = await asyncio.wait_for(fut, timeout=WAIT_SECONDS)
         except asyncio.TimeoutError:
             return None
         finally:
@@ -181,15 +228,15 @@ class AskpassBroker:
             info["candidate"] = password  # gemerkt wird erst, wenn sudo es angenommen hat (siehe grant)
         return password
 
-    def answer(self, req_id: str, password: str | None, remember: bool = True) -> None:
+    def answer(self, req_id: str, password: str | None, remember: bool = True, user: str = "") -> None:
         fut = self.pending.get(req_id)
         if fut and not fut.done():
-            fut.set_result((password or None, bool(remember)))
+            fut.set_result((password or None, bool(remember), user or ""))
 
     def cancel_all(self) -> None:
         for fut in self.pending.values():
             if not fut.done():
-                fut.set_result((None, False))
+                fut.set_result((None, False, ""))
 
 
 # Vom Server gesetzt; Tools holen sich darüber die Umgebung für sudo -A

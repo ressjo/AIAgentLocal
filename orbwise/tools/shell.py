@@ -13,7 +13,8 @@ from .safety import apply_privilege, classify_command
 SERVICE_TOOLS = (("paperless", "Paperless", "paperless_search, paperless_ask, paperless_read, paperless_review_next"),
                  ("trilium", "Trilium", "trilium_search, trilium_read, trilium_create_note"),
                  ("homeassistant", "Home Assistant", "ha_find, ha_state, ha_control"),
-                 ("calendar", "den Kalender", "calendar_events, calendar_free, calendar_add"))
+                 ("calendar", "den Kalender", "calendar_events, calendar_free, calendar_add"),
+                 ("portainer", "Portainer", "portainer_containers, portainer_update, portainer_container_action"))
 _LOCAL = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"}
 
 

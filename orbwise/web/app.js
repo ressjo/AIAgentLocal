@@ -304,6 +304,8 @@
     paperless: [L("Blättere in Ihren Unterlagen …", "Leafing through your documents …"), L("Ziehe die Akte …", "Pulling the file …")],
     calendar_tools: [L("Konsultiere den Kalender …", "Consulting the calendar …"), L("Prüfe Ihre Termine …", "Checking your schedule …")],
     homeassistant: [L("Spreche mit dem Haus …", "Talking to the house …"), L("Lege Schalter um …", "Flipping switches …")],
+    portainer: [L("Schaue nach den Containern …", "Checking the containers …"), L("Rede mit Portainer …", "Talking to Portainer …")],
+    ssh: [L("Arbeite auf dem anderen Rechner …", "Working on the other machine …"), L("Tippe aus der Ferne …", "Typing remotely …")],
     memory_tools: [L("Krame in meinem Gedächtnis …", "Searching my memory …"), L("Erinnere mich …", "Recalling …")],
     vision: [L("Sehe genau hin …", "Taking a close look …"), L("Betrachte das Bild …", "Studying the image …")],
     compress: [L("Ordne meine Gedanken …", "Gathering my thoughts …"), L("Fasse zusammen …", "Summarising …")],
@@ -893,6 +895,7 @@
     briefing: L("Tagesüberblick", "Briefing"), reminder_tools: L("Erinnerungen", "Reminders"),
     files: L("Dateien", "Files"), web: "Web", system: L("Systeminfo", "System info"),
     todo_tools: L("Aufgabenliste", "Task list"), memory_tools: L("Gedächtnis", "Memory"),
+    portainer: "Docker", ssh: "SSH",
   };
   const oldResults = (n) => n === 1 ? L("1 altes Werkzeug-Ergebnis", "1 old tool result")
     : L(`${num(n)} alte Werkzeug-Ergebnisse`, `${num(n)} old tool results`);
@@ -1307,15 +1310,24 @@
   let pwId = null;
   function openPassword(ev) {
     pwId = ev.id;
+    const login = ev.kind === "login";  // Anmeldung an einem anderen Rechner (SSH): Benutzer + Passwort
+    $("pw-title").textContent = login ? L("Anmeldung benötigt", "Login required") : L("Root-Rechte benötigt", "Root privileges required");
     $("pw-prompt").textContent = ev.retry ? L("Falsches Passwort – bitte erneut eingeben", "Wrong password – please try again")
-                                       : L("Root-Passwort (sudo)", "Root password (sudo)");
+                                       : login ? ev.title : L("Root-Passwort (sudo)", "Root password (sudo)");
     $("pw-cmd").textContent = ev.command || "";
-    $("pw-remember-row").classList.toggle("hidden", !ev.remember);
-    $("pw-remember-text").textContent = L(`${ev.remember} Minuten merken (nur hier am Rechner)`,
-                                          `Remember for ${ev.remember} minutes (only on this computer)`);
+    $("pw-user").classList.toggle("hidden", !(login && ev.ask_user));
+    $("pw-user").value = ev.user || "";
+    const remember = login ? ev.remember_text : ev.remember;
+    $("pw-remember-row").classList.toggle("hidden", !remember);
+    $("pw-remember").checked = !login;  // Anmeldedaten nur auf ausdrücklichen Wunsch merken
+    $("pw-remember-text").textContent = login ? (ev.remember_text || "")
+      : L(`${ev.remember} Minuten merken (nur hier am Rechner)`, `Remember for ${ev.remember} minutes (only on this computer)`);
+    $("pw-note").textContent = login
+      ? L("Geht direkt an ssh – nie auf die Platte und nie an das Sprachmodell.", "Goes straight to ssh – never to disk and never to the language model.")
+      : L("Geht direkt an sudo – nie auf die Platte und nie an das Sprachmodell.", "Goes straight to sudo – never to disk and never to the language model.");
     $("pw-input").value = "";
     $("pw-modal").classList.remove("hidden");
-    setTimeout(() => $("pw-input").focus(), 30);
+    setTimeout(() => (login && ev.ask_user && !ev.user ? $("pw-user") : $("pw-input")).focus(), 30);
     if (ev.retry) toast(L("Falsches Passwort – bitte erneut eingeben.", "Wrong password – please try again."));
   }
   function closePassword(id) {
@@ -1328,8 +1340,9 @@
     e.preventDefault();
     if (!pwId) return;
     const password = $("pw-input").value;
+    const user = $("pw-user").value.trim();
     $("pw-input").value = "";  // nicht im DOM stehen lassen
-    send(password ? { type: "password", id: pwId, password, remember: $("pw-remember").checked }
+    send(password ? { type: "password", id: pwId, password, user, remember: $("pw-remember").checked }
                   : { type: "password_cancel", id: pwId });
     closePassword();
   });
@@ -1337,9 +1350,11 @@
     if (pwId) send({ type: "password_cancel", id: pwId });
     closePassword();
   };
-  $("pw-input").addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); $("pw-cancel").click(); }
-  });
+  for (const id of ["pw-input", "pw-user"]) {
+    $(id).addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); $("pw-cancel").click(); }
+    });
+  }
 
   // Leertaste = Push-to-talk – aber nie, während man tippt (Chat, Planer, Briefing …) oder ein Knopf den Fokus hat
   function typingTarget(el) {
