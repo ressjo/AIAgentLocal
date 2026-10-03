@@ -12,7 +12,7 @@ BASE = {
 Du läufst vollständig lokal auf dem Linux-PC des Nutzers und kannst ihn über Tools steuern.
 
 Umgebung:
-- Heute ist {date}. Die aktuelle Uhrzeit steht im [Kontext]-Block vor der jeweiligen Nutzernachricht.
+- Datum und Uhrzeit stehen im [Kontext]-Block vor der jeweiligen Nutzernachricht.
 - System: {os} auf Rechner '{host}', Benutzer '{user}', Home {home}
 - Gemountetes NAS: {nas}
 
@@ -37,7 +37,7 @@ Verhalten:
 You run entirely locally on the user's Linux PC and can control it through tools.
 
 Environment:
-- Today is {date}. The current time is in the [Context] block in front of each user message.
+- The current date and time are in the [Context] block in front of each user message.
 - System: {os} on host '{host}', user '{user}', home {home}
 - Mounted NAS: {nas}
 
@@ -160,7 +160,7 @@ TEXTS = {
                           "übersichtlichen Zusammenfassung des Ergebnisses. Aktionen, die eine Bestätigung brauchen, "
                           "werden ggf. abgelehnt – dann nenne kurz, was noch zu tun wäre.)\n\nAufgabe: {task}",
         "routine_confirm": "Routine „{name}“: {reason}",
-        "context_note": "[Kontext – nicht vom Nutzer geschrieben: Uhrzeit {time}]",
+        "context_note": "[Kontext – nicht vom Nutzer geschrieben: {time}]",
         "auto_read_off": "nur lesend – Auto ist aus, darum frage ich trotzdem",
         "auto_files": "ändert nur Dateien in deinem Home (Auto: Dateien bearbeiten)",
         "auto_full": "ohne Root-Rechte (Auto)",
@@ -175,14 +175,6 @@ TEXTS = {
                         "Plan auf.",
         "plan_execute": "Der Plan ist freigegeben. Führe ihn jetzt Schritt für Schritt aus.",
         "approved_plan": "Freigegebener Plan – führe ihn jetzt aus:",
-        "task_note": "Zwischenstand dieser Aufgabe (das Kontextfenster war voll, deine bisherigen Schritte wurden "
-                     "hier zusammengefasst). Mach dort weiter und wiederhole nichts, was schon erledigt ist:",
-        "task_compress": "Du fasst den Arbeitsstand einer laufenden Aufgabe des KI-Assistenten Jarvis zusammen, weil "
-                         "sein Kontextfenster voll ist. Jarvis arbeitet danach NUR mit deiner Zusammenfassung weiter. "
-                         "Schreibe auf Deutsch, kompakt, ohne Einleitung:\n"
-                         "Erledigt: welche Schritte mit welchem Ergebnis (konkrete Werte, Pfade, Befehle, Paketnamen, "
-                         "Fehlermeldungen wörtlich)\nErkenntnisse: was daraus folgt\n"
-                         "Offen: was noch zu tun ist, nächster Schritt",
         "plan_revise": "Überarbeite den Plan: {feedback}",
     },
     "en": {
@@ -200,7 +192,7 @@ TEXTS = {
                           "need confirmation may be declined – then briefly say what would still be needed.)\n\n"
                           "Task: {task}",
         "routine_confirm": "Routine “{name}”: {reason}",
-        "context_note": "[Context – not written by the user: time {time}]",
+        "context_note": "[Context – not written by the user: {time}]",
         "auto_read_off": "read-only – Auto is off, so I ask anyway",
         "auto_files": "only changes files in your home folder (Auto: edit files)",
         "auto_full": "without root privileges (Auto)",
@@ -214,13 +206,6 @@ TEXTS = {
         "plan_skipped": "PLAN MODE: not executed – this action changes something. Add it to the plan as a step.",
         "plan_execute": "The plan is approved. Carry it out now, step by step.",
         "approved_plan": "Approved plan – carry it out now:",
-        "task_note": "Progress of this task so far (the context window was full, your previous steps were summarised "
-                     "here). Continue from there and do not repeat anything already done:",
-        "task_compress": "You summarise the progress of a running task of the AI assistant Jarvis because its context "
-                         "window is full. Jarvis then continues ONLY with your summary. Write in English, compact, "
-                         "no introduction:\nDone: which steps with which result (concrete values, paths, commands, "
-                         "package names, error messages verbatim)\nFindings: what follows from it\n"
-                         "Open: what is left to do, next step",
         "plan_revise": "Revise the plan: {feedback}",
     },
 }
@@ -250,7 +235,8 @@ Linux-PC des Nutzers und arbeitest mit Werkzeugen direkt im Code: Dateien lesen,
 (git, Build, Tests), Websuche für Dokumentation.
 
 Umgebung:
-- Heute ist {date}. System: {os} auf '{host}', Benutzer '{user}', Home {home}
+- Datum und Uhrzeit stehen im [Kontext]-Block vor jeder Nutzernachricht. System: {os} auf '{host}', Benutzer
+  '{user}', Home {home}
 - Projektordner: {project} – Shell-Befehle starten dort, relative Pfade beziehen sich darauf.
 
 Arbeitsweise:
@@ -270,7 +256,8 @@ Linux PC and work directly in the code with tools: read, search and write files,
 search for documentation.
 
 Environment:
-- Today is {date}. System: {os} on '{host}', user '{user}', home {home}
+- The date and time are in the [Context] block in front of each user message. System: {os} on '{host}', user
+  '{user}', home {home}
 - Project folder: {project} – shell commands start there, relative paths refer to it.
 
 Way of working:
@@ -372,16 +359,24 @@ def spoken(cfg, key: str, **values) -> str:
     return SPOKEN[lang_of(cfg)][key].format(**values)
 
 
-# Wechselnde Angaben (Uhrzeit, zur Frage gefundene Erinnerungen) stehen nicht im System-Prompt, sondern als Block vor
-# der aktuellen Nutzernachricht – so bleibt der Anfang des Prompts gleich und der Modell-Server kann seinen
-# Zwischenspeicher (KV-Cache) wiederverwenden. Der Block wird nie im Verlauf gespeichert.
+# Wechselnde Angaben (Datum/Uhrzeit, zur Frage gefundene Erinnerungen, Planmodus) stehen nicht im System-Prompt,
+# sondern als Block vor der jeweiligen Nutzernachricht. Der Block wird beim ersten Senden an der Nachricht gespeichert
+# und danach wörtlich wiederholt – so bleibt alles, was der Modell-Server schon kennt, gleich und er kann seinen
+# Zwischenspeicher (KV-Cache) weiterverwenden (wie die „system reminders“ von Claude Code).
 _NOTE_RE = re.compile(r"^\[(?:Kontext|Context)\b.*?\[/(?:Kontext|Context)\]\n*", re.S)
 
 
+def note_stamp(cfg, now: datetime) -> str:
+    """Datum und Uhrzeit für die Kontext-Notiz, z. B. „Freitag, 3. Oktober 2026, 14:32 Uhr“."""
+    date, time_ = format_date(cfg, now)
+    return f"{date}, {time_}" if lang_of(cfg) == "en" else f"{date}, {time_} Uhr"
+
+
 def context_note(cfg, time: str, memories: str = "", plan: bool = False, approved_plan: str = "",
-                 task_note: str = "") -> str:
+                 extra: str = "") -> str:
     """approved_plan: beim Ausführen hängt der freigegebene Plan an der aktuellen Nachricht – so fällt er beim
-    Kürzen des Verlaufs nie weg, auch wenn die Werkzeug-Ergebnisse der Ausführung viel Platz brauchen."""
+    Kürzen des Verlaufs nie weg, auch wenn die Werkzeug-Ergebnisse der Ausführung viel Platz brauchen.
+    extra: zusätzlicher Hinweis (z. B. „Aufgabe läuft noch“ nach einer Komprimierung)."""
     head = TEXTS[lang_of(cfg)]["context_note"].format(time=time)
     body = f"\n{SECTIONS[lang_of(cfg)]['memories']}\n{memories}" if memories else ""
     if plan:
@@ -389,11 +384,91 @@ def context_note(cfg, time: str, memories: str = "", plan: bool = False, approve
     if approved_plan.strip():
         clean = re.sub(r"\[/?(?:Kontext|Context)\b", "[", approved_plan.strip())  # Notiz-Ende nicht vortäuschen
         body += f"\n{TEXTS[lang_of(cfg)]['approved_plan']}\n{clean}"
-    if task_note.strip():  # Aufgabe wurde bei vollem Kontext komprimiert – hier steht, wie weit sie ist
-        clean = re.sub(r"\[/?(?:Kontext|Context)\b", "[", task_note.strip())
-        body += f"\n{TEXTS[lang_of(cfg)]['task_note']}\n{clean}"
+    if extra.strip():
+        body += "\n" + extra.strip()
     close = "[/Context]" if lang_of(cfg) == "en" else "[/Kontext]"
     return f"{head}{body}\n{close}\n\n"
+
+
+# ---------------------------------------------------------------- Komprimierung (wie Claude Codes Auto-Compact)
+COMPACT = {
+    "de": {
+        "head": "(System: Das Kontextfenster ist fast voll. Rufe KEIN Werkzeug auf und antworte nicht dem Nutzer. "
+                "Schreibe stattdessen eine Zusammenfassung des bisherigen Chats – danach arbeitest du NUR mit dieser "
+                "Zusammenfassung und den letzten Schritten weiter. Steht oben schon eine frühere Zusammenfassung, "
+                "arbeite sie ein (nichts Wichtiges streichen, Älteres darf knapper werden). Auf Deutsch, sachlich, "
+                "Stichpunkte, höchstens etwa {words} Wörter, ohne Einleitung, genau diese Abschnitte:",
+        "tools": "1. Anliegen: was der Nutzer wollte und will (alle Bitten, auch frühere)\n"
+                 "2. Wichtige Fakten und Werte: Namen, Zahlen, Termine/Daten, Dokument- und Mail-IDs, Geräte, "
+                 "Pfade, Einstellungen – wörtlich\n"
+                 "3. Erledigt: welche Schritte/Werkzeuge mit welchem Ergebnis\n"
+                 "4. Fehler und Lösungen\n"
+                 "5. Vorlieben und Entscheidungen des Nutzers in diesem Chat\n"
+                 "6. Alle Nutzernachrichten: kurz, die letzten wörtlich\n"
+                 "7. Offen: was noch zu tun ist\n"
+                 "8. Aktuell: woran zuletzt gearbeitet wurde\n"
+                 "9. Nächster Schritt – mit wörtlichem Zitat der letzten Bitte des Nutzers",
+        "coding": "1. Anliegen: was der Nutzer wollte und will (alle Bitten, auch frühere)\n"
+                  "2. Technischer Kontext: Stack, Projektaufbau, wichtige Befehle (Build/Test), Konventionen\n"
+                  "3. Dateien und Code: welche Dateien gelesen/geändert wurden und warum, wichtige Funktionen, "
+                  "Signaturen und kurze Code-Stellen wörtlich\n"
+                  "4. Fehler und Lösungen: Fehlermeldungen wörtlich, was geholfen hat\n"
+                  "5. Entscheidungen und Rückmeldungen des Nutzers\n"
+                  "6. Alle Nutzernachrichten: kurz, die letzten wörtlich\n"
+                  "7. Offen: was noch zu tun ist, Teststatus\n"
+                  "8. Aktuell: woran zuletzt gearbeitet wurde (Datei, Stelle)\n"
+                  "9. Nächster Schritt – mit wörtlichem Zitat der letzten Bitte des Nutzers",
+        "focus": "Besonders wichtig laut Nutzer: {focus}",
+        "user_list": "Nutzernachrichten seit der letzten Zusammenfassung (gekürzt):",
+        "files": "Berührte Dateien und Ordner:",
+        "continue": "(System: Die Aufgabe läuft noch – der Kontext wurde dazwischen zusammengefasst. Mach beim "
+                    "nächsten Schritt weiter und wiederhole nichts, was laut Zusammenfassung schon erledigt ist.)",
+    },
+    "en": {
+        "head": "(System: The context window is almost full. Do NOT call a tool and do not answer the user. Instead "
+                "write a summary of the conversation so far – afterwards you continue ONLY with this summary and the "
+                "latest steps. If there is an earlier summary above, merge it in (drop nothing important, older "
+                "parts may get shorter). In English, factual, bullet points, at most about {words} words, no "
+                "preamble, exactly these sections:",
+        "tools": "1. Request: what the user wanted and wants (all requests, earlier ones too)\n"
+                 "2. Key facts and values: names, numbers, appointments/dates, document and mail IDs, devices, "
+                 "paths, settings – verbatim\n"
+                 "3. Done: which steps/tools with which result\n"
+                 "4. Errors and fixes\n"
+                 "5. The user's preferences and decisions in this chat\n"
+                 "6. All user messages: short, the latest verbatim\n"
+                 "7. Open: what is left to do\n"
+                 "8. Current: what was being worked on last\n"
+                 "9. Next step – quoting the user's latest request verbatim",
+        "coding": "1. Request: what the user wanted and wants (all requests, earlier ones too)\n"
+                  "2. Technical context: stack, project layout, key commands (build/test), conventions\n"
+                  "3. Files and code: which files were read/changed and why, key functions, signatures and short "
+                  "code snippets verbatim\n"
+                  "4. Errors and fixes: error messages verbatim, what helped\n"
+                  "5. The user's decisions and feedback\n"
+                  "6. All user messages: short, the latest verbatim\n"
+                  "7. Open: what is left to do, test status\n"
+                  "8. Current: what was being worked on last (file, place)\n"
+                  "9. Next step – quoting the user's latest request verbatim",
+        "focus": "Especially important according to the user: {focus}",
+        "user_list": "User messages since the last summary (shortened):",
+        "files": "Files and folders touched:",
+        "continue": "(System: The task is still running – the context was summarised in between. Continue with the "
+                    "next step and do not repeat anything the summary lists as done.)",
+    },
+}
+
+
+def compact_instruction(cfg, mode: str, words: int, focus: str = "") -> str:
+    t = COMPACT[lang_of(cfg)]
+    out = t["head"].format(words=words) + "\n" + t["coding" if mode == "coding" else "tools"]
+    if focus.strip():
+        out += "\n" + t["focus"].format(focus=focus.strip())
+    return out + ")"
+
+
+def compact_text(cfg, key: str) -> str:
+    return COMPACT[lang_of(cfg)][key]
 
 
 def strip_context_note(text: str) -> str:

@@ -66,10 +66,22 @@ def test_retry_when_the_context_overflows(cfg, memory):
 
 
 def test_compacting_is_shown(cfg, llm, memory):
-    memory.conversation.needs_compact = lambda budget: True
-    events = collect(Agent(cfg, llm, memory), "Hallo")
-    compact = [e for e in events if e["type"] == "llm_phase" and e["id"] == events[-1]["id"]]
-    assert [e["phase"] for e in compact] == ["compact", "done"] and compact[1]["compact"] is True
+    for i in range(12):
+        memory.conversation.add({"role": "user", "content": f"Frage {i} " + "x" * 2000})
+        memory.conversation.add({"role": "assistant", "content": f"Antwort {i}"})
+    agent = Agent(cfg, llm, memory)
+    events = []
+
+    async def emit(ev):
+        events.append(ev)
+
+    assert run(agent.compact_now(emit))
+    rows = [e for e in events if e["type"] == "llm_phase"]
+    start = next(e for e in rows if e["phase"] == "compress")
+    done = next(e for e in rows if e.get("compress"))
+    assert start["id"] == done["id"] and done["after"] < done["before"] and done["seconds"] >= 0
+    assert any(e["type"] == "compacted" and e["summary"] for e in events)
+    assert any(e.get("prewarm") for e in rows)  # danach gleich vorgewärmt – die nächste Frage wartet nicht
 
 
 def test_prompt_phase_reports_reload_after_vision_and_cached_part(cfg, llm, memory):

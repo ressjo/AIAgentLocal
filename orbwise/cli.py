@@ -96,6 +96,11 @@ def cmd_doctor(args) -> None:
                 n_ctx = asyncio.run(OpenAICompatLLM(p).server_context())
                 if n_ctx:
                     print(f"    ℹ {T('Kontextfenster laut Server', 'Context window reported by server')}: {n_ctx} Token")
+                slots = asyncio.run(OpenAICompatLLM(p).server_props()).get("total_slots")
+                if isinstance(slots, int) and slots > 1:  # Anfragen landen in verschiedenen Slots → Cache geteilt
+                    print(f"    ℹ {slots} Slots – " + T(
+                        "für den Prompt-Cache besser einer: llama-server mit -np 1 starten",
+                        "one is better for the prompt cache: start llama-server with -np 1"))
     print(T("Sprache:", "Voice:"))
     from .voice.listen import WakeWordFactory, WhisperSTT
     from .voice.tts import PiperTTS

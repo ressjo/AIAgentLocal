@@ -111,9 +111,41 @@ class Hub:
         self.pending: dict[str, asyncio.Future] = {}
         self.editable_pending: set[str] = set()
         self.tasks: set[asyncio.Task] = set()
+        self._prewarm: asyncio.Task | None = None
+        self._prewarm_again = False
         self.stt = stt
         self.wake = wake
         self.speaker = Speaker(speaker_tts, self.broadcast_tts, lambda: any(c.tts for c in self.clients))
+
+    def prewarm_soon(self) -> None:
+        """Den Prompt-Anfang des offenen Chats im Leerlauf einlesen lassen (nach Chatwechsel, Telegram/Routine,
+        beim Tippen …) – die nächste Frage liest dann nur noch ihren neuen Teil ein. Siehe Agent.prewarm."""
+        if self._prewarm and not self._prewarm.done():
+            self._prewarm_again = True  # läuft noch (vielleicht für den vorigen Chat) – danach noch einmal prüfen
+            return
+        if self.agent.lock.locked() or not self.agent.cache_cold():
+            return
+        self._prewarm = asyncio.create_task(self._prewarm_loop())
+
+    async def _prewarm_loop(self) -> None:
+        try:
+            while True:
+                self._prewarm_again = False
+                await self.agent.prewarm(self.broadcast)
+                if not self._prewarm_again:
+                    return
+        except Exception as e:  # noqa: BLE001 – Vorwärmen ist nur eine Beschleunigung
+            log.info("Vorwärmen fehlgeschlagen: %s", e)
+
+    async def compact(self, focus: str = "") -> None:
+        """„/compact [Fokus]“ oder der Knopf an der Kontext-Kachel: den offenen Chat jetzt zusammenfassen."""
+        try:
+            done = await self.agent.compact_now(self.emit, focus)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Komprimieren fehlgeschlagen: %s", e)
+            done = False
+        if not done:
+            await self.broadcast({"type": "compact_skipped"})
 
     async def broadcast(self, event: dict) -> None:
         await asyncio.gather(*(c.send(event) for c in list(self.clients)))
@@ -204,6 +236,12 @@ class Hub:
         text = text.strip()
         if not text or (source == "voice" and self.coding()):
             return  # im Coding-Modus gibt es keine Spracheingabe
+        command = re.match(r"^/(compact|komprimieren)\b\s*(.*)$", text, re.I | re.S)
+        if command and source != "voice":  # wie in Claude Code: /compact [worauf es ankommt]
+            task = asyncio.create_task(self.compact(command.group(2)))
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
+            return
         if self.plan_pending and plan is None and not self.pending:
             # Kurzes „ja/ausführen“ bzw. „nein“ entscheidet über den offenen Plan; alles andere ersetzt ihn
             decision = parse_yes_no(text) if len(text.split()) <= 4 else None
@@ -244,7 +282,7 @@ class Hub:
             log.exception("Agent-Fehler")
             await self.emit({"type": "error", "text": f"Interner Fehler: {e}"})
         finally:
-            if not self.agent.lock.locked():
+            if not self.agent.busy():
                 await self.broadcast({"type": "state", "state": "idle"})
 
     async def stop(self) -> int:
@@ -501,7 +539,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     async def idle_if_free() -> None:
         """Oberfläche auf „bereit“ setzen – nur, wenn gerade keine Anfrage läuft."""
-        if not agent.lock.locked():
+        if not agent.busy():
             await hub.broadcast({"type": "state", "state": "idle"})
 
     async def start_model() -> None:
@@ -554,6 +592,8 @@ def create_app(cfg: Config) -> FastAPI:
             tg_state.parent.mkdir(parents=True, exist_ok=True)
             tg_state.write_text(json.dumps({"chat_id": chat_id}), encoding="utf-8")
             await hub.broadcast({"type": "chats_changed"})
+            if hub.clients:  # der Server hatte eben den Telegram-Chat im Cache – den offenen Chat wieder einlesen
+                hub.prewarm_soon()
             await idle_if_free()
             return answer
 
@@ -649,8 +689,10 @@ def create_app(cfg: Config) -> FastAPI:
         await hub.broadcast({"type": "routine_done", "id": rid, "name": r.name, "chat_id": chat_id,
                              "status": status, "summary": summary})
         await hub.broadcast({"type": "chats_changed"})
-        if not agent.lock.locked():
+        if not agent.busy():
             await hub.broadcast({"type": "state", "state": "idle"})
+        if hub.clients:  # die Routine hat den Cache des Servers belegt – den offenen Chat im Leerlauf zurückholen
+            hub.prewarm_soon()
         if shutil.which("notify-send"):
             await proc.launch(["notify-send", "--app-name=Orbwise", f"Orbwise – {r.name}",
                                summary[:200] or prompts.spoken(cfg, "routine_done")], wait=1)
@@ -684,6 +726,9 @@ def create_app(cfg: Config) -> FastAPI:
                     done = await memory.summarize_pending()
                     if done:
                         log.info("Tageszusammenfassungen erstellt: %s", ", ".join(done))
+                        agent._cache_owner = None  # der Server hatte dafür andere Texte im Cache
+                        if hub.clients:
+                            hub.prewarm_soon()
                 except Exception as e:  # noqa: BLE001
                     log.warning("Zusammenfassungen fehlgeschlagen: %s", e)
             await asyncio.sleep(300)
@@ -735,7 +780,7 @@ def create_app(cfg: Config) -> FastAPI:
             },
             "trilium": await trilium_status(cfg),
             "calendar": await calendar_status(cfg),
-            "busy": agent.lock.locked(),
+            "busy": agent.busy(),
             "telegram": telegram_bot.status if telegram_bot is not None else {"running": False, "configured": False},
         }
 
@@ -908,6 +953,8 @@ def create_app(cfg: Config) -> FastAPI:
             await idle_if_free()
         await hub.broadcast({"type": "model_active", "name": name})
         remember_mode_model(mode_info()["mode"], name)  # gilt ab jetzt für diesen Modus
+        agent._cache_owner = None  # neues Modell = leerer Cache → offenen Chat gleich einlesen
+        hub.prewarm_soon()
         return {"ok": True, "active": llm.active}
 
     @app.get("/api/reminders")
@@ -941,10 +988,19 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/history")
     async def history():
+        """Der ganze sichtbare Chat (die letzten 40 Nachrichten) – auch komprimierte Teile; dazu, wo eine
+        Komprimierung stattfand (Trenner mit aufklappbarer Zusammenfassung)."""
         conv = memory.active
-        msgs = [m for m in conv.history if m["role"] in ("user", "assistant") and m.get("content")]
-        return {"summary": conv.running_summary, "chat": {"id": conv.chat_id, "title": conv.meta.get("title", "")},
-                "messages": [{"role": m["role"], "content": m["content"]} for m in msgs[-40:]]}
+        shown = [(i, m) for i, m in enumerate(conv.history)
+                 if m["role"] in ("user", "assistant") and m.get("content")][-40:]
+        epochs = []
+        for ep in conv.epochs[1:]:
+            at = next((pos for pos, (i, _) in enumerate(shown) if i >= ep.get("start", 0)), None)
+            if at is not None and ep.get("summary"):
+                epochs.append({"at": at, "summary": ep["summary"], "ts": ep.get("ts"), "reason": ep.get("reason", "")})
+        first = conv.epochs[0].get("summary", "") if conv.epochs else ""  # Zusammenfassung aus älteren Versionen
+        return {"summary": first, "chat": {"id": conv.chat_id, "title": conv.meta.get("title", "")},
+                "messages": [{"role": m["role"], "content": m["content"]} for _, m in shown], "epochs": epochs}
 
     # ---------- Chat-Historie ----------
     def chat_or_404(chat_id: str) -> None:
@@ -952,7 +1008,7 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(404, "Chat nicht gefunden")
 
     def not_busy() -> None:
-        if agent.lock.locked():
+        if agent.busy():
             raise HTTPException(409, "Jarvis arbeitet gerade – bitte kurz warten oder STOP drücken")
 
     def mode_info() -> dict:
@@ -964,6 +1020,7 @@ def create_app(cfg: Config) -> FastAPI:
         conv = memory.active
         await hub.broadcast({"type": "chat_switched", "id": conv.chat_id, "title": conv.meta.get("title", ""),
                              **mode_info()})
+        hub.prewarm_soon()  # anderer Chat → seinen Anfang schon einlesen, bevor die erste Frage kommt
 
     @app.get("/api/chats")
     async def chats(q: str = "", mode: str = ""):
@@ -1244,11 +1301,13 @@ def create_app(cfg: Config) -> FastAPI:
         client = Client(ws)
         client.audio = AudioSession(cfg.voice, stt, wake, client.send, lambda t: hub.submit(t, "voice"))
         hub.clients.add(client)
-        await client.send({"type": "hello", "busy": agent.lock.locked(),
+        await client.send({"type": "hello", "busy": agent.busy(),
                            "pending": [cid for cid in hub.pending], "context": agent.last_context,
                            **mode_info()})
         await client.send(startup.snapshot())
         await client.send({"type": "sudo_cached", "until": broker.cached_until()})
+        if not getattr(llm, "switching", None):
+            hub.prewarm_soon()  # Oberfläche offen → den Chat schon einlesen, bevor die erste Frage kommt
         if hub.undelivered:
             events, hub.undelivered = hub.undelivered, []
             for event in events:
@@ -1285,6 +1344,12 @@ def create_app(cfg: Config) -> FastAPI:
                     broker.answer(str(data.get("id", "")), None)
                 elif t == "think":
                     hub.think = bool(data.get("enabled"))
+                elif t == "prewarm":  # die Oberfläche merkt: gleich kommt eine Frage (Tippen, Sprechen)
+                    hub.prewarm_soon()
+                elif t == "compact":  # Knopf an der Kontext-Kachel
+                    task = asyncio.create_task(hub.compact(str(data.get("focus", ""))[:500]))
+                    hub.tasks.add(task)
+                    task.add_done_callback(hub.tasks.discard)
                 elif t == "auto_mode":
                     mode = str(data.get("mode", "read"))
                     hub.agent.auto_mode = mode if mode in ("off", "read", "files", "auto") else "read"
@@ -1314,7 +1379,7 @@ def create_app(cfg: Config) -> FastAPI:
                     hub.speaker.stop()
                 elif t == "reset_conversation":
                     # NEU-Knopf: neuer Chat (der bisherige bleibt in der Historie)
-                    if not agent.lock.locked():
+                    if not agent.busy():
                         memory.new_chat()
                         await hub.broadcast({"type": "conversation_reset"})
                         await chat_switched()

@@ -8,6 +8,12 @@ from orbwise.llm import FakeLLM
 from orbwise.memory import Memory
 
 
+@pytest.fixture(autouse=True)
+def _own_cache_dir(tmp_path: Path, monkeypatch):
+    """Große Werkzeug-Ausgaben (proc.clip_saved) landen im Test-Ordner, nicht in ~/.cache."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+
 @pytest.fixture
 def cfg(tmp_path: Path) -> Config:
     c = Config()

@@ -4,7 +4,7 @@
     journal/YYYY-MM-DD.md     Rohprotokoll jedes Tages
     summaries/YYYY-MM-DD.md   Tageszusammenfassungen
     facts.md                  dauerhafte Fakten
-    chats/<id>.json           Chats (Verlauf + laufende Zusammenfassung), chats/active = aktueller Chat
+    chats/<id>.json           Chats (Verlauf + Zusammenfassungen je Epoche), chats/active = aktueller Chat
     index.sqlite              Suchindex (aus den .md-Dateien rekonstruierbar)
 """
 
@@ -177,8 +177,9 @@ class Memory:
         return await self.index.search(query, k=self.cfg.retrieval_top_k, exclude_after=exclude_after,
                                        exclude_source=f"chat:{chat}" if chat else None)
 
-    def format_hits(self, hits: list[Hit], budget: int | None = None) -> str:
-        """Treffer nach Relevanz (beste zuerst), bis das Budget voll ist – weniger Budget behält die besten."""
+    def format_hits(self, hits: list[Hit], budget: int | None = None, taken: list[int] | None = None) -> str:
+        """Treffer nach Relevanz (beste zuerst), bis das Budget voll ist – weniger Budget behält die besten.
+        taken: sammelt die IDs der aufgenommenen Treffer (damit sie in derselben Epoche nicht noch einmal kommen)."""
         out, used = [], 0
         budget = self.cfg.retrieval_max_tokens if budget is None else budget
         labels = {"journal": "Gespräch", "summary": "Tageszusammenfassung", "fact": "Fakt"}
@@ -189,6 +190,8 @@ class Memory:
                 continue
             out.append(entry)
             used += t
+            if taken is not None:
+                taken.append(h.id)
         return "\n\n".join(out)
 
     def facts_text(self) -> str:

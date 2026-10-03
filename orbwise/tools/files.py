@@ -15,6 +15,7 @@ from .registry import BLOCKED, CONFIRM, SAFE, ToolContext, tool
 from .secretpaths import is_secret_path, secret_reason
 
 TEXT_LIMIT = 8000
+READ_MAX_BYTES = 4_000_000  # größere Dateien werden nur bis hier gelesen (seitenweise)
 SKIP_DIRS = {".git", "node_modules", ".cache", "__pycache__", ".venv", ".local/share/Trash", ".steam"}
 
 
@@ -171,18 +172,42 @@ def _read_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     return SAFE, ""
 
 
-@tool("Liest eine Textdatei (z. B. Konfiguration, Log, Notiz) und gibt den Inhalt zurück.", risk=_read_risk)
-async def read_file(ctx: ToolContext, path: Annotated[str, "Pfad zur Datei"]) -> str:
+@tool("Liest eine Textdatei (z. B. Konfiguration, Log, Notiz, Quellcode) und gibt den Inhalt zurück. Große Dateien "
+      "seitenweise: offset = erste Zeile (ab 1), limit = Anzahl Zeilen.", risk=_read_risk)
+async def read_file(
+    ctx: ToolContext,
+    path: Annotated[str, "Pfad zur Datei"],
+    offset: Annotated[int, "Optional: ab dieser Zeile lesen (1 = Anfang)"] = 0,
+    limit: Annotated[int, "Optional: höchstens so viele Zeilen"] = 0,
+) -> str:
     p = ctx.path(path)
     if not p.is_file():
         return f"Datei nicht gefunden: {p}"
     try:
-        data = p.read_bytes()[: TEXT_LIMIT * 4]
+        with p.open("rb") as f:
+            data = f.read(READ_MAX_BYTES)
     except PermissionError:
         return f"Keine Leseberechtigung für {p} (ggf. mit run_shell und sudo lesen)."
     if b"\x00" in data[:4096]:
         return f"{p} ist eine Binärdatei ({_human_size(p.stat().st_size)}). Zum Anzeigen open_file nutzen."
-    return proc.clip(data.decode(errors="replace"), TEXT_LIMIT)
+    text = data.decode(errors="replace")
+    room = min(TEXT_LIMIT, ctx.limit() * 4 // 3)
+    if not offset and not limit and len(text) <= room:
+        return text
+    # Seitenweise statt „Mitte abgeschnitten“: ganze Zeilen ab offset, bis der Platz voll ist – mit Hinweis,
+    # wo es weitergeht (wie das Read-Werkzeug von Claude Code)
+    lines = text.splitlines()
+    start = max(0, int(offset) - 1)
+    chosen, used = [], 0
+    for line in lines[start:]:
+        if (limit and len(chosen) >= int(limit)) or (chosen and used + len(line) + 1 > room):
+            break
+        chosen.append(line if len(line) <= room else line[:room] + " …")
+        used += len(line) + 1
+    end = start + len(chosen)
+    more = f" – weiter mit offset={end + 1}" if end < len(lines) else ""
+    cut = " (Datei größer als gelesen)" if len(data) >= READ_MAX_BYTES else ""
+    return f"[{p}: Zeilen {start + 1}–{end} von {len(lines)}{cut}{more}]\n" + "\n".join(chosen)
 
 
 async def _resolve_target(ctx: ToolContext, target: str) -> tuple[Path | None, str]:

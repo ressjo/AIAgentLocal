@@ -54,8 +54,9 @@ memory:
   dir: ~/.local/share/orbwise/memory
   # context_budget_tokens: 11000  # only to cap the prompt – default: automatic from the model's context window
   retrieval_top_k: 6
-  # retrieval_max_tokens: 1500   # max. size of the recalled memory snippets per request
+  # retrieval_max_tokens: 1500   # recalled memory snippets in the first question of a context epoch (later: ⅓, only new)
   # facts_max_tokens: 1200       # max. size of the permanent facts (profile) in the prompt
+  # compact_idle: true           # compress a nearly full context right after an answer instead of before the next question
   summarize_idle_minutes: 15
 
 voice:

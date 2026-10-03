@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Context handling like Claude Code** – fast on slow graphics cards, without forgetting:
+  - Between two compactions the prompt only grows at the end: date/time, memories and the approved plan are frozen
+    into the note in front of each question, facts and tool groups are a snapshot. llama-server and Ollama therefore
+    only read what is new – no more re-reading the whole chat after an answer, `remember`, a new topic or a Telegram
+    message. Later questions get fewer and only new memories; Coding mode adds none by itself (`recall` on demand).
+  - When the window is nearly full (16k: ~87 %, with thinking earlier), the model writes one structured summary
+    (request, facts, files and commands, errors and fixes, decisions, all user messages, open points, current work,
+    next step) from the cached prompt; the chat continues with the summary, the current question and the last step,
+    and a running task carries on by itself. Right after an answer this happens while you read
+    (`memory.compact_idle`). Everything stays in the chat (a divider with the summary), the journal and the search
+    index, which can bring compacted details back. `/compact [focus]` or a click on the CONTEXT tile compacts by hand.
+  - Orbwise pre-reads the chat in the background after Telegram, routines, daily summaries and chat, mode or model
+    switches, and when you start typing or recording.
+  - Big tool output is limited at the source: `read_file` reads page by page (`offset`/`limit`), long shell, log and
+    web output keeps start and end and saves the full text in `~/.cache/orbwise/outputs/` for the model to read on.
+  - `orbwise doctor` points out a llama-server with several slots (`-np 1` keeps one cache).
 - **Tools and Coding mode** (switch top left): Coding loads only files, shell, web and memory tools (≈ 2k instead of
   ≈ 10k tokens of tool descriptions), uses a developer prompt, has no voice (no read-aloud, push-to-talk or wake word)
   and a wider chat. Separate chat histories per mode, a project folder per coding chat (working directory for shell
@@ -21,8 +37,9 @@ All notable changes to this project are documented here. The format follows
 - **Activity shows what the model is doing between tools:** one live "Model" row per step with a running timer –
   reading the prompt (how many new tokens, how much is cached, estimated time or real progress with llama-server),
   thinking, writing a tool call (e.g. `write_file` with its size), answering, reloading after image analysis,
-  retrying with a trimmed context and folding older history. Afterwards the row sums up where the time went
-  (tokens read and how long, tokens written, tok/s, model load time). The current phase also shows under the orb.
+  retrying with a trimmed context, summarising the chat, adding tools and pre-reading the chat. Afterwards the row
+  sums up where the time went (tokens read and how long, tokens written, tok/s, model load time). The current phase
+  also shows under the orb.
 - **Auto button for read-only commands** (next to *Think*, on by default): many more harmless commands are recognised
   as read-only and run without a confirmation – containers (`docker/podman ps|images|logs`, `kubectl get`), packages
   (`dpkg -l`, `rpm -q`, `apt list`, `flatpak list`, `pip list`, `ollama list`), network (`nmcli … show/status`,
@@ -49,13 +66,10 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 - The context tile showed a moving limit (e.g. "9k/8k", later "11k/9k"): it divided an estimate by a budget that
   changed with the thinking reserve and the learned token estimate. It now shows real tokens (from the model server
-  when known) against the fixed context window of the model; reserve and the 90 % compression point are in the
-  tooltip.
+  when known) against the fixed context window of the model; reserve and the compaction point are in the tooltip.
 - **Long tasks no longer die at a full context window** (e.g. "16k of 16k – increase the window" and the work was
-  gone): at 90 % of the window Orbwise pauses the task once, has the model summarise its progress and continues
-  automatically with that summary; the steps stay saved. In between the prompt only grows at the end, so the model
-  server keeps its cache (no re-reading on every step on slow graphics cards). If the server still refuses, finished
-  steps are kept and "continue" picks up there. Thinking keeps more room free; clearer error message.
+  gone): Orbwise compacts the context and carries on (see *Context handling* above). If the server still refuses,
+  finished steps are kept and "continue" picks up there. Thinking keeps more room free; clearer error message.
 - A message with many tool calls showed a wall of `run_shell` chips; now only the current call is shown, with a
   "+N earlier" link that opens the activity panel.
 - Installer, `bootstrap.sh` and all links point to the renamed repository `ressjo/orbwise-linux-agent` (they pointed to

@@ -182,8 +182,8 @@ def test_telegram_plan_with_buttons(cfg):
 
 
 def test_approved_plan_stays_pinned_to_the_current_turn(cfg, memory):
-    """Beim Ausführen hängt der Plan an der aktuellen Nachricht – er fällt beim Kürzen nie weg und landet nicht
-    doppelt im gespeicherten Verlauf."""
+    """Beim Ausführen hängt der Plan an der aktuellen Nachricht – er überlebt auch eine Komprimierung und landet
+    nicht doppelt im gespeicherten Verlauf."""
     llm = ThinkRecorder()
     agent = Agent(cfg, llm, memory)
     plan = "## Plan\n1. Cache leeren [/Kontext]\n2. Logs kürzen"
@@ -200,10 +200,10 @@ def test_approved_plan_stays_pinned_to_the_current_turn(cfg, memory):
     cfg.memory.context_budget_tokens = 3000
     run(agent.run("Der Plan ist freigegeben. Führe ihn jetzt Schritt für Schritt aus.", emit, confirm,
                   approved_plan=plan))
-    sent = llm.calls[0]
+    sent = llm.calls[-1]  # der eigentliche Schritt (davor wurde der alte Verlauf zusammengefasst)
     last_user = [m for m in sent if m["role"] == "user"][-1]["content"]
     assert "Freigegebener Plan" in last_user and "2. Logs kürzen" in last_user
     assert last_user.count("[/Kontext]") == 1  # der Plan kann die Notiz nicht vorzeitig beenden
     assert not any("Logs kürzen" in (m.get("content") or "") for m in memory.conversation.history)
-    assert "Frage 0 " not in str(sent)  # alter Verlauf wurde tatsächlich gekürzt
-    assert agent._approved_plan == ""
+    assert "Frage 0 " not in str(sent)  # alter Verlauf steht nur noch in der Zusammenfassung
+    assert len(memory.conversation.epochs) == 2 and agent._approved_plan == ""

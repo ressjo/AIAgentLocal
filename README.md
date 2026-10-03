@@ -169,38 +169,54 @@ Everything is stored as readable files in `~/.local/share/orbwise/memory/`:
 | `journal/2026-09-27.md` | Complete log of the day – every question, answer and tool call |
 | `summaries/2026-09-27.md` | Daily summary, generated automatically (day change or 15 min idle) |
 | `facts.md` | Permanent facts ("The NAS is mounted at /mnt/nas") – editable by hand |
-| `chats/<id>.json` | One chat: messages, running summary, title, star (`chats/active` = current chat) |
+| `chats/<id>.json` | One chat: all messages, the summary of each compacted part, title, star (`chats/active` = current chat) |
 | `index.sqlite` | Search index (full text + embeddings) – just a cache, rebuild with `orbwise reindex` |
 
-**How the context stays small:** every prompt has a budget derived from the model's real context window (minus
-room for the answer). It is filled with the system prompt, facts, the **most relevant memories** (hybrid search:
-BM25 full text + bge-m3 embeddings, slight preference for recent entries), the running summary and the latest
-messages. When a chat gets long, the oldest messages are folded into the running summary by the LLM – they stay
-complete in the journal and index and are retrieved again when relevant. Long tool results are trimmed instead of
-overflowing the model. The **CONTEXT** tile shows how full the prompt is.
+**How the context stays small – and fast:** Orbwise handles the context like Claude Code. Between two compactions
+the prompt **only grows at the end**: instructions, tools, earlier messages and the note in front of each of your
+questions (date and time, memories, the approved plan) stay byte for byte the same once they were sent. llama.cpp
+(Bonsai) and Ollama therefore reuse what they already processed and only read the new part – a slow graphics card does
+not have to re-read the conversation for every question or tool step. The CONTEXT tile's tooltip shows how many tokens
+came from the cache.
 
-**What happens when the context is full?** Nothing breaks – in this order:
+- **Memories** (hybrid search: BM25 full text + bge-m3 embeddings, slight preference for recent entries): the first
+  question of a chat gets up to `memory.retrieval_max_tokens`, later questions a third of that and only what was not
+  shown yet. Coding mode adds none by itself – there the model calls `recall` when it needs something.
+- **Facts** are a snapshot: `remember` saves right away and the model knows the new fact from the tool result, but it
+  moves into the instructions only with the next compaction (otherwise the whole prompt would be re-read).
+- **Tools:** if all tool descriptions fit comfortably (≤ 30 % of the budget), all of them are always sent. With small
+  windows see [below](#models--profiles); a tool group once added stays until the next compaction.
+- **Long tool output is limited at the source** to ~15 % of the window per result. `read_file` reads big files page by
+  page (`offset`/`limit`: "lines 1–300 of 1,240 – continue with offset=301") instead of silently cutting the middle;
+  long shell, log and web output keeps its start and end, the full text is saved in `~/.cache/orbwise/outputs/` (only
+  readable by you, the last 40 are kept) and the model can read the rest from there.
 
-1. From ~85 % of the history budget on, the oldest messages are condensed into the running summary after an
-   answer (the tile then says *condensed*).
-2. Long tool results (web pages, documents, logs) of older turns are shortened to an excerpt; the latest turn stays
-   complete, and Orbwise simply calls the tool again if it needs the details.
-3. **Long tasks** (many tool rounds in one request): when the next step would fill **90 % of the model's context
-   window**, Orbwise pauses the task once, lets the model summarise its progress (done steps with concrete results,
-   findings, what is left) and carries on automatically with that summary instead of the raw steps. The steps stay
-   saved in the chat. This happens rarely and in one go – in between the prompt only grows at the end, so the model
-   server keeps reusing its cache and a slow graphics card does not have to re-read everything on every step.
-   The activity panel shows "context 91 % full – task paused".
-4. If a single request is still too big, the oldest messages are left out and the current turn's tool results are
-   trimmed (*trimmed*); if the model server still refuses the prompt, Orbwise compresses the task and retries.
-5. If even that does not fit, the finished steps stay in the chat (instead of being thrown away) and "say
-   *continue*" picks up there. With thinking on, more room is kept free for the reasoning.
+**What happens when the context is full?** Nothing is lost, and it happens rarely – like *auto-compact* in Claude Code:
 
-**Faster answers through the prompt cache:** the start of the prompt (instructions, facts, summary, tools and the
-earlier conversation) stays identical from one message to the next – the current time and the memories found for
-the question are placed in front of your new message instead. llama.cpp (Bonsai) and Ollama can therefore reuse
-what they already processed and only read the new part; the tile tooltip shows how many tokens came from the
-cache. Orbwise also learns from the model server's real token counts, so the budget is used precisely.
+1. Before a request would come close to the model's window (16k: from ~14.2k tokens, 87 %; with thinking ~13.4k;
+   32k: ~29k), Orbwise pauses once and lets the model write a **structured summary**: the request, important facts and
+   values, files and commands, errors and fixes, decisions, all your messages, what is still open, the current work
+   and the next step. The request for it is the current prompt plus one instruction, so the model server reads almost
+   nothing new. Orbwise itself appends your recent messages and the files that were touched, so they do not depend
+   on the model.
+2. The chat goes on with a fresh context: instructions, current facts, the summary, your current question (with its
+   note and the approved plan) and the last step word for word. In the middle of a task Orbwise simply carries on.
+3. If an answer is finished and the next question would no longer fit anyway, Orbwise compacts right away while you
+   read (`memory.compact_idle`, on by default) and warms the cache up again – the next question starts immediately.
+4. Nothing is deleted: the chat keeps every message (a divider *Context summarised* with the summary to expand marks
+   the spot), journal and search index keep everything, and the search brings details from the compacted part back
+   when they are relevant.
+5. **By hand:** type `/compact` (or `/komprimieren`), optionally with a focus – `/compact keep the error messages` – or
+   click the CONTEXT tile.
+6. If the model server still refuses a prompt as too large, Orbwise compacts and continues; if even that does not fit,
+   the finished steps stay in the chat and "say *continue*" picks up there. With thinking on, more room is kept free
+   for the reasoning.
+
+**Pre-reading the chat:** Telegram, routines and daily summaries use the same model server and overwrite its cache.
+Afterwards – and after switching chat, mode or model – Orbwise reads the current chat in the background as soon as
+nothing else runs, and again when you start typing or recording if needed. The activity panel shows it as
+*pre-reading the chat*; the next question then only reads its new part. See also the
+[prompt cache tips](#prompt-cache-tips).
 
 ### Chat history
 
@@ -279,8 +295,23 @@ llm:
 The `api_key` keeps websites in your browser from talking to the llama-server.
 
 **Small context windows** (e.g. 8k): Orbwise then sends only the core tools plus the tool groups that match the
-request (e.g. Home Assistant tools only when you talk about lights or heating). You can also switch tools or whole
-groups off: `tools: {disabled: [sysadmin, paperless]}`.
+request (e.g. Home Assistant tools only when you talk about lights or heating). A group once added stays until the
+next compaction, so the start of the prompt does not change with every question (the activity shows "tools added –
+one-off re-read"). You can also switch tools or whole groups off: `tools: {disabled: [sysadmin, paperless]}`.
+
+#### Prompt cache tips
+
+How long the model reads before it answers depends mostly on how much of the prompt the model server can reuse. The
+activity panel shows it for every step ("1,240 tokens read in 4 s (+11,980 cached)") – after the first question in
+a chat only the new part should be read.
+
+- **llama-server:** start it with **one slot** (`-np 1` – the Bonsai profile does that); with several slots requests
+  can land in different caches, `orbwise doctor` points this out. Optionally `--cache-reuse 256` lets the server reuse
+  matching blocks even after a change further up (e.g. when a tool group is added).
+- **Ollama:** `llm.keep_alive` (default `30m`) – after that Ollama unloads the model and the next question reads the
+  whole chat again. Raise it if you often take longer breaks and the VRAM is not needed elsewhere.
+- **Vision model** (screen understanding): on a small GPU it can push the language model out of VRAM; the next step
+  then reads the chat again (the activity shows it). `vision.keep_alive: 2m` unloads it soon afterwards.
 
 ### Thinking mode
 
@@ -573,8 +604,9 @@ updates are checked with `checkupdates` (Arch) or `apt list --upgradable` (Debia
 ## Telemetry
 
 The HUD bar above the orb shows (every 2 s, with a sparkline): **TOK/S** (generation speed), **CONTEXT** (prompt
-usage vs. budget, with a breakdown in the tooltip), **GPU** load and temperature, **VRAM**, **RAM**/CPU and
-**POWER** draw. NVIDIA is read via `nvidia-smi`, AMD directly from the `amdgpu` driver.
+size vs. the model's context window, with a breakdown and the compaction point in the tooltip – click it to compact),
+**GPU** load and temperature, **VRAM**, **RAM**/CPU and **POWER** draw. NVIDIA is read via `nvidia-smi`, AMD directly
+from the `amdgpu` driver.
 
 ## Security
 
@@ -627,6 +659,7 @@ See [SECURITY.md](SECURITY.md) for details and how to report vulnerabilities.
 | `llm.model` | Ollama model, e.g. `qwen3:14b`, `qwen3:8b` |
 | `llm.profiles`, `llm.active` | Several models, see [Models & profiles](#models--profiles) |
 | `memory.context_budget_tokens` | Optional cap for the prompt size (default: automatic from the context window) |
+| `memory.compact_idle` | Compact a nearly full context right after an answer instead of before the next question (default on) |
 | `voice.stt_model` | Whisper size: `base`, `small`, `medium`, `large-v3` |
 | `voice.wakeword_threshold` | Wake word sensitivity (lower = more sensitive) |
 | `tools.nas_paths` | Mounted NAS folders |
@@ -677,7 +710,8 @@ orbwise init-config            # create the example configuration
 | Web search: "Brave … HTTP 429" | Brave API quota or rate limit reached – wait, check your plan, or allow `tools.search_fallback: true` |
 | Web search: "Brave API key invalid" | Check `tools.brave_api_key` / `$ORBWISE_BRAVE_API_KEY`; `orbwise doctor` tests the key |
 | File search misses new files | `sudo updatedb` |
-| Answers get cut off / "context too small" | Increase the model's context window; watch the CONTEXT tile |
+| Answers get cut off / "context too small" | Increase the model's context window (more room between two compactions); watch the CONTEXT tile, `/compact` frees it by hand |
+| Every question takes long before the answer starts | The model server re-reads the prompt – see [prompt cache tips](#prompt-cache-tips) |
 
 ## Development
 

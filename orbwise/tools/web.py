@@ -224,4 +224,4 @@ async def fetch_url(ctx: ToolContext, url: Annotated[str, "Vollständige URL (ht
     if "html" in ctype:
         import trafilatura
         text = await asyncio.to_thread(trafilatura.extract, r.text, include_links=False) or ""
-    return proc.clip(text.strip() or "(kein lesbarer Text gefunden)", ctx.cfg.tools.max_output_chars)
+    return proc.clip_saved(text.strip() or "(kein lesbarer Text gefunden)", ctx.limit(), "webseite")

@@ -1,8 +1,13 @@
-"""Gesprächsverlauf mit festem Token-Budget.
+"""Gesprächsverlauf in Epochen – Abschnitten zwischen zwei Komprimierungen (Vorbild: Claude Code).
 
-Wird der Verlauf zu lang, werden die ältesten Nachrichten per LLM in eine "laufende
-Zusammenfassung" gefaltet. Nichts geht verloren: Alles steht zusätzlich im Tages-Journal
-und im Suchindex und wird bei Bedarf per Retrieval zurückgeholt.
+Innerhalb einer Epoche wird der Prompt nur hinten verlängert: Was einmal an das Modell ging, bleibt Byte für Byte
+gleich (auch die Kontext-Notiz einer Nutzernachricht wird beim ersten Senden eingefroren). So kann der
+Modell-Server seinen Cache weiterverwenden und liest nur Neues ein. Wird das Fenster voll, fasst das Modell die
+Epoche einmal strukturiert zusammen; die nächste Epoche beginnt mit dieser Zusammenfassung und den letzten
+Schritten.
+
+Nichts geht verloren: Der volle Verlauf bleibt in der Chat-Datei (und in der Oberfläche); Journal und Suchindex
+behalten alles, und Details aus komprimierten Teilen holt das Gedächtnis bei Bedarf zurück.
 """
 
 from __future__ import annotations
@@ -14,8 +19,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-SUMMARY_MAX_CHARS = 2400
-TOOL_SNIPPET_CHARS = 400
+PROMPT_KEYS = ("role", "content", "tool_calls", "tool_name")  # was davon an das Modell geht
 
 
 def est_tokens(text: str) -> int:
@@ -24,40 +28,23 @@ def est_tokens(text: str) -> int:
 
 
 def msg_tokens(msg: dict) -> int:
-    n = est_tokens(msg.get("content") or "") + 4
+    n = est_tokens((msg.get("note") or "") + (msg.get("content") or "")) + 4
     if msg.get("tool_calls"):
         n += est_tokens(json.dumps(msg["tool_calls"], ensure_ascii=False))
     return n
 
 
-def render_for_summary(messages: list[dict]) -> str:
+def render_transcript(messages: list[dict], max_chars: int = 20000) -> str:
+    """Verlauf als Text (Notfall-Zusammenfassung, wenn das Modell keine liefern kann). Lange Werkzeug-Ergebnisse
+    behalten Anfang und Ende; reicht der Platz nicht, zählt das Neueste."""
+    results = sum(1 for m in messages if m["role"] == "tool")
+    per = max(300, (max_chars - 200 * len(messages)) // max(1, results))
     lines = []
     for m in messages:
-        role = m["role"]
         content = (m.get("content") or "").strip()
-        if role == "user":
+        if m["role"] == "user":
             lines.append(f"Nutzer: {content}")
-        elif role == "assistant":
-            if content:
-                lines.append(f"Jarvis: {content}")
-            for call in m.get("tool_calls") or []:
-                fn = call.get("function", {})
-                lines.append(f"Jarvis ruft Tool {fn.get('name')} auf: {json.dumps(fn.get('arguments'), ensure_ascii=False)}")
-        elif role == "tool":
-            snippet = content[:TOOL_SNIPPET_CHARS] + ("…" if len(content) > TOOL_SNIPPET_CHARS else "")
-            lines.append(f"Tool-Ergebnis: {snippet}")
-    return "\n".join(lines)
-
-
-def render_task(steps: list[dict], max_chars: int = 20000) -> str:
-    """Schritte einer laufenden Aufgabe für die Zusammenfassung: eigene Texte, Aufrufe und Ergebnisse. Lange
-    Ergebnisse behalten Anfang und Ende; reicht der Platz nicht, werden die ältesten stärker gekürzt."""
-    results = [i for i, m in enumerate(steps) if m["role"] == "tool"]
-    per = max(300, (max_chars - 200 * len(steps)) // max(1, len(results)))
-    lines = []
-    for m in steps:
-        content = (m.get("content") or "").strip()
-        if m["role"] == "assistant":
+        elif m["role"] == "assistant":
             if content:
                 lines.append(f"Jarvis: {content}")
             for call in m.get("tool_calls") or []:
@@ -82,14 +69,18 @@ def make_title(text: str, limit: int = 60) -> str:
     return (cut or text[:limit]) + " …"
 
 
+def new_epoch(start: int = 0, summary: str = "", **info) -> dict:
+    """facts/groups = None: werden beim ersten Prompt der Epoche festgelegt (Schnappschuss) und bleiben dann gleich.
+    shown: IDs der Erinnerungen, die in dieser Epoche schon mitgeschickt wurden."""
+    return {"start": start, "summary": summary, "ts": time.time(), "facts": None, "groups": None, "shown": [],
+            **info}
+
+
 class Conversation:
     def __init__(self, state_path: Path | None = None, chat_id: str = ""):
         self.state_path = state_path
         self.history: list[dict] = []
-        self.running_summary = ""
-        # Arbeitsstand der laufenden Aufgabe, nachdem ihr Verlauf bei vollem Kontext komprimiert wurde
-        self.task_note = ""
-
+        self.epochs: list[dict] = [new_epoch()]
         # Metadaten des Chats (Titel, Stern, Zeitstempel) – siehe memory/chats.py
         self.meta: dict = {"id": chat_id, "title": "", "starred": False, "created": time.time()}
         self.load()
@@ -98,17 +89,64 @@ class Conversation:
     def chat_id(self) -> str:
         return self.meta.get("id", "")
 
+    # ---------- Epochen ----------
+    @property
+    def epoch(self) -> dict:
+        if not self.epochs:
+            self.epochs.append(new_epoch())
+        return self.epochs[-1]
+
+    @property
+    def running_summary(self) -> str:
+        """Zusammenfassung alles Früheren (steht im System-Prompt der aktuellen Epoche)."""
+        return self.epoch.get("summary") or ""
+
+    @running_summary.setter
+    def running_summary(self, text: str) -> None:
+        self.epoch["summary"] = text or ""
+
+    def epoch_indices(self) -> list[int]:
+        """Indizes der Nachrichten, die in dieser Epoche an das Modell gehen (komprimierte stehen nur im Verlauf)."""
+        return [i for i in range(self.epoch["start"], len(self.history)) if not self.history[i].get("packed")]
+
+    def epoch_messages(self) -> list[dict]:
+        return [self.history[i] for i in self.epoch_indices()]
+
+    def turn_start(self) -> int:
+        """Index der letzten Nutzernachricht (Beginn der laufenden bzw. letzten Runde)."""
+        return max((i for i, m in enumerate(self.history) if m["role"] == "user"), default=0)
+
+    def start_epoch(self, carry: list[int], summary: str, **info) -> dict:
+        """Neue Epoche nach einer Komprimierung. carry: Indizes der Nachrichten, die wörtlich mitgehen (aufsteigend);
+        alles andere der alten Epoche erreicht das Modell nur noch über die Zusammenfassung – gespeichert bleibt es."""
+        start = carry[0] if carry else len(self.history)
+        keep = set(carry)
+        for i in range(start, len(self.history)):
+            if i not in keep:
+                self.history[i]["packed"] = True
+        ep = new_epoch(start, summary, **info)
+        self.epochs.append(ep)
+        return ep
+
     # ---------- Persistenz (Gespräch überlebt Neustarts) ----------
     def load(self) -> None:
         if self.state_path and self.state_path.exists():
             try:
                 data = json.loads(self.state_path.read_text(encoding="utf-8"))
                 self.history = data.get("history", [])
-                self.running_summary = data.get("running_summary", "")
-                self.task_note = data.get("task_note", "")
                 self.meta.update(data.get("meta") or {})
+                self.epochs = data.get("epochs") or [self._migrated_epoch(data)]
             except (json.JSONDecodeError, OSError) as e:
                 log.warning("Sitzungszustand nicht lesbar (%s) – starte neu", e)
+
+    @staticmethod
+    def _migrated_epoch(data: dict) -> dict:
+        """Chats von früher: laufende Zusammenfassung (und Arbeitsstand einer komprimierten Aufgabe) werden zur
+        Zusammenfassung der ersten Epoche."""
+        summary = data.get("running_summary") or ""
+        if data.get("task_note"):
+            summary = (summary + "\n\nArbeitsstand der letzten Aufgabe:\n" + data["task_note"]).strip()
+        return new_epoch(0, summary)
 
     def save(self) -> None:
         if not self.state_path:
@@ -116,130 +154,41 @@ class Conversation:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.state_path.with_suffix(".tmp")
         self.meta["updated"] = time.time()
-        data = {"meta": self.meta, "history": self.history, "running_summary": self.running_summary}
-        if self.task_note:
-            data["task_note"] = self.task_note
+        data = {"meta": self.meta, "history": self.history, "epochs": self.epochs,
+                "running_summary": self.running_summary}  # running_summary: für ältere Versionen lesbar
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         tmp.replace(self.state_path)
 
     def add(self, msg: dict) -> None:
         msg = dict(msg)
         msg.setdefault("ts", time.time())
-        if msg.get("role") == "user":
-            self.task_note = ""  # neue Aufgabe – der Zwischenstand der alten gilt nicht mehr
-            if not self.meta.get("title") and msg.get("content"):
-                self.meta["title"] = make_title(msg["content"])
+        if msg.get("role") == "user" and not self.meta.get("title") and msg.get("content"):
+            self.meta["title"] = make_title(msg["content"])
         self.history.append(msg)
 
     def reset(self) -> None:
         self.history = []
-        self.running_summary = ""
-        self.task_note = ""
+        self.epochs = [new_epoch()]
         self.save()
 
     # ---------- Budget ----------
     def history_tokens(self) -> int:
-        return sum(msg_tokens(m) for m in self.history if not m.get("packed"))
+        return sum(msg_tokens(m) for m in self.epoch_messages())
 
     def window_start(self) -> float | None:
-        """Zeitstempel der ältesten wörtlich vorhandenen Nachricht."""
-        return self.history[0].get("ts") if self.history else None
-
-    def _cut_index(self, tokens_to_free: int) -> int:
-        """Index, bis zu dem gefaltet wird. Schnitt nur vor einer User-Nachricht, damit
-        Tool-Calls und ihre Ergebnisse zusammen bleiben; die letzte User-Nachricht bleibt immer."""
-        user_idx = [i for i, m in enumerate(self.history) if m["role"] == "user"]
-        if len(user_idx) < 2:
-            return 0
-        freed, cut = 0, 0
-        for i, m in enumerate(self.history):
-            if i in user_idx and i > 0:
-                cut = i
-                if freed >= tokens_to_free or i == user_idx[-1]:
-                    break
-            if not m.get("packed"):
-                freed += msg_tokens(m)
-        return min(cut, user_idx[-1])
-
-    def age_tool_results(self, keep_turns: int = 1) -> int:
-        """Lange Tool-Ergebnisse älterer Runden auf einen Auszug kürzen – die letzten keep_turns Runden bleiben
-        vollständig (für Nachfragen). Einmalig pro Ergebnis, damit der Anfang des Prompts danach stabil bleibt.
-        Liefert die Zahl gekürzter Ergebnisse."""
-        users = [i for i, m in enumerate(self.history) if m["role"] == "user"]
-        if len(users) <= keep_turns:
-            return 0
-        limit = users[-keep_turns]
-        n = 0
-        for m in self.history[:limit]:
-            content = m.get("content") or ""
-            if m["role"] != "tool" or len(content) <= TOOL_AGE_CHARS * 2 or content.endswith(AGED_NOTE):
-                continue
-            m["content"] = content[:TOOL_AGE_CHARS].rstrip() + AGED_NOTE
-            n += 1
-        return n
-
-    # ---------- Lange Aufgaben: ältere Schritte der laufenden Runde falten ----------
-    def turn_start(self) -> int:
-        return max((i for i, m in enumerate(self.history) if m["role"] == "user"), default=0)
-
-    def turn_tokens(self) -> int:
-        return sum(msg_tokens(m) for m in self.history[self.turn_start():] if not m.get("packed"))
-
-    def turn_steps(self) -> list[dict]:
-        """Bisherige Schritte der laufenden Aufgabe (ohne die Frage), die noch im Prompt stehen."""
-        return [m for m in self.history[self.turn_start() + 1:] if not m.get("packed")]
-
-    def pack_turn(self, task_note: str) -> int:
-        """Aufgabe pausieren und komprimieren: die bisherigen Schritte bleiben gespeichert, gehen aber nicht mehr
-        an das Modell – an ihre Stelle tritt der Arbeitsstand (task_note, steht in der Kontext-Notiz).
-        Liefert die Zahl der gepackten Nachrichten."""
-        n = 0
-        for m in self.history[self.turn_start() + 1:]:
-            if not m.get("packed"):
-                m["packed"] = True
-                n += 1
-        self.task_note = task_note.strip()
-        return n
-
-    def needs_compact(self, budget: int) -> bool:
-        return self.history_tokens() > int(budget * 0.85)
-
-    async def compact(self, llm, budget: int) -> bool:
-        """Faltet alte Nachrichten, sobald ~85 % des Budgets erreicht sind, bis der Verlauf unter ~60 % liegt."""
-        total = self.history_tokens()
-        if not self.needs_compact(budget):
-            return False
-        cut = self._cut_index(total - int(budget * 0.6))
-        if cut <= 0:
-            return False
-        folded, self.history = self.history[:cut], self.history[cut:]
-        transcript = render_for_summary(folded)
-        prompt = [
-            {"role": "system", "content": (
-                "Du pflegst die laufende Zusammenfassung eines Gesprächs zwischen einem Nutzer und seinem "
-                "KI-Assistenten Jarvis. Schreibe eine kompakte, sachliche Zusammenfassung auf Deutsch "
-                "(max. 12 Stichpunkte): Anliegen, Entscheidungen, Ergebnisse, offene Aufgaben, wichtige "
-                "Details wie Dateipfade, Paketnamen oder Befehle. Keine Einleitung.")},
-            {"role": "user", "content": (
-                f"Bisherige Zusammenfassung:\n{self.running_summary or '(leer)'}\n\n"
-                f"Neue Gesprächsteile:\n{transcript}\n\nAktualisierte Zusammenfassung:")},
-        ]
-        try:
-            summary = (await llm.chat(prompt)).strip()
-        except Exception as e:  # noqa: BLE001 – Fallback: grob abschneiden statt abstürzen
-            log.warning("Zusammenfassen fehlgeschlagen (%s) – nutze Kurzfassung", e)
-            summary = (self.running_summary + "\n" + transcript[-1200:]).strip()
-        self.running_summary = summary[-SUMMARY_MAX_CHARS:]
-        self.save()
-        return True
+        """Zeitstempel der ältesten Nachricht, die noch wörtlich im Prompt steht (Beginn der Epoche) – ältere
+        Teile dieses Chats darf das Gedächtnis wieder hervorholen."""
+        idx = self.epoch_indices()
+        return self.history[idx[0]].get("ts") if idx else None
 
     def trimmed_history(self, budget: int) -> list[dict]:
-        """Notbremse: falls die Kompaktierung nicht reicht, älteste Teile weglassen.
+        """Notbremse, falls der Prompt trotz Komprimierung zu groß ist: älteste Teile der Epoche weglassen.
+        Im Normalfall greift sie nie – die Komprimierung kommt vorher (sie hält den Prompt-Anfang stabil).
 
         Die aktuelle Runde (letzte Nutzerfrage + alle Tool-Aufrufe danach) bleibt immer erhalten – ohne
         Nutzerfrage lehnen manche Chat-Vorlagen (Qwen/Bonsai) die Anfrage ab. Ist sie allein zu groß,
         werden ihre Tool-Ergebnisse gekürzt (die ältesten zuerst)."""
-        hist = [m for m in self.history if not m.get("packed")]  # komprimierte Schritte stehen im Arbeitsstand
+        hist = self.epoch_messages()
         last_user = max((i for i, m in enumerate(hist) if m["role"] == "user"), default=0)
         turn = [dict(m) for m in hist[last_user:]]
         used = sum(msg_tokens(m) for m in turn)
@@ -257,12 +206,10 @@ class Conversation:
         # Nie mit einem verwaisten Tool-Ergebnis beginnen
         while earlier and earlier[0]["role"] == "tool":
             earlier.pop(0)
-        return [{k: v for k, v in m.items() if k not in ("ts", "packed")} for m in earlier + turn]
+        return [{k: v for k, v in m.items() if k in PROMPT_KEYS or k == "note"} for m in earlier + turn]
 
 
 TOOL_MIN_CHARS = 600
-TOOL_AGE_CHARS = 800
-AGED_NOTE = "\n… [gekürzt – Details bei Bedarf mit dem Tool erneut abrufen]"
 TRIM_NOTE = "\n… [gekürzt, damit alles ins Kontextfenster passt]"
 
 

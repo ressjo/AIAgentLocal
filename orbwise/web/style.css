@@ -325,6 +325,18 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .msg.error .body { color: #ffc4ca; }
 .msg.error::before { box-shadow: inset 0 0 0 1.5px var(--danger); background: none; }
 .msg.system { text-align: center; font-size: 12.5px; color: var(--muted); }
+/* Hier wurde der Kontext zusammengefasst – darüber bleibt alles sichtbar */
+.compact-divider { font-size: 12.5px; color: var(--muted); }
+.compact-divider > summary { list-style: none; display: flex; align-items: center; gap: 12px; cursor: pointer; user-select: none; }
+.compact-divider > summary::-webkit-details-marker { display: none; }
+.compact-divider > summary::before, .compact-divider > summary::after { content: ""; flex: 1; height: 1px; background: var(--border-strong); }
+.compact-divider > summary span { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface); white-space: nowrap; }
+.compact-divider > summary span::after { content: " ▾"; color: var(--faint); }
+.compact-divider[open] > summary span::after { content: " ▴"; }
+.compact-divider > summary:hover span { color: var(--text); border-color: rgba(76,194,255,.4); }
+.compact-divider .body { margin: 10px auto 4px; max-width: 680px; padding: 10px 14px; border-radius: 12px; background: var(--surface);
+  border: 1px solid var(--border); color: var(--text-2); font-size: 13px; line-height: 1.55; }
+#tele-ctx { cursor: pointer; }
 @keyframes blink { 50% { opacity: 0; } }
 .body p { margin: 0 0 .65em; } .body p:last-child { margin-bottom: 0; }
 .body code { background: var(--surface-2); border: 1px solid var(--border); padding: 1px 5px; border-radius: 5px; font-size: 12.5px; }

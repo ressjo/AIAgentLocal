@@ -1,4 +1,4 @@
-"""Chat-Historie: jeder Chat ist eine eigene Datei memory/chats/<id>.json (Verlauf + laufende Zusammenfassung).
+"""Chat-Historie: jeder Chat ist eine eigene Datei memory/chats/<id>.json (Verlauf + Zusammenfassungen je Epoche).
 
 Der aktive Chat steht in memory/chats/active. Ein früheres session.json wird beim ersten Start übernommen.
 """

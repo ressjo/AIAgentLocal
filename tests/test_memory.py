@@ -50,25 +50,17 @@ def test_summarize_day(memory):
     assert "2026-09-20" not in memory.days_needing_summary(include_today=True)
 
 
-def test_compaction_keeps_budget(tmp_path, llm):
+def test_epochs_survive_a_restart(tmp_path):
     conv = Conversation(tmp_path / "session.json")
-    budget = 2000
-    for i in range(1000):
-        conv.add({"role": "user", "content": f"Frage Nummer {i}: " + "bla " * 20})
-        conv.add({"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "x", "arguments": {}}}]})
-        conv.add({"role": "tool", "content": "Ergebnis " * 30, "tool_name": "x"})
+    for i in range(3):
+        conv.add({"role": "user", "content": f"Frage {i}"})
         conv.add({"role": "assistant", "content": f"Antwort {i}"})
-        run(conv.compact(llm, budget))
-        assert conv.history_tokens() <= budget + 400
-        assert conv.history[0]["role"] == "user"
-    assert conv.running_summary
-    assert conv.history[-4]["content"].startswith("Frage Nummer 999")
-    # Zustand überlebt einen Neustart
-    again = Conversation(tmp_path / "session.json")
-    run(conv.compact(llm, budget))
+    conv.start_epoch([4, 5], "- Zusammenfassung von Frage 0 und 1", carried=2)
     conv.save()
-    again.load()
-    assert again.running_summary == conv.running_summary
+    again = Conversation(tmp_path / "session.json")
+    assert again.running_summary == "- Zusammenfassung von Frage 0 und 1" and len(again.epochs) == 2
+    assert [m["content"] for m in again.epoch_messages()] == ["Frage 2", "Antwort 2"]
+    assert len(again.history) == 6  # nichts gelöscht – die Oberfläche zeigt weiter den ganzen Chat
 
 
 def test_trimmed_history_never_starts_with_tool(tmp_path):

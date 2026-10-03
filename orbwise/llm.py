@@ -65,7 +65,7 @@ class OllamaLLM:
         await self._client.aclose()
 
     def _payload(self, messages: list[dict], tools: list[dict] | None, stream: bool,
-                 think: bool | None = None) -> dict:
+                 think: bool | None = None, max_tokens: int | None = None) -> dict:
         payload: dict[str, Any] = {
             "model": self.cfg.model,
             "messages": messages,
@@ -74,19 +74,24 @@ class OllamaLLM:
             "options": {"temperature": self.cfg.temperature, "num_ctx": self.cfg.num_ctx},
             "think": self.cfg.think if think is None else think,
         }
+        if max_tokens:
+            payload["options"]["num_predict"] = max_tokens
         if tools:
             payload["tools"] = tools
         return payload
 
     async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
-                          think: bool | None = None) -> AsyncIterator[dict]:
+                          think: bool | None = None, max_tokens: int | None = None,
+                          tool_choice: str | None = None) -> AsyncIterator[dict]:
         """Liefert {"type": "token", "text": ...} und abschließend {"type": "done", "message": {...}}.
-        think: Denkmodus für diese Anfrage (None = Einstellung aus der Config)."""
+        think: Denkmodus für diese Anfrage (None = Einstellung aus der Config). max_tokens begrenzt die Antwort;
+        tool_choice kennt Ollama nicht (die Werkzeuge bleiben trotzdem im Prompt, damit der Cache passt)."""
         content: list[str] = []
         tool_calls: list[dict] = []
         stats: dict[str, Any] = {}
+        payload = self._payload(messages, tools, True, think, max_tokens)
         try:
-            async with self._client.stream("POST", "/api/chat", json=self._payload(messages, tools, True, think)) as resp:
+            async with self._client.stream("POST", "/api/chat", json=payload) as resp:
                 if resp.status_code != 200:
                     body = (await resp.aread()).decode(errors="replace")
                     raise LLMError(f"Ollama antwortet mit {resp.status_code}: {body[:300]}")
@@ -239,7 +244,7 @@ class OpenAICompatLLM:
         await self._client.aclose()
 
     def _payload(self, messages: list[dict], tools: list[dict] | None, stream: bool,
-                 think: bool | None = None) -> dict:
+                 think: bool | None = None, max_tokens: int | None = None, tool_choice: str | None = None) -> dict:
         p = self.profile
         payload: dict[str, Any] = {
             "model": p.model,
@@ -253,8 +258,12 @@ class OpenAICompatLLM:
         if stream:
             payload["stream_options"] = {"include_usage": True}
             payload["return_progress"] = True  # neuere llama-server melden den Fortschritt beim Einlesen
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
         if tools:
             payload["tools"] = tools
+            if tool_choice:  # "none": Werkzeuge bleiben im Prompt (Cache passt), aber das Modell ruft keins auf
+                payload["tool_choice"] = tool_choice
         return payload
 
     _warned_reasoning = False
@@ -271,16 +280,17 @@ class OpenAICompatLLM:
                         "läuft llama-server?")
 
     async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
-                          think: bool | None = None) -> AsyncIterator[dict]:
+                          think: bool | None = None, max_tokens: int | None = None,
+                          tool_choice: str | None = None) -> AsyncIterator[dict]:
         content: list[str] = []
         calls: dict[int, dict] = {}
         timings: dict = {}
         usage: dict = {}
         first_token = None
         started = time.monotonic()
+        payload = self._payload(messages, tools, True, think, max_tokens, tool_choice)
         try:
-            async with self._client.stream("POST", "/chat/completions",
-                                           json=self._payload(messages, tools, True, think)) as resp:
+            async with self._client.stream("POST", "/chat/completions", json=payload) as resp:
                 if resp.status_code != 200:
                     body = (await resp.aread()).decode(errors="replace")
                     _check_overflow(resp.status_code, body)
@@ -344,18 +354,24 @@ class OpenAICompatLLM:
         choices = resp.json().get("choices") or [{}]
         return strip_think((choices[0].get("message") or {}).get("content") or "")
 
-    async def server_context(self) -> int | None:
-        """Tatsächliche Kontextgröße des llama-servers (GET /props), sonst None."""
+    async def server_props(self) -> dict:
+        """Eigenschaften des llama-servers (GET /props: Kontextgröße, Anzahl Slots …), sonst {}."""
         root = str(self._client.base_url).rstrip("/")
         root = root[:-3] if root.endswith("/v1") else root
         try:
             resp = await self._client.get(root + "/props", timeout=3)
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
+            data = resp.json() if resp.status_code == 200 else {}
+        except (httpx.HTTPError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    async def server_context(self) -> int | None:
+        """Tatsächliche Kontextgröße des llama-servers (GET /props), sonst None."""
+        data = await self.server_props()
+        try:
             n = (data.get("default_generation_settings") or {}).get("n_ctx") or data.get("n_ctx")
             return int(n) if n else None
-        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+        except (ValueError, TypeError, AttributeError):
             return None
 
     async def status(self) -> dict:
@@ -426,6 +442,7 @@ class FakeLLM:
         self.en = language == "en"
         self.delay = delay
         self.calls: list[list[dict]] = []
+        self.opts: list[dict] = []  # Optionen je Aufruf (Werkzeuge, max_tokens, tool_choice) – für Tests
 
     async def close(self) -> None:
         pass
@@ -473,10 +490,28 @@ class FakeLLM:
                 f"3. Ergebnis zeigen und wie viel Platz frei wurde\n\n**Risiken/Annahmen:** Gelöscht werden nur "
                 f"Caches und Logs. (Anfrage: {request})")
 
+    def _demo_summary(self, messages: list[dict]) -> str:
+        """Antwort auf die Komprimierungs-Anweisung: listet, was im Verlauf stand (für Tests und die Demo)."""
+        users = [strip_context_note_text(m.get("content") or "") for m in messages[:-1] if m["role"] == "user"]
+        tools = [m.get("tool_name", "") for m in messages if m["role"] == "tool"]
+        lines = ["1. Anliegen: " + (users[-1][:120] if users else "–"),
+                 "3. Erledigt: " + (", ".join(tools[-6:]) or "–"),
+                 "6. Alle Nutzernachrichten: " + " | ".join(u[:60] for u in users[-8:]),
+                 "9. Nächster Schritt: weiter mit „" + (users[-1][:80] if users else "") + "“"]
+        return "\n".join(lines)
+
     async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
-                          think: bool | None = None) -> AsyncIterator[dict]:
+                          think: bool | None = None, max_tokens: int | None = None,
+                          tool_choice: str | None = None) -> AsyncIterator[dict]:
         self.calls.append(messages)
-        msg = self._decide(messages)
+        self.opts.append({"tools": tools, "think": think, "max_tokens": max_tokens, "tool_choice": tool_choice})
+        last = messages[-1].get("content") or "" if messages else ""
+        if max_tokens == 1:  # Vorwärmen: nur einlesen
+            msg = {"role": "assistant", "content": "."}
+        elif "Kontextfenster ist fast voll" in last or "context window is almost full" in last:
+            msg = {"role": "assistant", "content": self._demo_summary(messages)}
+        else:
+            msg = self._decide(messages)
         for name in [c["function"]["name"] for c in msg.get("tool_calls") or []]:
             yield {"type": "tool_delta", "name": name, "chars": 24}
         if think:

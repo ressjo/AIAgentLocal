@@ -30,10 +30,18 @@ class ToolContext:
     services: dict = field(default_factory=dict)
     # Arbeitsordner (Coding-Modus: Projektordner des Chats) – Shell startet dort, relative Pfade beziehen sich darauf
     cwd: str | None = None
+    # Höchstlänge eines Ergebnisses für den Prompt (vom Agenten passend zum Kontextfenster gesetzt)
+    output_chars: int | None = None
 
     def path(self, raw: str) -> Path:
         p = Path(os.path.expandvars(str(raw or ""))).expanduser()
         return p if p.is_absolute() or not self.cwd else Path(self.cwd) / p
+
+    def limit(self) -> int:
+        """Wie viele Zeichen eines Ergebnisses in den Prompt dürfen (tools.max_output_chars, bei kleinem
+        Kontextfenster weniger) – längere Ausgaben landen vollständig in einer Datei (proc.clip_saved)."""
+        cap = self.cfg.tools.max_output_chars
+        return min(cap, self.output_chars) if self.output_chars else cap
 
     async def output(self, text: str) -> None:
         """Live-Ausgabe eines laufenden Tools an die Oberfläche."""

@@ -397,6 +397,12 @@
       case "memory":
         addSystem(ev.text);
         break;
+      case "compacted":
+        if (!ev.chat || ev.chat === S.chatId) addCompactDivider(ev);
+        break;
+      case "compact_skipped":
+        toast(L("Noch nichts zum Zusammenfassen – der Chat ist kurz genug.", "Nothing to summarise yet – the chat is short enough."));
+        break;
       case "reminder":
         showReminder(ev);
         break;
@@ -470,6 +476,7 @@
       case "recording":
         S.recording = true;
         S.transcribing = false;
+        prewarmSoon();  // während du sprichst, liest das Modell den Chat schon ein
         break;
       case "transcribing":
         S.recording = false;
@@ -583,6 +590,26 @@
     scrollChat();
   }
   function addError(text) { addMsg("assistant error", "SYSTEM", escapeHtml(text)); }
+
+  // Trenner, wo der Kontext zusammengefasst wurde – darüber bleibt alles sichtbar, das Modell arbeitet ab hier
+  // mit der (aufklappbaren) Zusammenfassung weiter
+  function compactDivider(summary, ts) {
+    const el = document.createElement("details");
+    el.className = "compact-divider";
+    const when = ts ? " · " + new Date(ts * 1000).toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" }) : "";
+    el.innerHTML = `<summary><span>${L("Kontext zusammengefasst", "Context summarised")}${when}</span></summary>
+      <div class="body"></div>`;
+    el.querySelector(".body").innerHTML = renderMarkdown(summary || "");
+    return el;
+  }
+  function addCompactDivider(ev) {
+    const el = compactDivider(ev.summary, Date.now() / 1000);
+    // Mitten in einer Antwort: vor die laufende Antwort setzen (sie geht danach weiter)
+    const current = S.currentMsg && assistants[S.currentMsg] ? assistants[S.currentMsg].el : null;
+    if (current && current.parentNode === chat) chat.insertBefore(el, current);
+    else chat.appendChild(el);
+    scrollChat();
+  }
 
   function startAssistant(id, plan) {
     const el = addMsg("assistant streaming" + (plan ? " plan" : ""), "JARVIS", "");
@@ -772,17 +799,36 @@
       case "writing": return L("antwortet", "answering");
       case "retry": return L("Kontext zu voll – kürzt den Verlauf und versucht es erneut",
                              "context too full – trimming the history and retrying");
-      case "compact": return L("verdichtet älteren Verlauf ins Gedächtnis", "folding older history into memory");
-      case "compress": return L(`Kontext ${ev.percent} % voll – Aufgabe pausiert, fasst ${ev.steps} Schritte zusammen`,
-                                `context ${ev.percent} % full – task paused, summarising ${ev.steps} steps`);
+      case "compress":
+        if (ev.written != null) return L(`fasst den Chat zusammen · ${num(ev.written)} Token geschrieben`,
+                                         `summarising the chat · ${num(ev.written)} tokens written`);
+        if (ev.reason === "manual") return L("fasst den Chat zusammen (auf Wunsch)", "summarising the chat (on request)");
+        if (ev.reason === "idle") return L(`Kontext ${ev.percent} % – fasst in Ruhe zusammen, damit die nächste Frage nicht wartet`,
+                                           `context ${ev.percent} % – summarising now so the next question doesn't wait`);
+        return L(`Kontext ${ev.percent} % voll – fasst den Chat zusammen, dann geht es weiter`,
+                 `context ${ev.percent} % full – summarising the chat, then carrying on`);
+      case "tools_added": return L(`Werkzeuge dazugeladen: ${groupNames(ev.groups)} – einmal neu einlesen`,
+                                   `tools added: ${groupNames(ev.groups)} – one-off re-read`);
+      case "prewarm": return L(`liest den Chat im Hintergrund vor · ${kTok(ev.tokens)} Token`,
+                               `pre-reading the chat in the background · ${kTok(ev.tokens)} tokens`);
       default: return "";
     }
   }
 
+  const GROUP_NAMES = {
+    paperless: "Paperless", mail: "Mail", homeassistant: "Smart Home", calendar_tools: L("Kalender", "Calendar"),
+    sysadmin: "System", packages: L("Pakete", "Packages"), routine_tools: L("Routinen", "Routines"),
+    trilium: "Trilium", obsidian: "Obsidian", vision: L("Bildschirm", "Screen"),
+  };
+  const groupNames = (groups) => (groups || []).map((g) => GROUP_NAMES[g] || g).join(", ");
+
   function phaseSummary(ev) {
-    if (ev.compact) return L("älteren Verlauf verdichtet", "folded older history");
-    if (ev.compress) return L(`${ev.steps} Schritte zusammengefasst · ${num(ev.before)} → ${num(ev.after)} Token – geht weiter`,
-                              `summarised ${ev.steps} steps · ${num(ev.before)} → ${num(ev.after)} tokens – continuing`);
+    if (ev.compress) return L(`Chat zusammengefasst · ${num(ev.before)} → ${num(ev.after)} Token · Zusammenfassung ${num(ev.tokens)} Token`,
+                              `chat summarised · ${num(ev.before)} → ${num(ev.after)} tokens · summary ${num(ev.tokens)} tokens`);
+    if (ev.prewarm) return ev.error ? L("Vorlesen übersprungen", "pre-read skipped")
+      : L(`Chat vorgelesen · ${num(ev.tokens)} Token – die nächste Frage liest nur noch Neues`,
+          `chat pre-read · ${num(ev.tokens)} tokens – the next question only reads what is new`);
+    if (ev.tools_added) return L(`Werkzeuge dazugeladen: ${groupNames(ev.tools_added)}`, `tools added: ${groupNames(ev.tools_added)}`);
     if (ev.error) return L("abgebrochen – Fehler beim Modell", "stopped – model error");
     const parts = [];
     if (ev.load_ms >= 1000) parts.push(L(`Modell geladen in ${secs(ev.load_ms / 1000)}`, `model loaded in ${secs(ev.load_ms / 1000)}`));
@@ -851,7 +897,7 @@
       bar.style.width = "0";
     }
     // Unsichtbare Phasen auch unter dem Orb nennen; Denken und Antworten sieht man dort ohnehin
-    const quiet = ["prompt", "loading", "retry", "tool_args", "compact", "compress"].includes(ev.phase);
+    const quiet = ["prompt", "loading", "retry", "tool_args", "compress"].includes(ev.phase);
     if (quiet) {  // unter dem Orb kurz – ohne den Klammerzusatz zum Cache
       const short = text.replace(/ \([^)]*\)/, "");
       S.substate = S.phaseSub = short.charAt(0).toUpperCase() + short.slice(1) + " …";
@@ -1144,6 +1190,16 @@
   });
 
   // ---------------------------------------------------------------- Bedienelemente
+  // Sobald du tippst oder sprichst: der Server liest den Chat schon ein (falls er gerade etwas anderes im Cache
+  // hat, z. B. nach Telegram oder einer Routine) – beim Absenden ist dann nur noch deine Frage neu
+  let lastPrewarm = 0;
+  function prewarmSoon() {
+    if (!S.connected || Date.now() - lastPrewarm < 20000) return;
+    lastPrewarm = Date.now();
+    send({ type: "prewarm" });
+  }
+  $("input").addEventListener("input", prewarmSoon);
+
   $("form").addEventListener("submit", (e) => {
     e.preventDefault();
     const text = $("input").value.trim();
@@ -1587,33 +1643,45 @@
     const p = c.parts || {};
     const ratio = c.tokens && c.used ? c.tokens / c.used : 1;
     const real = (n) => (n == null ? "?" : Math.round(n * ratio));
+    const at = c.compact_at || 0;
     setTile("ctx", used / 1000, {
       pct,
       digits: 1,
-      sub: `${Math.round(pct)} %` + (c.trimmed ? L(" · gekürzt", " · trimmed") : c.summarized ? L(" · verdichtet", " · condensed") : ""),
+      sub: `${Math.round(pct)} %` + (c.trimmed ? L(" · gekürzt", " · trimmed") : c.summarized ? L(" · zusammengefasst", " · summarised") : ""),
       title: [
         L(`Prompt ${c.real ? "" : "ca. "}${used} von ${c.window} Token (Kontextfenster des Modells)`,
           `Prompt ${c.real ? "" : "approx. "}${used} of ${c.window} tokens (the model's context window)`),
-        c.reserve ? L(`${c.reserve} Token bleiben frei für Antwort${c.reserve > 2000 ? " und Denkkette" : ""}; `
-                      + `ab ${Math.round((c.compress_at || 0.9) * 100)} % wird eine lange Aufgabe komprimiert`,
-                      `${c.reserve} tokens are kept free for the answer${c.reserve > 2000 ? " and the reasoning" : ""}; `
-                      + `from ${Math.round((c.compress_at || 0.9) * 100)} % a long task is compressed`) : "",
+        at ? L(`Zusammenfassen bei ~${kTok(at)} (${Math.round(100 * at / c.window)} %) – noch ~${kTok(Math.max(0, at - used))} Token. `
+               + `Bis dahin wird nur Neues eingelesen.`,
+               `Summarising at ~${kTok(at)} (${Math.round(100 * at / c.window)} %) – ~${kTok(Math.max(0, at - used))} tokens left. `
+               + `Until then only new parts are read.`) : "",
+        c.reserve ? L(`${c.reserve} Token bleiben frei für Antwort${c.reserve > 2000 ? " und Denkkette" : ""}.`,
+                      `${c.reserve} tokens are kept free for the answer${c.reserve > 2000 ? " and the reasoning" : ""}.`) : "",
         `System ${real(p.system)} · Tools ${real(p.tools)} · ${L("Gedächtnis", "Memory")} ${real(p.memory)} · `
           + `${L("Verlauf", "History")} ${real(p.history)}`,
         c.real ? L("Laut Modell-Server: ", "According to the model server: ") + `${c.real} Token`
           + (c.cached ? L(`, davon ${c.cached} aus dem Cache (schneller)`, `, ${c.cached} of them from the cache (faster)`) : "") : "",
-        c.summarized ? L("Älterer Verlauf ist in einer Zusammenfassung verdichtet – Details holt das Gedächtnis bei Bedarf zurück.",
-                         "Older history is condensed into a summary – memory brings back details when needed.") : "",
+        c.summarized ? L("Älterer Verlauf steht als Zusammenfassung im Prompt (im Chat bleibt alles sichtbar) – Details holt das Gedächtnis bei Bedarf zurück.",
+                         "Older history is in the prompt as a summary (the chat still shows everything) – memory brings back details when needed.") : "",
+        L("Klick: jetzt zusammenfassen (wie /compact)", "Click: summarise now (like /compact)"),
         c.trimmed ? L("Ältere Teile/lange Tool-Ergebnisse wurden gekürzt, damit alles passt.",
                       "Older parts/long tool results were trimmed so everything fits.") : "",
       ].filter(Boolean).join("\n"),
     });
     $("tele-ctx").querySelector(".tele-num").textContent = kTok(used);
     $("tele-ctx").querySelector(".tele-unit").textContent = "/" + Math.round(c.window / 1024) + "k";
-    $("tele-ctx").classList.toggle("warn", c.trimmed || (pct >= 80 && pct < 95));
+    $("tele-ctx").classList.toggle("warn", c.trimmed || (at > 0 && used >= 0.9 * at));
     orb.setContext(used / c.window, !!c.summarized);
     pushSpark("ctx", Math.min(100, pct));
   }
+  // Klick auf die Kontext-Kachel: jetzt zusammenfassen (wie „/compact“ in der Eingabe)
+  $("tele-ctx").onclick = () => {
+    if (!S.connected) return;
+    if (window.confirm(L("Chat jetzt zusammenfassen? Der volle Verlauf bleibt sichtbar; das Modell arbeitet danach mit der Zusammenfassung weiter.",
+                         "Summarise the chat now? The full history stays visible; the model then continues with the summary."))) {
+      send({ type: "compact" });
+    }
+  };
 
   function fmt(v, digits = 1) {
     return v === null || v === undefined || Number.isNaN(v) ? "–" : Number(v).toLocaleString(LOCALE, {
@@ -2245,10 +2313,13 @@
       setTimeout(renderBoot, 0);
       $("chat-title").textContent = h.chat && h.chat.title ? h.chat.title : "";
       if (h.summary) addSystem(L("Frühere Gesprächsteile sind im Gedächtnis zusammengefasst.", "Earlier parts of this chat are summarised in memory."));
-      for (const m of h.messages) {
+      const dividers = {};
+      for (const ep of h.epochs || []) dividers[ep.at] = ep;
+      h.messages.forEach((m, i) => {
+        if (dividers[i]) { chat.appendChild(compactDivider(dividers[i].summary, dividers[i].ts)); }
         if (m.role === "user") addUser(m.content);
         else addMsg("assistant", "JARVIS", renderMarkdown(m.content));
-      }
+      });
     } catch { /* egal */ }
   }
 

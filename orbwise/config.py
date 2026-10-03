@@ -91,8 +91,11 @@ class MemoryConfig(BaseModel):
     # Gesamtbudget (geschätzte Tokens) für den Prompt; muss deutlich unter num_ctx liegen
     context_budget_tokens: int | None = None  # None = automatisch: Kontextfenster des Modells minus Antwortreserve
     retrieval_top_k: int = 6
-    retrieval_max_tokens: int = 1500
+    retrieval_max_tokens: int = 1500  # Erinnerungen in der ersten Frage einer Epoche (danach ⅓, nur neue)
     facts_max_tokens: int = 1200
+    # Nach einer Antwort schon in Ruhe komprimieren, wenn der Kontext fast voll ist (die nächste Frage wartet dann
+    # nicht darauf). Aus = erst komprimieren, wenn es wirklich nötig ist.
+    compact_idle: bool = True
     # Tagesübersicht erzeugen, wenn so viele Minuten keine Aktivität war
     summarize_idle_minutes: int = 15
 

@@ -25,4 +25,4 @@ async def run_shell(
     timeout = timeout_seconds if timeout_seconds > 0 else ctx.cfg.tools.shell_timeout
     command = apply_privilege(command, ctx.cfg.tools.privilege_cmd)
     rc, out = await proc.run(ctx, command, timeout=min(timeout, ctx.cfg.tools.update_timeout), cwd=ctx.cwd)
-    return proc.format_result(rc, out, ctx.cfg.tools.max_output_chars)
+    return proc.format_result(rc, out, ctx.limit())

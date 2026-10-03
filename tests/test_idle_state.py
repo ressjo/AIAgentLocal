@@ -23,13 +23,13 @@ def test_agent_reports_idle_right_after_the_answer(cfg, memory, llm):
         return False
 
     compacting = []
-    original = memory.conversation.compact
 
-    async def slow_compact(*a, **kw):  # Verdichten läuft nach der Antwort – die Anzeige soll schon „bereit“ sein
+    async def compact(*a, **kw):  # Komprimieren läuft nach der Antwort – die Anzeige soll schon „bereit“ sein
         compacting.append([e.get("state") for e in events if e["type"] == "state"][-1])
-        return await original(*a, **kw)
+        return True
 
-    memory.conversation.compact = slow_compact
+    agent._needs_compaction = lambda idle=False: idle  # nach der Antwort fast voll
+    agent.compact_epoch = compact
     run(agent.run("Hallo", emit, confirm))
     types = [(e["type"], e.get("state")) for e in events]
     end = types.index(("assistant_end", None))

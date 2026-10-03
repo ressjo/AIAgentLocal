@@ -312,9 +312,10 @@ class LLMRouter:
 
     # ---------- LLM-Schnittstelle ----------
     async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
-                          think: bool | None = None) -> AsyncIterator[dict]:
+                          think: bool | None = None, **opts) -> AsyncIterator[dict]:
+        """opts: max_tokens, tool_choice (für Komprimierung und Vorwärmen)."""
         try:
-            async for ev in self.client.chat_stream(messages, tools, think=think):
+            async for ev in self.client.chat_stream(messages, tools, think=think, **opts):
                 yield ev
         except ContextOverflow as e:
             if e.n_ctx:  # Server kennt seine echte Größe – ab jetzt die verwenden

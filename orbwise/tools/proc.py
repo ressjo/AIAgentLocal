@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import glob
 import os
 import re
@@ -23,6 +24,40 @@ def clip(text: str, limit: int) -> str:
     head = limit // 4
     tail = limit - head
     return f"{text[:head]}\n… [{len(text) - limit} Zeichen ausgelassen] …\n{text[-tail:]}"
+
+
+OUTPUTS_KEEP = 40  # so viele gespeicherte große Ausgaben bleiben liegen (älteste zuerst weg)
+
+
+def outputs_dir() -> str:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    path = os.path.join(base, "orbwise", "outputs")
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    return path
+
+
+def clip_saved(text: str, limit: int, label: str = "ausgabe") -> str:
+    """Wie clip – ist die Ausgabe zu lang, wird sie aber vollständig in einer Datei abgelegt und der Pfad genannt.
+    So geht nichts verloren und das Modell kann gezielt Teile nachlesen (read_file mit offset/limit), statt dass
+    die Mitte einfach fehlt (wie Claude Code mit großen Ausgaben umgeht)."""
+    if len(text) <= limit:
+        return text
+    try:
+        folder = outputs_dir()
+        fd, path = tempfile.mkstemp(prefix=f"{re.sub(r'[^a-z0-9-]', '', label.lower())[:20] or 'ausgabe'}-",
+                                    suffix=".txt", dir=folder)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        files = sorted(glob.glob(os.path.join(folder, "*.txt")), key=os.path.getmtime)
+        for old in files[:-OUTPUTS_KEEP]:
+            with contextlib.suppress(OSError):
+                os.remove(old)
+    except OSError:
+        return clip(text, limit)
+    lines = text.count("\n") + 1
+    note = (f"\n[Vollständige Ausgabe ({len(text)} Zeichen, {lines} Zeilen): {path} – bei Bedarf Teile mit "
+            f"read_file(path, offset, limit) lesen]")
+    return clip(text, max(500, limit - len(note))) + note
 
 
 def _kill(proc: asyncio.subprocess.Process) -> None:
@@ -171,6 +206,6 @@ def root_denied(output: str) -> bool:
 
 def format_result(rc: int | None, output: str, limit: int) -> str:
     status = "Zeitüberschreitung" if rc is None else f"Exit-Code {rc}"
-    body = clip(output.strip(), limit) or "(keine Ausgabe)"
+    body = clip_saved(output.strip(), limit) or "(keine Ausgabe)"
     hint = ROOT_DENIED_HINT if rc not in (None, 0) and root_denied(output) else ""
     return f"{status}\n{body}{hint}"

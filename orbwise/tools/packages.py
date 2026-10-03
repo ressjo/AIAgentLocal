@@ -79,7 +79,7 @@ def _names_risk(verb):  # verb: () -> Text in der aktuellen Sprache
 @tool("Aktualisiert das komplette System (Arch: pacman -Syu + AUR via yay/paru; Debian/Ubuntu: apt-get upgrade).",
       risk=lambda ctx, a: (CONFIRM, T("Systemupdate mit Root-Rechten", "system update with root privileges")))
 async def system_update(ctx: ToolContext) -> str:
-    limit = ctx.cfg.tools.max_output_chars
+    limit = ctx.limit()
     timeout = ctx.cfg.tools.update_timeout
     if package_manager(ctx) == "apt":
         rc, out = await proc.run(ctx, privileged(ctx, [*APT_ENV, "sh", "-c", "apt-get update && apt-get -y upgrade"]),
@@ -105,7 +105,7 @@ async def list_updates(ctx: ToolContext) -> str:
         rc, out = await proc.run(ctx, ["apt", "list", "--upgradable"], timeout=120, stream=False)
         lines = [ln for ln in out.splitlines() if "/" in ln and not ln.startswith(("Listing", "Auflistung", "WARNING"))]
         return proc.clip("\n".join(lines) or "Keine Updates verfügbar (Paketlisten ggf. veraltet – system_update "
-                         "aktualisiert sie).", ctx.cfg.tools.max_output_chars)
+                         "aktualisiert sie).", ctx.limit())
     if shutil.which("checkupdates"):
         rc, out = await proc.run(ctx, ["checkupdates"], timeout=120, stream=False)
         if rc == 2:
@@ -117,7 +117,7 @@ async def list_updates(ctx: ToolContext) -> str:
         _, aur = await proc.run(ctx, [helper, "-Qua"], timeout=120, stream=False)
         if aur.strip():
             out += f"\nAUR:\n{aur}"
-    return proc.clip(out.strip() or "Keine Updates verfügbar.", ctx.cfg.tools.max_output_chars)
+    return proc.clip(out.strip() or "Keine Updates verfügbar.", ctx.limit())
 
 
 @tool("Sucht Pakete in den Paketquellen der Distribution (bei Arch auch im AUR, falls yay/paru vorhanden).")
@@ -151,7 +151,7 @@ async def install_package(ctx: ToolContext, names: Annotated[str, "Paketnamen, d
         if found:
             rc, out = await proc.run(ctx, privileged(ctx, [*APT_ENV, "apt-get", "-y", "install", *found]),
                                      timeout=ctx.cfg.tools.update_timeout)
-            parts.append(f"apt-get install {' '.join(found)}: " + proc.format_result(rc, out, ctx.cfg.tools.max_output_chars))
+            parts.append(f"apt-get install {' '.join(found)}: " + proc.format_result(rc, out, ctx.limit()))
         if missing:
             parts.append(f"Nicht gefunden: {', '.join(missing)}")
         return "\n\n".join(parts)
@@ -167,7 +167,7 @@ async def install_package(ctx: ToolContext, names: Annotated[str, "Paketnamen, d
         else:
             missing.append(p)
     parts = []
-    limit = ctx.cfg.tools.max_output_chars
+    limit = ctx.limit()
     if repo:
         rc, out = await proc.run(ctx, privileged(ctx, ["pacman", "-S", "--needed", "--noconfirm", *repo]),
                                  timeout=ctx.cfg.tools.update_timeout)
@@ -190,4 +190,4 @@ async def remove_package(ctx: ToolContext, names: Annotated[str, "Paketnamen, du
     argv = ([*APT_ENV, "apt-get", "-y", "remove", "--autoremove", *pkgs] if package_manager(ctx) == "apt"
             else ["pacman", "-Rns", "--noconfirm", *pkgs])
     rc, out = await proc.run(ctx, privileged(ctx, argv), timeout=ctx.cfg.tools.shell_timeout * 5)
-    return proc.format_result(rc, out, ctx.cfg.tools.max_output_chars)
+    return proc.format_result(rc, out, ctx.limit())

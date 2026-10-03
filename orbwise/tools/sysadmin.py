@@ -117,7 +117,7 @@ async def service_status(
                              stream=False)
     if rc == 4 or "could not be found" in out:
         return f"Dienst '{unit}' nicht gefunden." + ("" if user else " (Benutzerdienst? dann user=true)")
-    return proc.clip(out.strip(), ctx.cfg.tools.max_output_chars)
+    return proc.clip(out.strip(), ctx.limit())
 
 
 def _service_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
@@ -181,7 +181,7 @@ async def service_logs(
     if not text or "-- No entries --" in text[-40:]:
         return "Keine Log-Einträge gefunden (für System-Logs muss der Benutzer ggf. in der Gruppe 'systemd-journal' " \
                "oder 'wheel'/'adm' sein)."
-    return proc.clip(text, ctx.cfg.tools.max_output_chars)
+    return proc.clip_saved(text, ctx.limit(), "logs")
 
 
 # ---------------------------------------------------------------- Netzwerk

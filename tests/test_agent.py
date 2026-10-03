@@ -68,7 +68,12 @@ def test_remember_tool_and_context(cfg, llm, memory):
     agent = make_agent(cfg, llm, memory)
     run(collect(agent, '/tool remember {"fact": "Der Nutzer heißt Alex."}'))
     msgs = agent.build_messages([])
-    assert "Der Nutzer heißt Alex." in msgs[0]["content"]
+    # Im laufenden Chat bleibt der System-Prompt gleich (sonst müsste der Server alles neu einlesen) –
+    # den neuen Fakt kennt das Modell aus seinem eigenen Werkzeug-Aufruf
+    assert "Der Nutzer heißt Alex." not in msgs[0]["content"]
+    assert "Der Nutzer heißt Alex." in str(msgs[1:])
+    memory.new_chat()  # neuer Chat (ebenso nach einer Komprimierung): Fakt steht im System-Prompt
+    assert "Der Nutzer heißt Alex." in agent.build_messages()[0]["content"]
 
 
 def test_history_consistent_after_cancel(cfg, llm, memory):

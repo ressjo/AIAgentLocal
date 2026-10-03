@@ -93,6 +93,21 @@ def collect(llm, messages, tools=None):
     return run(go())
 
 
+def test_server_props_context_and_slots():
+    def handler(req):
+        assert req.url.path == "/props"  # ohne /v1 – eigener Endpunkt des llama-servers
+        return httpx.Response(200, json={"default_generation_settings": {"n_ctx": 16384}, "total_slots": 4})
+
+    llm = client_with(handler)
+    assert run(llm.server_context()) == 16384
+    assert run(llm.server_props())["total_slots"] == 4  # doctor rät dann zu -np 1
+
+    for broken in (lambda req: httpx.Response(404), lambda req: httpx.Response(200, text="kein json"),
+                   lambda req: httpx.Response(200, json=[1, 2])):
+        assert run(client_with(broken).server_props()) == {}
+        assert run(client_with(broken).server_context()) is None
+
+
 def test_stream_text_and_timings():
     seen = {}
 
@@ -412,7 +427,11 @@ def test_context_overflow_detected_and_agent_retries_smaller(cfg, memory):
 
     llm = TightLLM()
     assert run(Agent(cfg, llm, memory).run("Und jetzt?", emit, confirm)) == "passt"
-    assert len(llm.sizes) == 2 and llm.sizes[1] < llm.sizes[0]
+    # Der Verlauf ist viel zu groß → vor dem Schritt komprimieren. Auch der Server lehnt dabei ab („zu groß“) →
+    # Notfall-Zusammenfassung ohne Modell; der eigentliche Schritt enthält statt 60 Nachrichten nur noch die
+    # Zusammenfassung und die Frage – und klappt
+    assert len(llm.sizes) == 2 and llm.sizes[-1] < 60 * 900 / 3
+    assert len(memory.conversation.epochs) == 2
 
 
 def test_prompt_total_includes_cache():
@@ -448,11 +467,12 @@ def test_context_event_reports_usage_and_trimming(cfg, memory):
     assert first["used"] == sum(parts.values()) and not first["trimmed"]
     assert last["real"] == 3456 and agent.last_context["real"] == 3456
 
-    # sehr langer Verlauf → wird gekürzt, Anzeige meldet das
+    # sehr langer Verlauf → wird vor dem Schritt zusammengefasst, die Anzeige meldet das
     for i in range(80):
         memory.conversation.add({"role": "user", "content": f"Frage {i} " + "x" * 900})
         memory.conversation.add({"role": "assistant", "content": "y" * 900})
     events.clear()
     run(agent.run("Und?", emit, confirm))
-    ev = next(e for e in events if e["type"] == "context")
-    assert ev["trimmed"] and ev["used"] <= ev["budget"] + 200
+    assert any(e.get("phase") == "compress" for e in events)
+    ev = [e for e in events if e["type"] == "context"][-1]
+    assert ev["summarized"] and ev["used"] <= ev["budget"] and not ev["trimmed"]
