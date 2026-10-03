@@ -757,6 +757,7 @@ orbwise doctor                 # check the installation
 orbwise model [name]           # list or switch model profiles
 orbwise model add [ollama-tag] # download another model (interactive presets without a tag)
 orbwise model remove <name>    # remove a downloaded model from the list
+orbwise context-test [--quick] # check the context window with the active model (Orbwise must be running)
 orbwise update                 # update (git pull, dependencies, restart)
 orbwise version                # show the installed version
 orbwise reindex                # rebuild the search index from the Markdown files
@@ -771,6 +772,7 @@ orbwise init-config            # create the example configuration
 | `orbwise: command not found` | Open a new terminal (PATH was extended) or run `~/orbwise/scripts/install.sh` again |
 | The orb stays "OFFLINE" | Is `orbwise serve` running? Log: `~/.local/state/orbwise.log` |
 | "Ollama not reachable" | `sudo systemctl enable --now ollama` |
+| Context: "shortened", slow answers, the window seems smaller | `orbwise context-test` (or Settings → Context window → *Test context*): checks whether the server really runs with the configured window, KV cache in VRAM, token estimate, prompt cache (same prompt and follow-up), a prompt up to the compaction point (the model must still repeat a code word from its start) and overflow detection. `--quick` skips the two slow fill checks |
 | No Piper speech | `orbwise doctor` → voice missing? The browser speaks as a fallback |
 | Microphone doesn't work | Open `http://localhost:8765` (not the IP), check the browser's microphone permission |
 | Wake word triggers too often/rarely | Adjust `voice.wakeword_threshold` (0.3–0.7) |

@@ -2040,7 +2040,14 @@
     if (!p || models.active === "demo") { box.innerHTML = ""; return; }
     const m = lastMem && lastMem.available && lastMem.profile === p.name ? lastMem : null;
     const opts = (m && m.recommend && m.recommend.options) || [4096, 8192, 12288, 16384, 24576, 32768, 49152, 65536].map((c) => ({ ctx: c }));
-    box.innerHTML = `<div class="mm-title"></div><div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p>`;
+    box.innerHTML = `<div class="mm-title"></div><div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p>`
+      + `<button type="button" class="btn small ctx-test-btn"></button><div class="ctx-test"></div>`;
+    const testBtn = box.querySelector(".ctx-test-btn");
+    testBtn.textContent = L("Kontext testen", "Test context");
+    testBtn.title = L("Prüft mit dem aktiven Modell: Fenstergröße, Speicher, Token-Schätzung, Prompt-Cache und ein volles Fenster (kann einige Minuten dauern).",
+                      "Checks with the active model: window size, memory, token estimate, prompt cache and a full window (may take a few minutes).");
+    testBtn.disabled = !!models.switching;
+    testBtn.onclick = () => runContextTest(box.querySelector(".ctx-test"), testBtn);
     box.querySelector(".mm-title").textContent = L(`KONTEXTFENSTER · ${p.label}`, `CONTEXT WINDOW · ${p.label}`);
     const missing = lastMem && !lastMem.available && lastMem.reason ? lastMem.reason : "";
     box.querySelector(".ctx-now").textContent = L(`Aktuell ${num(p.num_ctx)} Token`, `Currently ${num(p.num_ctx)} tokens`)
@@ -2080,6 +2087,33 @@
           + "Unter 16k arbeitet Orbwise im Sparmodus: wenige Werkzeuge vorab (der Rest kommt bei Bedarf), kürzere Werkzeug-Ergebnisse, alte Ergebnisse werden früher ausgeblendet.",
           "A bigger window means longer chats before summarising but needs more VRAM. If the KV cache lands in RAM, everything gets much slower. "
           + "Below 16k Orbwise runs in lean mode: few tools up front (the rest on demand), shorter tool results, old results are hidden sooner.");
+  }
+
+  async function runContextTest(out, btn) {
+    btn.disabled = true;
+    out.textContent = L("Test läuft – das volle Fenster einzulesen kann einige Minuten dauern …",
+                        "Test running – reading the full window can take a few minutes …");
+    try {
+      const r = await fetch("/api/context/test", { method: "POST" });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { out.textContent = L("Test nicht möglich: ", "Test not possible: ") + (data.detail || r.status); return; }
+      const marks = { ok: "✔", warn: "⚠", fail: "✘", info: "ℹ" };
+      out.innerHTML = "";
+      for (const c of data.checks || []) {
+        const row = document.createElement("div");
+        row.className = "ct-row";
+        row.innerHTML = `<span></span><span><b></b> <span></span></span>`;
+        row.children[0].textContent = marks[c.status] || "·";
+        row.children[0].className = "ct-" + c.status;
+        row.querySelector("b").textContent = c.title;
+        row.children[1].lastElementChild.textContent = c.detail;
+        out.appendChild(row);
+      }
+    } catch (e) {
+      out.textContent = L("Test abgebrochen: ", "Test aborted: ") + e;
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   // ---------------------------------------------------------------- Modellauswahl

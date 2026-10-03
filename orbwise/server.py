@@ -972,6 +972,21 @@ def create_app(cfg: Config) -> FastAPI:
         return {"available": True, "profile": llm.active, "backend": llm.profile.backend,
                 **llm_memory.summary(info), "recommend": llm_memory.recommend(info, gpu), "gpu": gpu}
 
+    @app.post("/api/context/test")
+    async def context_test(quick: bool = False):
+        """Kontext-Selbsttest gegen das aktive Modell (siehe context_test.py) – der offene Chat bleibt unverändert."""
+        from .context_test import run_context_test
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        if agent.busy() or llm.switching:
+            raise HTTPException(409, "Gerade läuft eine Anfrage oder ein Modellwechsel – bitte gleich noch einmal.")
+        gpu = (await asyncio.to_thread(metrics.collect)).get("gpu")
+        async with agent.lock:
+            result = await run_context_test(agent, llm, quick=quick, gpu=gpu)
+        agent._cache_owner = None  # der Test hat den Cache des Servers belegt → offenen Chat neu einlesen
+        hub.prewarm_soon()
+        return result
+
     @app.post("/api/models/{name}/context")
     async def set_model_context(name: str, request: Request):
         if not isinstance(llm, LLMRouter):

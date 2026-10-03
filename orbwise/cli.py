@@ -1,4 +1,4 @@
-"""Kommandozeile: orbwise [serve|doctor|model|update|version|reindex|summarize|init-config]"""
+"""Kommandozeile: orbwise [serve|doctor|model|context-test|update|version|reindex|summarize|init-config]"""
 
 from __future__ import annotations
 
@@ -441,6 +441,34 @@ def cmd_update(args) -> None:
     main_update(load_config().port)
 
 
+def cmd_context_test(args) -> None:
+    """Kontext-Selbsttest über den laufenden Orbwise-Server (der hat das Modell geladen und kennt die Einstellungen)."""
+    import httpx
+
+    from .context_test import format_report
+
+    cfg = load_config()
+    print(T("Kontext-Selbsttest läuft – das volle Fenster einzulesen kann einige Minuten dauern …",
+            "Context self-test running – reading the full window can take a few minutes …")
+          if not args.quick else T("Kontext-Schnelltest läuft …", "Quick context test running …"), flush=True)
+    try:
+        r = httpx.post(f"http://127.0.0.1:{cfg.port}/api/context/test", params={"quick": args.quick},
+                       headers={"Host": f"localhost:{cfg.port}"}, timeout=3600)
+    except httpx.ConnectError:
+        sys.exit(T("Orbwise läuft nicht – erst starten (orbwise serve), dann den Test wiederholen.",
+                   "Orbwise is not running – start it (orbwise serve), then run the test again."))
+    if r.status_code != 200:
+        try:
+            detail = r.json().get("detail", r.text)
+        except ValueError:
+            detail = r.text
+        sys.exit(f"✘ {detail}")
+    result = r.json()
+    print(format_report(result))
+    if result["status"] == "fail":
+        sys.exit(1)
+
+
 def cmd_version(args) -> None:
     from .update import project_root, version
     print(f"Orbwise {version()}\n{project_root()}")
@@ -491,6 +519,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("-y", "--yes", action="store_true", help=T("ohne Rückfragen", "no questions"))
     p.add_argument("--vram", type=float, help=argparse.SUPPRESS)
     p.add_argument("--out", help=argparse.SUPPRESS)
+    p = sub.add_parser("context-test", help=T("Kontextfenster mit dem aktiven Modell prüfen (Größe, Cache, Füllung)",
+                                              "check the context window with the active model (size, cache, fill)"))
+    p.add_argument("--quick", action="store_true", help=T("ohne das Fenster ganz zu füllen", "without filling the window"))
     sub.add_parser("update", help=T("Auf den neuesten Stand bringen (git pull, Abhängigkeiten, Neustart)",
                                     "update (git pull, dependencies, restart)"))
     sub.add_parser("version", help=T("Installierte Version anzeigen", "show the installed version"))
@@ -508,7 +539,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd is None:
         args = parser.parse_args(["serve", *(argv or sys.argv[1:])])
     {"serve": cmd_serve, "doctor": cmd_doctor, "update": cmd_update, "model": cmd_model, "version": cmd_version,
-     "reindex": cmd_reindex, "summarize": cmd_summarize, "init-config": cmd_init_config}[args.cmd](args)
+     "reindex": cmd_reindex, "summarize": cmd_summarize, "init-config": cmd_init_config,
+     "context-test": cmd_context_test}[args.cmd](args)
 
 
 if __name__ == "__main__":

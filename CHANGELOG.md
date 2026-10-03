@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Context self-test** (`orbwise context-test [--quick]`, Settings → Context window → *Test context*): checks with
+  the active model whether the server runs with the configured window (and no `context_budget_tokens` caps it), the
+  KV cache sits in VRAM, how far the token estimate is off, whether the prompt cache works for the same prompt and a
+  follow-up (Bonsai: checkpoints), whether a prompt up to the compaction point fits and the model still sees its
+  start (code word), and whether an oversized prompt is rejected instead of silently cut. Uses its own messages –
+  the open chat stays untouched.
 - **Faster Bonsai:** Bonsai 2 is a hybrid model that can only reuse an earlier prompt through checkpoints; Orbwise now
   starts its launcher with `--ctx-checkpoints 32`, a RAM prompt cache (`--cache-ram`, 15 % of RAM, ≤ 4 GB) and
   `--cache-idle-slots` – only what the installed llama-server knows. Much less re-reading after hidden results, a

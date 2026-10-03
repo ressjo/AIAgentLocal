@@ -504,6 +504,12 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .ctx-opt.big small { color: #f5b14c; }
 .ctx-opt:disabled { opacity: .5; cursor: wait; }
 .ctx-set .set-hint { margin-top: 10px; }
+.ctx-test { margin-top: 10px; display: grid; gap: 6px; }
+.ctx-test .ct-row { display: grid; grid-template-columns: 18px 1fr; gap: 6px; font-size: 12.5px; color: var(--text-2); }
+.ctx-test .ct-row b { color: var(--text); font-weight: 600; }
+.ctx-test .ct-ok { color: #4cd38a; }
+.ctx-test .ct-warn { color: #f5b14c; }
+.ctx-test .ct-fail { color: #ff6b6b; }
 .tele-value { font-family: var(--mono); color: var(--text); white-space: nowrap; overflow: hidden; line-height: 1.3; }
 .tele-num { font-size: 15px; font-weight: 600; }
 .tele-unit { font-size: 10.5px; color: var(--muted); margin-left: 2px; }
